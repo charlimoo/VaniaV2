@@ -1,0 +1,377 @@
+# backend/agents/stream.py
+import uuid
+import logging
+import json
+import asyncio 
+from typing import AsyncGenerator, Any
+
+from fastapi import Request
+from asgiref.sync import sync_to_async
+
+# --- Agno Imports ---
+from agno.agent import RunEvent
+from agno.run.agent import CustomEvent
+
+# --- AG-UI Protocol Imports ---
+from ag_ui.core import (
+    RunAgentInput, 
+    EventType, 
+    RunStartedEvent, 
+    RunFinishedEvent, 
+    RunErrorEvent,
+    TextMessageStartEvent, 
+    TextMessageContentEvent, 
+    TextMessageEndEvent,
+    ToolCallStartEvent, 
+    ToolCallArgsEvent, 
+    ToolCallEndEvent, 
+    ToolCallResultEvent,
+    CustomEvent as AguiCustomEvent 
+)
+from ag_ui.encoder import EventEncoder
+
+# --- Local Module Imports ---
+from .utils import parse_multimodal_input, extract_tool_info, safe_serialize
+from .storage import get_storage, get_session_safe
+from agents.naming import title_generator
+
+# Configure Logger
+logger = logging.getLogger(__name__)
+
+async def background_naming_task(thread_id: str, user_id: str, agent_messages: list):
+    """
+    Runs in the background after the stream closes.
+    Generates a title and updates the database.
+    """
+    logger.info(f"🏷️ [Background] Starting auto-naming for {thread_id}...")
+    try:
+        from users.models import CustomUser
+        user = await CustomUser.objects.aget(id=user_id) 
+        storage = get_storage()
+        session = await sync_to_async(get_session_safe)(storage, thread_id, user_id)
+        
+        if not session:
+            logger.warning(f"⚠️ [Background] Session {thread_id} not found, skipping naming.")
+            return
+
+        s_data = safe_serialize(session)
+        current_name = "New Conversation"
+        if 'session_data' in s_data and s_data['session_data']:
+            current_name = s_data['session_data'].get('name', "New Conversation")
+        
+        is_generic_name = current_name in ["New Conversation", "Untitled Session", "Untitled", "گفتگوی جدید"]
+        
+        if not agent_messages and hasattr(session, 'get_messages'):
+            try: agent_messages = session.get_messages()
+            except: pass
+            
+        user_msg_count = 0
+        if agent_messages:
+            for m in agent_messages:
+                role = getattr(m, 'role', None)
+                if not role and isinstance(m, dict):
+                    role = m.get('role')
+                
+                if role == 'user':
+                    user_msg_count += 1
+        
+        is_first_turn = user_msg_count <= 1
+
+        if is_generic_name or is_first_turn:
+            if agent_messages and len(agent_messages) > 0:
+                formatted_msgs = []
+                for m in agent_messages:
+                    m_dict = safe_serialize(m)
+                    formatted_msgs.append({
+                        'role': m_dict.get('role'), 
+                        'content': m_dict.get('content')
+                    })
+                
+                new_title = await sync_to_async(title_generator.generate_title)(
+                    formatted_msgs, 
+                    user, 
+                    thread_id
+                )
+                
+                if new_title and new_title not in ["گفتگوی جدید", "Untitled"]:
+                    if not session.session_data: session.session_data = {}
+                    session.session_data["name"] = new_title
+                    
+                    if hasattr(storage, 'upsert_session'):
+                        await sync_to_async(storage.upsert_session)(session=session)
+                    else:
+                        await sync_to_async(storage.upsert)(session=session)
+                    
+                    logger.info(f"✅ [Background] Renamed {thread_id} to '{new_title}'")
+                else:
+                    logger.info(f"   [Background] Generated title was generic, skipped.")
+            else:
+                logger.info("   [Background] Not enough messages to name yet.")
+        else:
+            logger.info(f"   [Background] Session '{current_name}' already named and has {user_msg_count} turns. Skipping.")
+
+    except Exception as e:
+        logger.error(f"❌ [Background] Naming failed: {e}")
+
+
+async def agui_stream_generator(
+    agent, 
+    input_data: RunAgentInput, 
+    request: Request = None,
+    is_demo_user: bool = False
+) -> AsyncGenerator[str, None]:
+    """
+    Active Stream Generator:
+    Runs the agent in a background task and monitors the client connection concurrently.
+    If the client disconnects, the agent task is cancelled immediately.
+    """
+    from services.usage import demo_usage_service
+    
+    encoder = EventEncoder()
+    thread_id = input_data.thread_id
+    run_id = input_data.run_id
+    assistant_msg_id = str(uuid.uuid4())
+    
+    # Track state for events
+    state = {
+        "is_text_started": False,
+        "current_tool_id": None
+    }
+    
+    logger.info(f"🌊 [Stream] Starting Active Generator for Run: {run_id} (Thread: {thread_id})")
+
+    yield encoder.encode(
+        RunStartedEvent(
+            type=EventType.RUN_STARTED,
+            thread_id=thread_id,
+            run_id=run_id,
+            input=input_data 
+        )
+    )
+
+    # 1. Create a Queue to bridge the Agent's output to the Stream
+    output_queue = asyncio.Queue()
+    
+    # 2. Define the Background Agent Task
+    async def run_agent_task():
+        try:
+            prompt, images, files = parse_multimodal_input(input_data)
+            
+            # Run the agent and put chunks into queue
+            # stream_events=True ensures we get Tool Calls, Content, and CustomEvents
+            async for chunk in agent.arun(
+                message=prompt,
+                images=images if images else None,
+                files=files if files else None,
+                stream=True, 
+                stream_events=True
+            ):
+                await output_queue.put(chunk)
+            
+            # Signal completion
+            await output_queue.put("DONE")
+            
+        except asyncio.CancelledError:
+            logger.warning(f"🛑 [StreamTask] Agent execution cancelled.")
+            raise
+        except Exception as e:
+            logger.error(f"❌ [StreamTask] Error: {e}", exc_info=True)
+            await output_queue.put(e) # Pass error to main loop
+
+    # 3. Start Agent
+    agent_task = asyncio.create_task(run_agent_task())
+
+    # 4. Helper for Request Disconnect Polling
+    async def wait_for_disconnect():
+        if not request:
+            return False
+        while True:
+            if await request.is_disconnected():
+                return True
+            await asyncio.sleep(0.5)
+
+    disconnect_task = asyncio.create_task(wait_for_disconnect())
+
+    try:
+        # 5. Main Event Loop
+        while True:
+            queue_task = asyncio.create_task(output_queue.get())
+            
+            done, pending = await asyncio.wait(
+                [queue_task, disconnect_task], 
+                return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # --- Scenario A: Client Disconnected ---
+            if disconnect_task in done:
+                logger.warning(f"🛑 [Stream] Client Disconnected. Killing Agent Task.")
+                agent_task.cancel() # Kill the LLM/Tools
+                
+                # Update DB state explicitly
+                try:
+                    await sync_to_async(agent.cancel_run)(run_id)
+                except Exception as e:
+                    logger.error(f"   [Stream] Failed to mark DB cancelled: {e}")
+                break
+
+            # --- Scenario B: Data Received ---
+            if queue_task in done:
+                item = queue_task.result()
+                
+                if item == "DONE":
+                    break
+                
+                if isinstance(item, Exception):
+                    yield encoder.encode(RunErrorEvent(type=EventType.RUN_ERROR, message=str(item)))
+                    break
+
+                # Process the chunk
+                chunk = item 
+                
+                # --- CASE A: Native Agno Custom Events (e.g. CanvasUpdateEvent) ---
+                # Check for direct object or wrapper depending on Agno version nuances
+                custom_evt = None
+                if isinstance(chunk, CustomEvent):
+                    custom_evt = chunk
+                elif hasattr(chunk, 'event_type') and chunk.event_type == "custom_event":
+                    # Hypothetical wrapper handling if Agno internals wrap it
+                    custom_evt = getattr(chunk, 'event', None)
+
+                if custom_evt:
+                    logger.info(f"🎨 [Stream] Emitting Custom Event: {custom_evt.name}")
+                    event_obj = AguiCustomEvent(
+                        type=EventType.CUSTOM,
+                        name=custom_evt.name,
+                        value=custom_evt.value
+                    )
+                    yield encoder.encode(event_obj)
+                    continue
+
+                # --- CASE B: Raw String ---
+                if not hasattr(chunk, "event"):
+                    if isinstance(chunk, str) and chunk.strip():
+                        if not state["is_text_started"]:
+                            yield encoder.encode(TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START, message_id=assistant_msg_id, role="assistant"
+                            ))
+                            state["is_text_started"] = True
+                        yield encoder.encode(TextMessageContentEvent(
+                            type=EventType.TEXT_MESSAGE_CONTENT, message_id=assistant_msg_id, delta=chunk
+                        ))
+                    continue
+
+                # --- CASE C: Standard Events ---
+                if chunk.event == RunEvent.run_content:
+                    if chunk.content:
+                        if not state["is_text_started"]:
+                            yield encoder.encode(TextMessageStartEvent(
+                                type=EventType.TEXT_MESSAGE_START, message_id=assistant_msg_id, role="assistant"
+                            ))
+                            state["is_text_started"] = True
+                        
+                        yield encoder.encode(TextMessageContentEvent(
+                            type=EventType.TEXT_MESSAGE_CONTENT, message_id=assistant_msg_id, delta=str(chunk.content)
+                        ))
+
+                elif chunk.event == RunEvent.tool_call_started:
+                    tc_id, tc_name, tc_args = extract_tool_info(chunk)
+                    if not tc_id or tc_id == "unknown_id": tc_id = str(uuid.uuid4())
+                    state["current_tool_id"] = tc_id
+                    
+                    yield encoder.encode(ToolCallStartEvent(
+                        type=EventType.TOOL_CALL_START, tool_call_id=tc_id, tool_call_name=tc_name, parent_message_id=assistant_msg_id
+                    ))
+                    
+                    tc_args_str = "{}"
+                    if tc_args:
+                        if isinstance(tc_args, (dict, list)):
+                            try: tc_args_str = json.dumps(tc_args, ensure_ascii=False)
+                            except: tc_args_str = str(tc_args)
+                        else: tc_args_str = str(tc_args)
+
+                    yield encoder.encode(ToolCallArgsEvent(
+                        type=EventType.TOOL_CALL_ARGS, tool_call_id=tc_id, delta=tc_args_str
+                    ))
+
+                elif chunk.event == RunEvent.tool_call_completed:
+                    tc_id, tc_name, _ = extract_tool_info(chunk)
+                    if (not tc_id or tc_id == "unknown_id") and state["current_tool_id"]:
+                        tc_id = state["current_tool_id"]
+                    
+                    if not tc_id: continue
+
+                    raw_content = None
+                    tool_obj = getattr(chunk, "tool", None)
+                    if tool_obj: raw_content = getattr(tool_obj, "result", None)
+                    
+                    if raw_content is None:
+                        output_obj = getattr(chunk, "tool_output", None)
+                        if output_obj: raw_content = getattr(output_obj, "content", output_obj)
+
+                    if raw_content is None:
+                        outputs_list = getattr(chunk, "tool_outputs", None)
+                        if outputs_list and isinstance(outputs_list, list) and len(outputs_list) > 0:
+                            raw_content = getattr(outputs_list[0], "content", outputs_list[0])
+
+                    if raw_content is None:
+                        tc_obj = getattr(chunk, "tool_call", None)
+                        if tc_obj: raw_content = getattr(tc_obj, "result", None)
+
+                    content_str = ""
+                    if raw_content is not None:
+                        if isinstance(raw_content, (dict, list)):
+                            try: content_str = json.dumps(raw_content, ensure_ascii=False) 
+                            except: content_str = str(raw_content)
+                        else: content_str = str(raw_content)
+                    else:
+                        content_str = "Result unavailable"
+
+                    yield encoder.encode(ToolCallResultEvent(
+                        type=EventType.TOOL_CALL_RESULT, message_id=assistant_msg_id, tool_call_id=tc_id, content=content_str, role="tool"
+                    ))
+                    
+                    yield encoder.encode(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tc_id))
+                    state["current_tool_id"] = None
+
+        # --- Completion Logic ---
+        if state["is_text_started"]:
+            yield encoder.encode(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=assistant_msg_id))
+
+        if is_demo_user:
+            try:
+                await demo_usage_service.increment_usage(agent.user, agent.service_config)
+            except Exception as usage_err:
+                logger.error(f"⚠️ [Stream] Failed to increment demo usage: {usage_err}")
+                
+        # Naming Trigger
+        msgs_snapshot = []
+        if hasattr(agent, 'memory') and agent.memory:
+             msgs_snapshot = agent.memory.messages
+        
+        asyncio.create_task(
+            background_naming_task(thread_id, str(agent.user.id), msgs_snapshot)
+        )
+
+        yield encoder.encode(
+            RunFinishedEvent(
+                type=EventType.RUN_FINISHED,
+                thread_id=thread_id,
+                run_id=run_id
+            )
+        )
+        logger.info(f"🏁 [Stream] Run {run_id} Completed.")
+
+    except (GeneratorExit, asyncio.CancelledError):
+        logger.warning(f"🛑 [Stream] Generator Closed/Cancelled.")
+        agent_task.cancel()
+        await sync_to_async(agent.cancel_run)(run_id)
+    except Exception as e:
+        logger.error(f"❌ [Stream] Critical Loop Error: {e}", exc_info=True)
+        agent_task.cancel()
+        yield encoder.encode(RunErrorEvent(type=EventType.RUN_ERROR, message=str(e)))
+    finally:
+        # Cleanup tasks
+        if not agent_task.done():
+            agent_task.cancel()
+        if not disconnect_task.done():
+            disconnect_task.cancel()

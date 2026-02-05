@@ -1,0 +1,46 @@
+# --- Git & Version Control ---
+.git
+.gitignore
+
+# --- Python & Bytecode ---
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# --- Virtual Environments (Critical) ---
+# We want Docker to install fresh requirements, not use local ones
+venv/
+.venv/
+env/
+
+# --- Environment Secrets (Critical) ---
+# Never bake secrets into the image. Pass them via docker-compose env_file
+.env
+.env.*
+
+# --- IDE Settings ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Local Databases & Data ---
+# Don't copy local SQLite or huge Vector data folders into the code image
+db.sqlite3
+mem0_history.db
+venvv/
+# --- Media & Static ---
+# Media should be stored in S3/MinIO or a mounted volume, not the image
+media/
+staticfiles/
+local_models/
+# --- Logs & Celery State ---
+*.log
+celerybeat-schedule
+celerybeat.pid
+
+# --- Docker Meta ---
+Dockerfile
+docker-compose.yml
+.dockerignore

@@ -1,0 +1,9 @@
+# frontend/.dockerignore
+
+node_modules
+.next
+.git
+.env
+.env.local
+build
+dist

@@ -1,0 +1,71 @@
+# docker-compose.infra.yml
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: vania_postgres
+    environment:
+      - POSTGRES_USER=vania_user
+      - POSTGRES_PASSWORD=vania_password
+      - POSTGRES_DB=vania_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vania_user -d vania_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  cache:
+    image: redis:7-alpine
+    container_name: vania_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: 'quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z-cpuv1'
+    container_name: vania_minio
+    command: 'server /data --console-address ":9001"'
+    environment:
+      - 'MINIO_ROOT_USER=${MINIO_ROOT_USER}'
+      - 'MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}'
+      - 'MINIO_SERVER_URL=${AWS_S3_CUSTOM_MAIN_DOMAIN}'
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - 'minio_data:/data'
+    labels:
+      - "traefik.enable=true"
+      - 'traefik.http.routers.minio.rule=Host(`${AWS_S3_CUSTOM_MAIN_DOMAIN}`)'
+      - "traefik.http.routers.minio.entrypoints=https"
+      - "traefik.http.routers.minio.tls=true"
+      - "traefik.http.routers.minio.tls.certresolver=letsencrypt"
+      - "traefik.http.services.minio.loadbalancer.server.port=9000"
+    restart: always
+  createbuckets:
+    image: 'quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z-cpuv1'
+    restart: "no"
+    depends_on:
+      - minio
+    environment:
+      - 'MINIO_ROOT_USER=${MINIO_ROOT_USER}'
+      - 'MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}'
+    entrypoint: "/bin/sh -c \" until /usr/bin/mc alias set myminio http://minio:9000 \\${MINIO_ROOT_USER} \\${MINIO_ROOT_PASSWORD}; do\n  echo 'Waiting for MinIO...';\n  sleep 2;\ndone; /usr/bin/mc mb myminio/vania-media || true; /usr/bin/mc anonymous set public myminio/vania-media; exit 0; \"\n"
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: vania_qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  qdrant_data:

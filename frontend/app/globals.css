@@ -1,0 +1,350 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  
+  /* Chart Colors - Keeping these vibrant for contrast against dark bg */
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  
+  --animate-shimmer: shimmer-sweep var(--shimmer-duration, 1000ms) linear infinite both;
+  
+  @keyframes shimmer-sweep {
+    from { background-position: 150% 0; }
+    to { background-position: -100% 0; }
+  }
+}
+
+html, body, span, td, div, p {
+  font-family: var(--font-sans) !important;
+}
+
+
+:root {
+  /* GLOBAL SETTINGS */
+  --radius: 0.75rem;
+
+  /* --- LIGHT MODE --- */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.12 0 0);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.12 0 0);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.12 0 0);
+
+  /* Primary: Soft Sky Blue */
+  --primary: oklch(0.62 0.12 218);
+  --primary-foreground: oklch(1 0 0);
+
+  /* Secondary: Cool light gray (slightly blue-tinted) */
+  --secondary: oklch(0.96 0.01 220);
+  --secondary-foreground: oklch(0.18 0 0);
+
+  /* Muted */
+  --muted: oklch(0.96 0.01 220);
+  --muted-foreground: oklch(0.46 0.01 220);
+
+  /* Accent (hover / subtle emphasis) */
+  --accent: oklch(0.94 0.02 218);
+  --accent-foreground: oklch(0.18 0 0);
+
+  --destructive: oklch(0.54 0.1954 21.34);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  --border: oklch(0.92 0.01 220);
+  --input: oklch(0.92 0.01 220);
+
+  /* Focus ring uses sky tone */
+  --ring: oklch(0.62 0.12 218);
+
+  /* Charts – gently pulled toward blue */
+  --chart-1: oklch(0.60 0.18 218);
+  --chart-2: oklch(0.65 0.16 195);
+  --chart-3: oklch(0.45 0.14 30);
+  --chart-4: oklch(0.70 0.14 90);
+  --chart-5: oklch(0.62 0.16 260);
+
+  /* Sidebar */
+  --sidebar: oklch(0.98 0.01 220);
+  --sidebar-foreground: oklch(0.22 0 0);
+  --sidebar-primary: oklch(0.62 0.12 218);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.94 0.02 218);
+  --sidebar-accent-foreground: oklch(0.18 0 0);
+  --sidebar-border: oklch(0.92 0.01 220);
+  --sidebar-ring: oklch(0.62 0.12 218);
+}
+
+.dark {
+  /* --- DARK MODE (Refined, Saturated Neutrals) --- */
+
+  /* Main background – deep cool graphite */
+  --background: oklch(0.23 0.015 230);
+
+  /* Text – crisp, not glowing */
+  --foreground: oklch(0.92 0.01 230);
+
+  /* Cards – clearly lifted surface */
+  --card: oklch(0.26 0.02 230.07);
+  --card-foreground: oklch(0.96 0.01 230);
+
+  --popover: oklch(0.32 0.02 230);
+  --popover-foreground: oklch(0.96 0.01 230);
+
+  /* Primary – Sky blue, controlled */
+  --primary: oklch(0.72 0.14 218);
+  --primary-foreground: oklch(0.18 0.01 230);
+
+  /* Secondary – saturated dark gray */
+  --secondary: oklch(0.38 0.02 230);
+  --secondary-foreground: oklch(0.96 0.01 230);
+
+  /* Muted – readable, not dead */
+  --muted: oklch(0.31 0.02 230);
+  --muted-foreground: oklch(0.68 0.02 230);
+
+  /* Accent – hover surfaces */
+  --accent: oklch(0.36 0.025 225);
+  --accent-foreground: oklch(0.96 0.01 230);
+
+  --destructive: oklch(0.67 0.20 22);
+  --destructive-foreground: oklch(0.98 0 0);
+
+  /* Borders & inputs – visible, refined */
+  --border: oklch(0.32 0.0244 231.76);
+  --input: oklch(0.46 0.0237 234.37);
+
+  /* Focus ring – same sky blue */
+  --ring: oklch(0.72 0.14 218);
+
+  /* Charts – vibrant but not neon */
+  --chart-1: oklch(0.72 0.18 218);
+  --chart-2: oklch(0.70 0.16 190);
+  --chart-3: oklch(0.62 0.15 30);
+  --chart-4: oklch(0.78 0.14 95);
+  --chart-5: oklch(0.72 0.16 260);
+
+  /* Sidebar – darker, intentional */
+  --sidebar: oklch(0.20 0.015 230);
+  --sidebar-foreground: oklch(0.84 0.01 230);
+  --sidebar-primary: oklch(0.72 0.14 218);
+  --sidebar-primary-foreground: oklch(0.18 0.01 230);
+  --sidebar-accent: oklch(0.32 0.025 225);
+  --sidebar-accent-foreground: oklch(0.96 0.01 230);
+  --sidebar-border: oklch(0.28 0.02 230);
+  --sidebar-ring: oklch(0.72 0.14 218);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /* --- Minimal Scrollbar (Matches Theme) --- */
+  
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--secondary) transparent;
+  }
+
+  /* WebKit (Chrome, Edge, Safari) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--secondary); /* #424242 in dark mode */
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--muted-foreground);
+  }
+  .perspective-stage {
+    perspective: 2000px;
+    transform-style: preserve-3d;
+  }
+}
+
+/* Ensure scaled content remains sharp */
+div {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  backface-visibility: hidden;
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-black/40 backdrop-blur-xl border border-white/10 shadow-2xl;
+  }
+  
+  /* Smooth height animation class */
+  .smooth-height {
+    transition: height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  
+  .bg-dot-pattern {
+    background-image: radial-gradient(circle at 1px 1px, currentColor 1px, transparent 0);
+    background-size: 24px 24px;
+  }
+  .bg-glass {
+    @apply bg-black/40 backdrop-blur-xl border border-white/10;
+  }
+  
+  .text-glow {
+    text-shadow: 0 0 20px rgba(16, 185, 129, 0.5);
+  }
+  /* LTR Override for Inputs/Code */
+  .ltr {
+    direction: ltr;
+    text-align: left;
+  }
+  @keyframes cart-shake {
+    0%, 100% { transform: rotate(0deg); }
+    20% { transform: rotate(-12deg); }
+    40% { transform: rotate(10deg); }
+    60% { transform: rotate(-8deg); }
+    80% { transform: rotate(5deg); }
+  }
+  
+  .animate-cart-shake {
+    animation: cart-shake 0.5s ease-in-out;
+  }
+  
+  @property --angle {
+    syntax: '<angle>';
+    initial-value: 0deg;
+    inherits: false;
+  }
+
+  @keyframes border-spin {
+    to {
+      --angle: 360deg;
+    }
+  }
+
+  .animated-border-box {
+    --border-size: 1px;
+    --border-angle: 0deg;
+    
+    background-image:
+      conic-gradient(from var(--border-angle), transparent 20%, oklch(0.7 0.15 280), oklch(0.7 0.15 240), transparent 50%),
+      conic-gradient(from var(--border-angle), var(--card) 0%, var(--card) 100%);
+    
+    background-size: calc(100% - (var(--border-size) * 2)) calc(100% - (var(--border-size) * 2)), cover;
+    background-position: center center;
+    background-repeat: no-repeat;
+    
+    animation: border-spin 8s linear infinite;
+  }
+
+
+  /* Gradient text animation for 'BigStatement' */
+  .animate-gradient-x {
+    background-size: 200% 200%;
+    animation: gradient-x 3s ease infinite;
+  }
+
+  @keyframes gradient-x {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+
+  @keyframes border-spin {
+    to { --angle: 360deg; }
+  }
+  
+  /* Prevent text selection during presentation */
+  .select-none {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  
+  /* Hide scrollbar completely (for Pitch Grid View) */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+
+  .text-xl.leading-relaxed {
+    text-align: justify;
+    text-justify: inter-word; /* Improves spacing for Persian/RTL */
+  }
+}
+
+/* PRINT STYLES (PDF Export) */
+@media print {
+  @page {
+    size: landscape;
+    margin: 0;
+  }
+  
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    background-color: #000 !important; /* Force dark background */
+    color: #fff !important;
+  }
+
+  /* Hide UI elements during print */
+  .no-print {
+    display: none !important;
+  }
+}
