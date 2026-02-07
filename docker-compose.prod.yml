@@ -101,13 +101,6 @@ services:
       - '9001:9001'
     volumes:
       - 'minio_data:/data'
-    labels:
-      - "traefik.enable=true"
-      - 'traefik.http.routers.minio.rule=Host(`${AWS_S3_CUSTOM_MAIN_DOMAIN}`)'
-      - "traefik.http.routers.minio.entrypoints=https"
-      - "traefik.http.routers.minio.tls=true"
-      - "traefik.http.routers.minio.tls.certresolver=letsencrypt"
-      - "traefik.http.services.minio.loadbalancer.server.port=9000"
     restart: always
   createbuckets:
     image: 'quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z-cpuv1'
