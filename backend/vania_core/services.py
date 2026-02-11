@@ -85,3 +85,54 @@ class PatientManagementService:
         except Exception as e:
             logger.error(f"Error in invite_patient_by_phone for Dr {doctor_user.id} -> {phone}: {e}")
             return False, "خطای داخلی در سرور هنگام افزودن بیمار.", None
+        
+class ProfileService:
+    """ Manages the patient's core profile summary (demographics, story, etc.) """
+    CONTEXT_KEY = "clinical_summary"
+    DEMOGRAPHICS_KEY = "patient_demographics"
+
+    @staticmethod
+    def get_summary(patient: CustomUser) -> str:
+        """ Retrieves the clinical summary text for a patient. """
+        entry = user_context_manager.get_context(patient, ProfileService.CONTEXT_KEY)
+        # Return the text content, or a default placeholder if none exists
+        return entry.data.get("summary_text", "") if entry else ""
+
+    @staticmethod
+    def update_summary(patient: CustomUser, summary_text: str):
+        """ Updates or creates the clinical summary for a patient. """
+        user_context_manager.set_singleton_context(
+            user=patient,
+            key=ProfileService.CONTEXT_KEY,
+            data={"summary_text": summary_text},
+            source=UserContextEntry.SourceType.AGENT  # Can be AGENT or USER
+        )
+
+    @staticmethod
+    def get_demographics(patient: CustomUser) -> dict:
+        """ Returns the permanent demographic profile of the patient. """
+        entry = user_context_manager.get_context(patient, ProfileService.DEMOGRAPHICS_KEY)
+        if entry:
+            return entry.data
+        return {
+            "name": patient.full_name or "",
+            "age": "",
+            "marital_status": "single",
+            "education": "bachelor",
+            "job": ""
+        }
+
+    @staticmethod
+    def update_demographics(patient: CustomUser, data: dict):
+        """ Persists demographics to the DB permanently. """
+        # We also sync the name to the primary CustomUser model for consistency
+        if 'name' in data and data['name']:
+            patient.full_name = data['name']
+            patient.save(update_fields=['full_name'])
+
+        user_context_manager.set_singleton_context(
+            user=patient,
+            key=ProfileService.DEMOGRAPHICS_KEY,
+            data=data,
+            source=UserContextEntry.SourceType.USER
+        )

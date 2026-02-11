@@ -5,7 +5,7 @@ from capabilities.base import BaseFormHandler
 from capabilities.registry import register_form_handler
 from users.models import CustomUser, ContextDefinition, UserContextEntry
 from users.services import user_context_manager
-
+from .form_definitions import ALL_FORMS_LIST
 logger = logging.getLogger(__name__)
 
 @register_form_handler
@@ -135,12 +135,8 @@ class MarriageAssessmentHandler(BaseFormHandler):
 @register_form_handler
 class GenericFormHandler(BaseFormHandler):
     """
-    A universal handler for Vania's clinical forms (Psychology, Psychiatry, Social Work, etc.).
-    
-    Logic:
-    1. Validates patient existence.
-    2. Saves the raw form data directly to the patient's UserContextEntry history.
-    3. Uses a timestamped key to ensure a chronological log of all forms filled.
+    A universal handler for Vania's clinical forms.
+    Now looks up the definition to save human-readable titles.
     """
     label = "Vania: Generic Clinical Data"
 
@@ -153,36 +149,53 @@ class GenericFormHandler(BaseFormHandler):
         except CustomUser.DoesNotExist:
             raise ValueError("The selected patient was not found.")
 
-        # --- 1. Identify the Form ---
-        # We try to get the form key/title from the data payload for better logging
-        # If not present, we default to 'generic'.
-        form_key_identifier = data.get('form_key', 'generic_clinical').lower()
+        # --- [FIX] 1. Identify the Form Definition ---
+        # We look for the 'form_key' in the submitted data (e.g. "SOCIAL_V1")
+        incoming_key = data.get('form_key')
         
+        # Find the definition in our master list
+        form_def = next((f for f in ALL_FORMS_LIST if f['key'] == incoming_key), None)
+        
+        if form_def:
+            # Found it! Use the official Title and Key
+            final_title = form_def['title']
+            final_key = form_def['key']
+            description = f"Submission: {final_title}"
+        else:
+            # Fallback if key is missing or unknown
+            final_key = incoming_key or "generic_clinical"
+            final_title = data.get('form_title', final_key)
+            description = f"Clinical Form Submission: {final_key}"
+
         # --- 2. Context Persistence ---
         timestamp = int(time.time())
-        context_key = f"clinical_form_{form_key_identifier}_{timestamp}"
+        # We create a unique key for this specific entry in the DB
+        # e.g. clinical_form_social_v1_1700000000
+        instance_key = f"clinical_form_{final_key.lower()}_{timestamp}"
         
         ContextDefinition.objects.get_or_create(
-            key=context_key,
-            defaults={'description': f"Clinical Form Submission: {form_key_identifier}"}
+            key=instance_key,
+            defaults={'description': description}
         )
 
         final_data = {
             "handler": "GenericFormHandler",
             "submitted_by_doctor_id": user.id,
             "submission_timestamp": timestamp,
+            "form_key": final_key,    # [IMPORTANT] Used by frontend to map field labels
+            "form_title": final_title, # [IMPORTANT] Used for the header
             **data
         }
 
         entry = user_context_manager.add_entry(
             user=patient,
-            key=context_key,
+            key=instance_key,
             data=final_data,
-            source=UserContextEntry.SourceType.USER,
+            source=UserContextEntry.SourceType.USER, # Marked as USER since doctor filled it manually
             creator=user
         )
 
-        logger.info(f"Saved Generic Form ({form_key_identifier}) for Patient {patient.id}.")
+        logger.info(f"Saved Form '{final_title}' for Patient {patient.id}.")
 
         return {
             "status": "success",

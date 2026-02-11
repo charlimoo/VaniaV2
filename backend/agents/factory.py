@@ -96,14 +96,12 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
                     try:
                         ctype = CanvasType.objects.get(component_key=key)
                         
-                        # [HOOK] Check if a Capability wants to provide specific initial state for this Canvas
-                        start_state = None
-                        if resource_id:
-                            # We pass the key so the capability knows WHICH canvas to hydrate
-                            # e.g. 'VANIA_PATIENT_MANAGER' vs 'TEXT_EDITOR'
-                            start_state = CapabilityRegistry.get_initial_state_for_domains(
-                                active_caps, user, session_id, resource_id, canvas_key=key
-                            )
+                        # [CHANGED] Removed "if resource_id:" check.
+                        # We allow capabilities to provide state even without a specific resource ID
+                        # (e.g. The Patient Capability uses the logged-in 'user' as the resource).
+                        start_state = CapabilityRegistry.get_initial_state_for_domains(
+                            active_caps, user, session_id, resource_id, canvas_key=key
+                        )
                         
                         # Fallback to the Canvas Definition's default state
                         final_state = start_state if start_state else ctype.default_state

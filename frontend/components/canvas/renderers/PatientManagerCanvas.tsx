@@ -3,11 +3,11 @@
 
 import { useState, useEffect } from "react";
 import { 
+  User,
   Map, 
   LifeBuoy, 
   Library, 
   FileText, 
-  User,
   ShieldAlert
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ import { PatientManagerState } from "@/lib/types/vania";
 
 // --- Tab Components ---
 // These are the individual views for each of the 4 main sections.
+import { ProfileTab } from "./tabs/ProfileTab"
 import { RoadmapTab } from "./tabs/RoadmapTab";
 import { RescueNetTab } from "./tabs/RescueNetTab";
 import { AppendixTab } from "./tabs/AppendixTab";
@@ -38,7 +39,7 @@ interface Props {
 export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) {
   // Local state to manage which tab is currently visible.
   // It's initialized from the `data` prop, which is hydrated from the backend.
-  const [activeTab, setActiveTab] = useState<string>(data.active_tab || "ROADMAP");
+  const [activeTab, setActiveTab] = useState<string>(data.active_tab || "PROFILE");
 
   // This effect ensures that if the AI forces a tab switch (e.g., by opening a form),
   // the component's local state syncs with the incoming prop change.
@@ -66,7 +67,7 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
   }
 
   // Destructure data for easier access
-  const { patient_profile, roadmap_data, appendix_data, tasks } = data;
+  const { patient_profile, clinical_summary, roadmap_data, appendix_data, tasks, active_goals } = data;
 
   return (
     <div className="flex flex-col h-full bg-background font-sans relative overflow-hidden" dir="rtl">
@@ -81,7 +82,7 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
             <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
               <span className="font-mono bg-muted/50 px-2 py-0.5 rounded">{patient_profile.phone}</span>
               {roadmap_data?.current_phase && (
-                <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-100 rounded-full font-medium text-[10px]">
+                <span className="px-2 py-0.5 bg-muted-50 text-blue-400 border border-muted-100 rounded-full font-medium text-[10px]">
                   {/* Simple mapping for a user-friendly display of the current phase */}
                   {roadmap_data.current_phase === 'PHASE_1_ANALYSIS' ? 'فاز ۱: تحلیل' :
                    roadmap_data.current_phase === 'PHASE_2_APPROACHES' ? 'فاز ۲: پیشنهاد رویکرد' :
@@ -97,6 +98,7 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
         {/* --- NAVIGATION TABS --- */}
         <div className="mt-6 flex gap-1 p-1 bg-muted/30 border border-border/50 rounded-xl">
           {[
+            { id: "PROFILE", label: "پرونده", icon: User },
             { id: "ROADMAP", label: "سند پشتیبان", icon: Map },
             { id: "RESCUENET", label: "تور نجات", icon: LifeBuoy },
             { id: "APPENDIX", label: "پیوست اندیشه", icon: Library },
@@ -127,9 +129,19 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
       {/* This area dynamically renders the content of the active tab. */}
       <div className="flex-1 overflow-y-auto min-h-0 p-4 sm:p-6 bg-muted/5">
         
+        {activeTab === "PROFILE" && (
+          <ProfileTab 
+            patientProfile={patient_profile}
+            clinicalSummary={clinical_summary || ""}
+            onEdit={onEdit}
+            isLocked={isLocked}
+          />
+        )}
+
         {activeTab === "ROADMAP" && (
           <RoadmapTab 
             roadmap={roadmap_data} 
+            activeGoals={active_goals || []} // [NEW] Passing goals
             patientId={patient_profile.id}
             patientName={patient_profile.name} 
             allSessionsHistory={data.sessions || []}

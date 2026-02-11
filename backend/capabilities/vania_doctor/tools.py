@@ -1,12 +1,14 @@
 # backend/capabilities/vania_doctor/tools.py
 import json
 import logging
+import time
 from typing import List, Optional, AsyncGenerator, Any, Dict
 from django.utils import timezone
-# --- Agno & Django Imports ---
+from asgiref.sync import sync_to_async
+
+# --- Agno Imports ---
 from agno.tools import tool
 from agno.run import RunContext
-from asgiref.sync import sync_to_async
 
 # --- Capability System Imports ---
 from capabilities.base import BaseCapability
@@ -15,16 +17,22 @@ from canvas.events import CanvasUpdateEvent
 
 # --- Core Vania Models & Context ---
 from agents.context import resource_context
-from users.models import CustomUser
+from users.models import CustomUser, UserContextEntry, ContextDefinition
+from users.services import user_context_manager
 from vania_core.services import (
     RoadmapService, 
     AppendixService, 
     SessionService, 
-    TaskService
+    TaskService,
+    ProfileService  
 )
 from vania_core.schemas import TherapyPhase, SessionStatus
+from services.models_canvas import CanvasInstance # [FIX] Added Import
 
-# Configure Logger for this module
+# --- Form Definitions ---
+from .form_definitions import ALL_FORMS_LIST
+
+# Configure Logger
 logger = logging.getLogger(__name__)
 
 # ==========================================
@@ -39,7 +47,6 @@ async def _get_active_patient() -> Optional[CustomUser]:
     Returns:
         The CustomUser object for the patient, or None if no patient is selected.
     """
-
     patient_id = resource_context.get()
     if not patient_id:
         return None
@@ -50,126 +57,69 @@ async def _get_active_patient() -> Optional[CustomUser]:
         logger.warning(f"Tool attempted to access non-existent patient ID: {patient_id}")
         return None
 
-async def _refresh_doctor_canvas(session_id: str, patient: CustomUser) -> AsyncGenerator[Any, None]:
+async def _get_canvas_id(session_id: str, component_key: str) -> Optional[str]:
     """
-    Refreshes the 'VANIA_PATIENT_MANAGER' canvas with the latest data for all 4 pillars.
-    This function yields a CanvasUpdateEvent, which is sent to the frontend to keep the UI
-    in sync after a tool modifies the patient's state.
+    [FIX] Resolves the specific Canvas Instance UUID for the current session.
+    This is required for the frontend to know exactly which tab to update.
     """
-    if not session_id or not patient:
-        return
-
-    # Asynchronously fetch fresh data for all data pillars
-    roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
-    appendix = await sync_to_async(AppendixService.get_library)(patient)
-    tasks = await sync_to_async(TaskService.get_patient_tasks)(patient)
-    history = await sync_to_async(SessionService.get_patient_history)(patient, viewer_role='DOCTOR')
-    
-    # Yield the custom event that the frontend listens for
-    yield CanvasUpdateEvent(value={
-        "component_key": "VANIA_PATIENT_MANAGER",
-        "delta": {
-            "roadmap_data": roadmap.model_dump(),
-            "appendix_data": appendix.model_dump(),
-            "tasks": tasks,
-            "sessions": history, # Legacy name, now holds structured reports
-        }
-    })
+    try:
+        # We use filter().afirst() to get the instance asynchronously
+        instance = await CanvasInstance.objects.filter(
+            session_id=session_id,
+            canvas_def__component_key=component_key
+        ).afirst()
+        
+        return str(instance.id) if instance else None
+    except Exception as e:
+        logger.error(f"❌ Failed to resolve canvas ID for session {session_id}: {e}")
+        return None
 
 # ==========================================
-# 2. PHASE 1: ANALYSIS TOOLS
+# 2. PHASE 1: PROFILE MANAGEMENT TOOL
 # ==========================================
 
 @tool
-async def analyze_projective_tests(
+async def update_clinical_summary(
     run_context: RunContext,
-    file_ids: List[str] = [],
-    observation_notes: str = ""
+    summary_text: str
 ) -> AsyncGenerator[Any, None]:
     """
-    [PHASE 1] Analyzes uploaded Projective Tests (Rorschach, TAT) or the doctor's clinical observations.
-    Use this tool at the start of a new patient onboarding process to generate the initial psychological profile.
+    Updates the main 'Clinical Summary' text field in the patient's profile tab.
+    Use this to synthesize the patient's history, TAT/Rorschach observations, or core problem formulation.
+    This text is directly visible to the doctor in the UI.
     
     Args:
-        file_ids: List of file UUIDs uploaded by the doctor via the 'Clinical Assets' uploader.
-        observation_notes: Descriptive notes from the doctor about the patient's behavior or test responses.
+        summary_text: The full, updated text for the clinical summary.
     """
     patient = await _get_active_patient()
     if not patient: 
-        yield "Error: No patient is selected. Please select a patient before starting analysis."
+        yield "Error: No patient is selected. A patient must be active to update their profile."
         return
 
-    # State Transition: Set the roadmap to Phase 1
-    await sync_to_async(RoadmapService.update_phase)(patient, TherapyPhase.PHASE_1_ANALYSIS)
+    # 1. Persist Data
+    await sync_to_async(ProfileService.update_summary)(patient, summary_text)
     
-    # Refresh the UI to reflect the phase change
-    async for evt in _refresh_doctor_canvas(run_context.session_id, patient):
-        yield evt
+    # 2. Explicit UI Sync
+    # [FIX] Resolve Canvas ID
+    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
     
-    # Check for necessary input
-    if not file_ids and not observation_notes:
-        yield (
-            "⚠️ **Phase 1 Alert**: No test files or observation notes were provided. "
-            "I cannot proceed with the analysis. Please upload the patient's Rorschach/TAT files "
-            "or provide detailed notes on their responses."
-        )
-        return
-
-    # Acknowledge receipt; the actual analysis is performed by the LLM in the next turn
-    # after receiving this confirmation message.
-    msg = f"✅ **Phase 1 Initiated** for {patient.full_name}.\n"
-    if file_ids:
-        msg += f"Received {len(file_ids)} test files. "
-    if observation_notes:
-        msg += "Clinical observations have been noted. "
+    yield CanvasUpdateEvent(value={
+        "canvas_id": canvas_id, # [FIX] Required by Frontend
+        "component_key": "VANIA_PATIENT_MANAGER",
+        "delta": {
+            "clinical_summary": summary_text
+        }
+    })
     
-    msg += "I am now analyzing all provided data to generate the **Integrated Psychological Profile**..."
-    
-    yield msg
+    yield "✅ The patient's clinical summary has been updated in their profile."
 
 # ==========================================
 # 3. PHASE 2/3: KNOWLEDGE & STRATEGY
 # ==========================================
 
-@tool
-async def search_clinical_protocol(
-    run_context: RunContext, 
-    query: str
-) -> AsyncGenerator[str, None]:
-    """
-    [PHASE 2/3] Searches the 'Vania Clinical Core' knowledge base for therapy approaches, techniques, and definitions.
-    Use this to retrieve the list of 101 approaches or to get details on a specific method like CBT or Schema Therapy.
-    """
-    # This tool relies on the Agent's built-in RAG capability.
-    # The 'knowledge' and 'search_knowledge=True' parameters configured in the ServiceAgent
-    # factory automatically enable this functionality. The agent is trained to call this
-    # when it needs to look up reference material from its seeded knowledge.
-    
-    # Access the agent instance from the run context
-    agent = getattr(run_context, 'agent', None)
-    if not agent or not hasattr(agent, 'knowledge') or not agent.knowledge:
-        yield "Error: Knowledge Base is not configured for this agent."
-        return
-
-    # Perform the search
-    try:
-        search_results = await sync_to_async(agent.knowledge.search)(query=query, limit=5)
-        
-        if not search_results:
-            yield f"No results found in the clinical protocol for '{query}'."
-            return
-
-        # Format results for the LLM
-        formatted_output = "### Clinical Protocol Search Results:\n"
-        for i, result in enumerate(search_results):
-            formatted_output += f"[{i+1}] Source: {result.source_id}\nContent: {result.text}\n---\n"
-        
-        yield formatted_output
-
-    except Exception as e:
-        logger.error(f"RAG search failed: {e}")
-        yield f"An error occurred while searching the knowledge base: {e}"
-
+# NOTE: The 'search_clinical_protocol' tool has been removed.
+# The Agent is now instructed to rely on its internal expert clinical knowledge 
+# to propose and define treatment approaches.
 
 # ==========================================
 # 4. PHASE 4 & BEYOND: ROADMAP MANAGEMENT
@@ -183,6 +133,7 @@ async def manage_roadmap(
 ) -> AsyncGenerator[Any, None]:
     """
     [PHASE MANAGEMENT] Manages the Therapy Roadmap and current phase.
+    Use this to transition between phases, plan future sessions, or set the treatment strategy.
     
     Args:
         action: The operation to perform. Must be one of:
@@ -214,17 +165,27 @@ async def manage_roadmap(
             yield "❌ Missing 'phase' in data payload for SET_PHASE action."
 
     elif action.upper() == "ADD_SESSION":
-        title = data.get("title", "Untitled Session")
-        instructions = data.get("instructions", "")
+        # Smart default for title if Agent forgets
+        roadmap_current = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
+        next_num = len(roadmap_current.sessions) + 1
+        
+        title = data.get("title")
+        if not title:
+            title = f"جلسه {next_num}"
+            logger.warning(f"Agent forgot title for session {next_num}. Using default.")
+
+        instructions = data.get("instructions", "No specific protocol instructions provided.")
+        
         await sync_to_async(RoadmapService.add_session)(patient, title, instructions)
         yield f"✅ Session '{title}' added to the roadmap."
 
     elif action.upper() == "UPDATE_STRATEGY":
         approaches = data.get("approaches", [])
         if approaches and isinstance(approaches, list):
-            roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
-            roadmap.treatment_approaches = approaches
-            await sync_to_async(RoadmapService.save_roadmap)(patient, roadmap)
+            # We fetch, update locally, and save using the service primitive
+            roadmap_to_update = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
+            roadmap_to_update.treatment_approaches = approaches
+            await sync_to_async(RoadmapService.save_roadmap)(patient, roadmap_to_update)
             yield f"✅ Treatment strategy saved: {', '.join(approaches)}"
         else:
             yield "❌ Missing or invalid 'approaches' list in data payload."
@@ -232,9 +193,20 @@ async def manage_roadmap(
     else:
         yield f"❌ Unknown action for manage_roadmap: '{action}'"
 
-    # Always refresh the UI after any roadmap modification
-    async for evt in _refresh_doctor_canvas(run_context.session_id, patient):
-        yield evt
+    # --- Explicit UI Sync ---
+    # Fetch the authoritative state from DB after modification and push to frontend
+    updated_roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
+    
+    # [FIX] Resolve Canvas ID
+    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
+
+    yield CanvasUpdateEvent(value={
+        "canvas_id": canvas_id, # [FIX] Required
+        "component_key": "VANIA_PATIENT_MANAGER",
+        "delta": {
+            "roadmap_data": updated_roadmap.model_dump()
+        }
+    })
 
 
 # ==========================================
@@ -300,9 +272,24 @@ async def finalize_session_report(
         doc_id=str(log_entry.id)
     )
     
-    # 4. Refresh the entire UI to reflect the changes
-    async for evt in _refresh_doctor_canvas(run_context.session_id, patient):
-        yield evt
+    # 4. Explicit UI Sync (Multi-Pillar Update)
+    # This tool affects both the Roadmap (status change) and the Session History list.
+    updated_roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
+    updated_history = await sync_to_async(SessionService.get_patient_history)(patient, viewer_role='DOCTOR')
+
+    # [FIX] Resolve Canvas ID
+    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
+
+    yield CanvasUpdateEvent(value={
+        "canvas_id": canvas_id, # [FIX] Required
+        "component_key": "VANIA_PATIENT_MANAGER",
+        "delta": {
+            "roadmap_data": updated_roadmap.model_dump(),
+            "sessions": updated_history,
+            # We also update active_goals for the UI since this session might have new ones
+            "active_goals": smart_goals
+        }
+    })
         
     yield f"✅ Session {session_number} report finalized and linked to the Roadmap."
 
@@ -329,7 +316,7 @@ async def add_rescue_task(
         yield "Error: No patient selected."
         return
 
-    # Call the TaskService to create the task
+    # 1. Perform Write
     await sync_to_async(TaskService.assign_task)(
         patient=patient,
         doctor=doctor,
@@ -338,9 +325,20 @@ async def add_rescue_task(
         dimension=dimension.upper() # Ensure consistency with Enum
     )
     
-    # Refresh the canvas to show the new task in the Rescue Net tab
-    async for evt in _refresh_doctor_canvas(run_context.session_id, patient):
-        yield evt
+    # 2. Explicit UI Sync
+    # We fetch the WHOLE task list because the frontend merges arrays by overwriting.
+    all_tasks = await sync_to_async(TaskService.get_patient_tasks)(patient)
+    
+    # [FIX] Resolve Canvas ID
+    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
+
+    yield CanvasUpdateEvent(value={
+        "canvas_id": canvas_id, # [FIX] Required
+        "component_key": "VANIA_PATIENT_MANAGER",
+        "delta": {
+            "tasks": all_tasks
+        }
+    })
         
     yield f"✅ Task added to the '{dimension}' dimension: '{text}'"
 
@@ -383,18 +381,163 @@ async def prescribe_resource(
         "content_excerpt": excerpt
     }
     
-    # Save the resource using the AppendixService
+    # 1. Perform Write
     await sync_to_async(AppendixService.add_resource)(patient, doctor, resource_data)
     
-    # Refresh the UI to show the new card in the Appendix tab
-    async for evt in _refresh_doctor_canvas(run_context.session_id, patient):
-        yield evt
+    # 2. Explicit UI Sync
+    updated_library = await sync_to_async(AppendixService.get_library)(patient)
+    
+    # [FIX] Resolve Canvas ID
+    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
+
+    yield CanvasUpdateEvent(value={
+        "canvas_id": canvas_id, # [FIX] Required
+        "component_key": "VANIA_PATIENT_MANAGER",
+        "delta": {
+            "appendix_data": updated_library.model_dump()
+        }
+    })
         
     yield f"✅ Prescribed {type}: '{title}' has been added to the Thought Appendix."
 
 
 # ==========================================
-# 7. TOOL FACTORY REGISTRATION
+# 7. CLINICAL FORMS AUTOMATION
+# ==========================================
+
+@tool
+async def get_form_schema(
+    run_context: RunContext,
+    form_key: str
+) -> AsyncGenerator[Any, None]:
+    """
+    [PERCEPTION] Retrieves the structure (schema) of a clinical form.
+    Use this tool FIRST to understand which questions need to be answered before
+    you can use 'submit_clinical_form'.
+    
+    Args:
+        form_key: The unique ID of the form (e.g., "PSYCHOLOGY_V1", "SOCIAL_V1").
+    """
+    form_def = next((f for f in ALL_FORMS_LIST if f['key'] == form_key), None)
+    
+    if not form_def:
+        yield f"Error: Form with key '{form_key}' not found. Please use one of the available form keys."
+        return
+
+    # Return a structured JSON string of the schema for the LLM to parse
+    schema_info = {
+        "form_key": form_def["key"],
+        "title": form_def["title"],
+        "description": form_def["description"],
+        "fields": [
+            {
+                "name": field["name"],
+                "label": field["label"],
+                "type": field.get("type", "text"),
+                "options": field.get("options") # Will be null if not a select
+            } for field in form_def["schema"]
+        ]
+    }
+    
+    yield json.dumps(schema_info, ensure_ascii=False, indent=2)
+    
+@tool
+async def submit_clinical_form(
+    run_context: RunContext,
+    form_key: str,
+    **kwargs
+) -> AsyncGenerator[Any, None]:
+    """
+    [ACTION] Fills and submits a structured clinical form for the active patient.
+    The fields from the form should be passed as direct keyword arguments.
+    
+    Args:
+        form_key: The unique ID of the form (e.g., "PSYCHOLOGY_V1", "SOCIAL_V1").
+        **kwargs: The fields of the form. For example: referral_agent="Dr. Smith", referral_reason="..."
+    """
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    
+    if not patient:
+        yield "Error: No patient selected."
+        return
+
+    form_def = next((f for f in ALL_FORMS_LIST if f['key'] == form_key), None)
+    if not form_def:
+        yield f"Error: Invalid form_key '{form_key}'."
+        return
+    
+    # --- [FIX] FLATTEN DATA ---
+    # If the LLM passed data inside a key literally named 'kwargs'
+    actual_data = kwargs.get('kwargs', kwargs) if 'kwargs' in kwargs else kwargs
+    
+    if not actual_data:
+        yield "Error: No form data provided."
+        return
+
+    timestamp = int(time.time())
+    instance_key = f"clinical_form_{form_key.lower()}_{timestamp}"
+    
+    final_data = {
+        "form_key": form_key,
+        "form_title": form_def['title'],
+        "handler": "AgentTool",
+        "submitted_by_doctor_id": doctor.id,
+        "submission_timestamp": timestamp,
+        **actual_data  # [FIX] Use the flattened data
+    }
+
+    await sync_to_async(ContextDefinition.objects.get_or_create)(
+        key=instance_key,
+        defaults={'description': f"Agent submission: {form_def['title']}"}
+    )
+
+    await sync_to_async(user_context_manager.add_entry)(
+        user=patient,
+        key=instance_key,
+        data=final_data,
+        source=UserContextEntry.SourceType.AGENT,
+        creator=doctor
+    )
+
+    # [FIX] Define the synchronous database query inside a dedicated function
+    @sync_to_async
+    def get_forms_history_sync(patient_user):
+        # Use select_related to pre-fetch the 'definition' object in the same query
+        return list(UserContextEntry.objects.filter(
+            user=patient_user, 
+            definition__key__startswith="clinical_form_"
+        ).select_related('definition').order_by('-created_at'))
+
+    # Now call the async version of that function
+    form_entries = await get_forms_history_sync(patient)
+
+    forms_history = []
+    # This loop is now safe because 'f.definition' is pre-loaded
+    for f in form_entries:
+        forms_history.append({
+            "id": str(f.id),
+            "form_key": f.data.get('form_key'),
+            "type": f.data.get('form_title', f.definition.key), # This line is now safe
+            "date": f.created_at.isoformat(),
+            "data": f.data 
+        })
+
+    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
+
+    yield CanvasUpdateEvent(value={
+        "canvas_id": canvas_id,
+        "component_key": "VANIA_PATIENT_MANAGER",
+        "delta": {
+            "forms": forms_history
+        }
+    })
+
+    yield f"✅ Form '{form_def['title']}' submitted successfully."
+
+
+# ==========================================
+# 8. TOOL FACTORY REGISTRATION
 # ==========================================
 
 @register_tool("vania_doctor")
@@ -409,19 +552,23 @@ class VaniaDoctorToolFactory(BaseCapability):
         Gathers and returns all necessary tools for the Vania Doctor agent.
         """
         return [
-            # Phase 1
-            analyze_projective_tests,
+            # Phase 1: Profile & Analysis
+            update_clinical_summary,
             
-            # Phase 2/3
-            search_clinical_protocol,
+            # Phase 2/3: Strategy
+            # NOTE: RAG search tool removed. Agent relies on internal knowledge.
             
             # Phase 4 & General Management
             manage_roadmap,
             
-            # Phase 5
+            # Phase 5: Execution
             finalize_session_report,
             add_rescue_task,
             
-            # Phase 6
+            # Phase 6: Appendix
             prescribe_resource,
+            
+            # General Clinical Utils
+            get_form_schema,
+            submit_clinical_form, # New automated form filling
         ]

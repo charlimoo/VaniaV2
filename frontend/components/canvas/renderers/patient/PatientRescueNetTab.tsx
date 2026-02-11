@@ -23,15 +23,15 @@ interface Props {
 
 // --- Dimensions Config (Vania Core) ---
 const DIMENSIONS: Record<string, { label: string; color: string }> = {
-  "PERSONAL": { label: "رشد شخصی", color: "text-red-600 bg-red-50 border-red-100" },
-  "EMOTIONAL": { label: "رشد عاطفی", color: "text-pink-600 bg-pink-50 border-pink-100" },
-  "RELATIONSHIP": { label: "ارتباط سودمند", color: "text-purple-600 bg-purple-50 border-purple-100" },
-  "FRIENDSHIP": { label: "ارتباط با دوستان", color: "text-indigo-600 bg-indigo-50 border-indigo-100" },
-  "CAREER": { label: "شغلی-تحصیلی", color: "text-blue-600 bg-blue-50 border-blue-100" },
-  "INTELLECTUAL": { label: "رشد فکری", color: "text-cyan-600 bg-cyan-50 border-cyan-100" },
-  "ENVIRONMENT": { label: "رشد محیطی", color: "text-teal-600 bg-teal-50 border-teal-100" },
-  "RECREATION": { label: "تفریحی-ورزشی", color: "text-green-600 bg-green-50 border-green-100" },
-  "SOLITUDE": { label: "مدیریت تنهایی", color: "text-orange-600 bg-orange-50 border-orange-100" },
+  "PERSONAL": { label: "رشد شخصی", color: "text-red-400 bg-muted-50 border-muted-100" },
+  "EMOTIONAL": { label: "رشد عاطفی", color: "text-pink-400 bg-muted-50 border-muted-100" },
+  "RELATIONSHIP": { label: "ارتباط سودمند", color: "text-purple-400 bg-muted-50 border-muted-100" },
+  "FRIENDSHIP": { label: "ارتباط با دوستان", color: "text-indigo-400 bg-muted-50 border-muted-100" },
+  "CAREER": { label: "شغلی-تحصیلی", color: "text-blue-400 bg-muted-50 border-muted-100" },
+  "INTELLECTUAL": { label: "رشد فکری", color: "text-cyan-400 bg-muted-50 border-muted-100" },
+  "ENVIRONMENT": { label: "رشد محیطی", color: "text-teal-400 bg-muted-50 border-muted-100" },
+  "RECREATION": { label: "تفریحی-ورزشی", color: "text-green-400 bg-muted-50 border-muted-100" },
+  "SOLITUDE": { label: "مدیریت تنهایی", color: "text-orange-400 bg-muted-50 border-muted-100" },
 };
 
 export function PatientRescueNetTab({ tasks, onEdit }: Props) {

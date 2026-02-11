@@ -16,37 +16,18 @@ export interface CanvasData {
 }
 
 interface CanvasState {
-  // --- State Properties ---
-  
-  // Map of ID -> Canvas Data for O(1) access
+  // ... (Existing State)
   instances: Record<string, CanvasData>;
-  
-  // Array of IDs to maintain stable tab order
   orderedIds: string[];
-  
-  // ID of the currently viewed tab
   activeTabId: string | null;
-  
-  // Is the split-pane open?
   isPanelOpen: boolean;
-  
-  // Is the agent currently writing? (Used to show skeleton/lock UI)
   isLocked: boolean;
+  
+  // [FIX] New State to track the active patient context for API calls
+  contextResourceId: string | null;
 
-  // --- Actions ---
-
-  /**
-   * Bulk load canvases (Hydration from Backend).
-   * Expects the array to be already sorted by the backend.
-   */
+  // ... (Existing Actions)
   setInstances: (canvases: CanvasData[]) => void;
-
-  /**
-   * Update a specific canvas's data.
-   * - forceFocus: Switches tab to this canvas and opens panel.
-   * - source: 'AGENT' (default) or 'USER'. If USER, triggers network sync.
-   * - meta: Optional metadata (name, component_key) to create instance if missing.
-   */
   updateCanvas: (
     id: string, 
     newState: Record<string, any>, 
@@ -54,15 +35,14 @@ interface CanvasState {
     source?: 'USER' | 'AGENT',
     meta?: Partial<CanvasData>
   ) => void;
-
   setActiveTab: (id: string) => void;
   togglePanel: (isOpen?: boolean) => void;
   setLocked: (locked: boolean) => void;
-  
-  /** Helper to get instances as an ordered array */
   getOrderedInstances: () => CanvasData[];
-
   clear: () => void;
+  
+  // [FIX] New Action
+  setContextResourceId: (id: string | null) => void;
 }
 
 // --- Utility: Deep Merge ---
@@ -102,6 +82,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   activeTabId: null,
   isPanelOpen: false,
   isLocked: false,
+  
+  // [FIX] Initialize as null
+  contextResourceId: null,
+
+  setContextResourceId: (id) => set({ contextResourceId: id }),
 
   setInstances: (canvases) => {
     console.log(`[CanvasStore] 🌊 Hydrating ${canvases?.length || 0} instances from backend.`);
@@ -219,13 +204,23 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     if (source === 'USER') {
       const token = localStorage.getItem("accessToken");
       
+      // Get the resource ID from store state
+      const resourceId = get().contextResourceId;
+
       if (token) {
-        fetch(`${API_BASE}/agent/canvas/instance/${id}`, {
-          method: "PATCH",
-          headers: {
+        const headers: Record<string, string> = {
             "Authorization": `Bearer ${token}`,
             "Content-Type": "application/json",
-          },
+        };
+
+        // Inject the header if we have a patient context
+        if (resourceId) {
+            headers["X-Target-Resource-ID"] = resourceId;
+        }
+
+        fetch(`${API_BASE}/agent/canvas/instance/${id}`, {
+          method: "PATCH",
+          headers: headers,
           body: JSON.stringify({ delta }),
         }).catch((err) => {
           console.error("[CanvasStore] ❌ Background Sync Failed:", err);
@@ -258,7 +253,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         orderedIds: [],
         activeTabId: null,
         isPanelOpen: false,
-        isLocked: false
+        isLocked: false,
+        contextResourceId: null
     });
   },
   

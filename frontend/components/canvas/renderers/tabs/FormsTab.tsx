@@ -1,4 +1,4 @@
-// start of frontend/components/canvas/renderers/tabs/FormsTab.tsx
+// frontend/components/canvas/renderers/tabs/FormsTab.tsx
 "use client";
 
 import { useState, useEffect } from "react";
@@ -8,7 +8,7 @@ import {
   Plus, 
   CheckCircle2, 
   Bot,
-  Sparkles 
+  Sparkles
 } from "lucide-react";
 import { 
   Dialog, 
@@ -30,17 +30,22 @@ import { Badge } from "@/components/ui/badge";
 
 // --- Props Interface ---
 interface Props {
-  forms: any[]; // History of completed forms
-  availableForms: FormDefinition[]; // Form templates
+  forms: any[]; 
+  availableForms: FormDefinition[]; 
   uiSignal?: { type: string; form?: FormDefinition; data?: any };
   onEdit: (delta: any) => void;
-  patientId: number; // [NEW] Explicit patient context
+  patientId: number; 
 }
 
-/**
- * Renders the Forms tab, allowing doctors to fill out clinical assessments
- * either manually or by reviewing a pre-filled draft from the AI.
- */
+// Keys to exclude from the history view (Metadata)
+const HIDDEN_KEYS = new Set([
+  'handler', 
+  'submitted_by_doctor_id', 
+  'submission_timestamp', 
+  'form_key', 
+  'form_title'
+]);
+
 export function FormsTab({ forms, availableForms, uiSignal, onEdit, patientId }: Props) {
   const params = useParams();
   const threadId = params.threadId as string;
@@ -48,18 +53,35 @@ export function FormsTab({ forms, availableForms, uiSignal, onEdit, patientId }:
   const [activeModalForm, setActiveModalForm] = useState<FormDefinition | null>(null);
   const [draftData, setDraftData] = useState<any>(null);
 
+  // --- Helper to translate raw keys to human labels ---
+  const getFieldLabel = (entry: any, fieldKey: string) => {
+    // 1. Try to match by stable 'form_key' first
+    if (entry.form_key) {
+        const def = availableForms?.find(f => f.key === entry.form_key);
+        if (def) {
+            const field = def.schema.find((s: any) => s.name === fieldKey);
+            if (field) return field.label;
+        }
+    }
+    // 2. Fallback: Try to match by 'type' title
+    const defByTitle = availableForms?.find(f => f.title === entry.type);
+    if (defByTitle) {
+        const field = defByTitle.schema.find((s: any) => s.name === fieldKey);
+        if (field) return field.label;
+    }
+    return fieldKey;
+  };
+
   // --- UI Signal Handler ---
   useEffect(() => {
     if (uiSignal) {
         let shouldClearSignal = false;
 
-        // The AI wants to open a blank form.
         if (uiSignal.type === "OPEN_FORM" && uiSignal.form) {
             setActiveModalForm(uiSignal.form);
             setDraftData(null);
             shouldClearSignal = true;
         } 
-        // The AI has pre-filled a form and wants the doctor to review it.
         else if (uiSignal.type === "DRAFT_FORM" && uiSignal.form) {
             setActiveModalForm(uiSignal.form);
             setDraftData(uiSignal.data);
@@ -73,19 +95,24 @@ export function FormsTab({ forms, availableForms, uiSignal, onEdit, patientId }:
   }, [uiSignal, onEdit]);
 
   // --- Success Handler ---
-  // Called by DynamicForm AFTER successful submission
   const handleSuccess = (formData: any) => {
     if (!activeModalForm) return;
 
     toast.success(`فرم «${activeModalForm.title}» با موفقیت ثبت شد.`);
     setActiveModalForm(null);
     
-    // Optimistic UI Update: Add to history immediately
+    // Optimistic UI Update
     const newEntry = {
         id: "temp-" + Date.now(),
         type: activeModalForm.title,
         date: new Date().toISOString(),
-        data: formData
+        // We ensure the metadata is present in the optimistic update too
+        form_key: activeModalForm.key,
+        data: {
+            ...formData,
+            form_key: activeModalForm.key,
+            form_title: activeModalForm.title 
+        }
     };
     onEdit({ forms: [newEntry, ...(forms || [])] });
   };
@@ -128,20 +155,53 @@ export function FormsTab({ forms, availableForms, uiSignal, onEdit, patientId }:
                     <AccordionItem key={entry.id || idx} value={entry.id || String(idx)} className="border rounded-lg bg-card px-0 shadow-sm">
                         <AccordionTrigger className="px-4 py-3 hover:no-underline text-xs">
                             <div className="flex justify-between w-full ml-2 items-center">
-                                <span className="font-semibold">{entry.type}</span>
+                                <div className="flex items-center gap-2">
+                                    <FileText className="w-3.5 h-3.5 text-primary opacity-70" />
+                                    {/* Display Title or Fallback Key */}
+                                    <span className="font-semibold">
+                                        {/* If entry.data.form_title exists, use it. Otherwise use entry.type which is the fallback title */}
+                                        {entry.data?.form_title || entry.type || entry.form_key}
+                                    </span>
+                                </div>
                                 <span className="text-[10px] text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">
                                     {new Date(entry.date).toLocaleDateString('fa-IR')}
                                 </span>
                             </div>
                         </AccordionTrigger>
+                        
                         <AccordionContent className="px-4 pb-4 pt-0 border-t border-dashed border-border/50 mt-2">
                             <div className="grid grid-cols-1 gap-2 pt-3">
-                                {Object.entries(entry.data).map(([key, value]) => (
-                                    <div key={key} className="flex justify-between text-[11px] border-b border-border/30 pb-1.5 last:border-0">
-                                        <span className="text-muted-foreground">{key}:</span>
-                                        <span className="font-medium text-foreground text-left">{String(value)}</span>
-                                    </div>
-                                ))}
+                                {Object.entries(entry.data)
+                                    .filter(([key]) => !HIDDEN_KEYS.has(key)) 
+                                    .map(([key, value]) => {
+                                        // Skip nulls/empty
+                                        if (value === null || value === undefined || value === "") return null;
+
+                                        const label = getFieldLabel(entry, key);
+                                        
+                                        let displayValue = "";
+                                        if (typeof value === 'object' && !Array.isArray(value)) {
+                                            displayValue = Object.entries(value)
+                                                .map(([subKey, subVal]) => `${subKey}: ${subVal}`)
+                                                .join('\n');
+                                        } else if (Array.isArray(value)) {
+                                            displayValue = value.join('، ');
+                                        } else {
+                                            displayValue = String(value);
+                                        }
+                                        
+                                        if (!displayValue || displayValue === "null") return null;
+
+                                        return (
+                                            <div key={key} className="flex flex-col sm:flex-row sm:justify-between text-[11px] border-b border-border/30 pb-1.5 last:border-0 gap-1 sm:gap-4">
+                                                <span className="text-muted-foreground font-medium shrink-0">{label}:</span>
+                                                <span className="font-medium text-foreground text-left whitespace-pre-wrap">
+                                                    {displayValue}
+                                                </span>
+                                            </div>
+                                        );
+                                    })
+                                }
                             </div>
                         </AccordionContent>
                     </AccordionItem>
@@ -178,12 +238,18 @@ export function FormsTab({ forms, availableForms, uiSignal, onEdit, patientId }:
                         formHandle={activeModalForm.handler}
                         schema={activeModalForm.schema}
                         key={draftData ? 'draft-mode' : 'new-mode'} 
-                        prefill={draftData || {}} 
+                        // [FIX] Inject Key and Title into the form data payload
+                        // This ensures the backend receives 'form_key' so it can save the correct title
+                        prefill={{
+                            ...(draftData || {}),
+                            form_key: activeModalForm.key,
+                            form_title: activeModalForm.title
+                        }} 
                         title={activeModalForm.title}
                         description={activeModalForm.description}
                         onSuccess={handleSuccess}
-                        patientId={patientId} // [NEW] Pass patient ID
-                        sessionId={threadId}  // [NEW] Pass session ID
+                        patientId={patientId}
+                        sessionId={threadId}
                     />
                 </div>
             )}

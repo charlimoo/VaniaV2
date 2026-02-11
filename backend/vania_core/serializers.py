@@ -174,6 +174,7 @@ class ConversationSerializer(serializers.Serializer):
     """Represents a summary of a conversation thread in the user's inbox."""
     user_id = serializers.IntegerField()
     name = serializers.CharField()
+    phone_number = serializers.CharField()
     avatar = serializers.CharField(allow_null=True)
     role_label = serializers.CharField() 
     specialty = serializers.CharField(required=False, allow_blank=True)

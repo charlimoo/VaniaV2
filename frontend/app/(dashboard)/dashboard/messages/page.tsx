@@ -1,8 +1,8 @@
-// start of frontend/app/(dashboard)/dashboard/messages/page.tsx
+// frontend/app/(dashboard)/dashboard/messages/page.tsx
 "use client";
 
 import { useEffect, useState, useRef, useCallback, Suspense, useMemo } from "react";
-import { useSearchParams, useRouter, usePathname } from "next/navigation"; // [UPDATED] Added usePathname
+import { useSearchParams, useRouter, usePathname } from "next/navigation"; 
 import { 
   Search, 
   Send, 
@@ -39,6 +39,7 @@ import { cn } from "@/lib/utils";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { MessageBubble, MessageData } from "@/components/messages/MessageBubble";
 import { AudioPlayer } from "@/components/messages/AudioPlayer";
+import { useUser } from "@/hooks/use-user"; // [FIX] Import useUser
 
 // --- TYPES ---
 
@@ -51,10 +52,10 @@ interface Conversation {
   last_message: string;
   last_message_date: string;
   unread_count: number;
+  phone_number?: string; // [FIX] Added phone_number
 }
 
-// --- HELPERS ---
-
+// ... (formatDate and formatDuration helpers remain the same) ...
 const formatDate = (dateString: string) => {
   const date = new Date(dateString);
   const now = new Date();
@@ -74,24 +75,26 @@ const formatDuration = (seconds: number) => {
 
 function MessagesContent() {
   const router = useRouter();
-  const pathname = usePathname(); // [UPDATED]
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const urlUserId = searchParams.get('userId');
+  
+  // [FIX] Get current user to check role
+  const { user: currentUser } = useUser();
+  const isDoctor = currentUser?.role_slug === 'doctor';
 
   // --- STATE ---
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  // ... (rest of state remains the same)
   const [messages, setMessages] = useState<MessageData[]>([]);
-  
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [inputText, setInputText] = useState("");
   
-  // Attachments
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Audio Recording
   const { 
     startRecording, 
     stopRecording, 
@@ -102,10 +105,7 @@ function MessagesContent() {
     reset: resetAudio 
   } = useAudioRecorder();
 
-  // Audio Preview URL (for playing before sending)
   const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
-
-  // UI/Loading States
   const [isLoadingInbox, setIsLoadingInbox] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
@@ -113,14 +113,10 @@ function MessagesContent() {
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // --- HANDLERS (Moved up for use in render) ---
-  
-  // [UPDATED] Helper to switch chat and update URL
+  // ... (handleSwitchConversation and handleClearActiveConversation remain the same) ...
   const handleSwitchConversation = (userId: number) => {
     setActiveConversationId(userId);
     setMobileView('CHAT');
-    
-    // Update URL silently so NotificationBell knows where we are
     const params = new URLSearchParams(searchParams);
     params.set('userId', userId.toString());
     router.replace(`${pathname}?${params.toString()}`);
@@ -134,8 +130,7 @@ function MessagesContent() {
     router.replace(`${pathname}?${params.toString()}`);
   };
 
-  // --- API CALLS ---
-
+  // ... (fetchInbox and fetchMessages remain the same) ...
   const fetchInbox = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/vania/messages/inbox/`, { headers: getAuthHeaders() });
@@ -157,7 +152,6 @@ function MessagesContent() {
       if (res.ok) {
         const data = await res.json();
         setMessages(data);
-        // Optimistically clear unread count locally
         setConversations(prev => prev.map(c => 
           c.user_id === userId ? { ...c, unread_count: 0 } : c
         ));
@@ -169,16 +163,13 @@ function MessagesContent() {
     }
   }, []);
 
-  // --- EFFECTS ---
-
-  // 1. Initial Load & Polling Inbox
+  // ... (All Effects remain the same) ...
   useEffect(() => {
     fetchInbox();
-    const interval = setInterval(fetchInbox, 15000); // 15s poll
+    const interval = setInterval(fetchInbox, 15000); 
     return () => clearInterval(interval);
   }, [fetchInbox]);
 
-  // 2. Handle URL Deep Link
   useEffect(() => {
     if (urlUserId) {
         const id = parseInt(urlUserId);
@@ -187,63 +178,45 @@ function MessagesContent() {
             setMobileView('CHAT');
         }
     }
-  }, [urlUserId]); // Removed activeConversationId dependency to prevent loops
+  }, [urlUserId]); 
 
-  // 3. Active Chat Polling
   useEffect(() => {
     if (activeConversationId) {
         fetchMessages(activeConversationId);
-        const interval = setInterval(() => fetchMessages(activeConversationId, true), 5000); // 5s poll active chat
+        const interval = setInterval(() => fetchMessages(activeConversationId, true), 5000);
         return () => clearInterval(interval);
     }
   }, [activeConversationId, fetchMessages]);
 
-  // 4. Auto-Scroll to Bottom
   useEffect(() => {
     if (messagesEndRef.current) {
-        // Instant scroll on load/switch, smooth on new message
         const behavior = isLoadingMessages ? "auto" : "smooth";
         messagesEndRef.current.scrollIntoView({ behavior });
     }
   }, [messages, activeConversationId, mobileView, isLoadingMessages, selectedFile, audioBlob]);
 
-  // 5. Generate Audio Preview URL when blob is ready
   useEffect(() => {
     if (audioBlob) {
       const url = URL.createObjectURL(audioBlob);
       setAudioPreviewUrl(url);
-      return () => {
-        URL.revokeObjectURL(url); // Cleanup on unmount or change
-      };
+      return () => { URL.revokeObjectURL(url); };
     } else {
       setAudioPreviewUrl(null);
     }
   }, [audioBlob]);
 
-  // --- OTHER HANDLERS ---
-
+  // ... (Attachment and Recording handlers remain the same) ...
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      if (file.size > 10 * 1024 * 1024) { // 10MB Limit
+      if (file.size > 10 * 1024 * 1024) { 
         toast.error("حجم فایل نباید بیشتر از ۱۰ مگابایت باشد.");
         return;
       }
-      
-      // Reset audio if file selected
-      if (audioBlob) {
-        resetAudio();
-        setAudioPreviewUrl(null);
-      }
-
+      if (audioBlob) { resetAudio(); setAudioPreviewUrl(null); }
       setSelectedFile(file);
-      
-      // Create preview for images
-      if (file.type.startsWith('image/')) {
-        setPreviewUrl(URL.createObjectURL(file));
-      } else {
-        setPreviewUrl(null);
-      }
+      if (file.type.startsWith('image/')) { setPreviewUrl(URL.createObjectURL(file)); } 
+      else { setPreviewUrl(null); }
     }
   };
 
@@ -251,14 +224,11 @@ function MessagesContent() {
     setSelectedFile(null);
     setPreviewUrl(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    
-    // Clear audio
     resetAudio();
     setAudioPreviewUrl(null);
   };
 
   const handleStartRecording = async () => {
-    // Clear other attachments before recording
     setSelectedFile(null);
     setPreviewUrl(null);
     setAudioPreviewUrl(null);
@@ -269,7 +239,6 @@ function MessagesContent() {
     e?.preventDefault();
     if (!activeConversationId || isSending) return;
 
-    // Check content validity
     const hasText = inputText.trim().length > 0;
     const hasFile = !!selectedFile;
     const hasAudio = !!audioBlob;
@@ -280,27 +249,21 @@ function MessagesContent() {
 
     try {
       const formData = new FormData();
-      
       if (audioBlob) {
-        // Audio Message
         formData.append('attachment', audioBlob, 'voice_message.webm');
         formData.append('message_type', 'AUDIO');
-        // We can pass duration in metadata
         formData.append('metadata', JSON.stringify({ duration: recordingTime }));
-        if (hasText) formData.append('content', inputText); // Optional text caption
+        if (hasText) formData.append('content', inputText); 
       } else if (selectedFile) {
-        // File/Image Message
         formData.append('attachment', selectedFile);
         formData.append('message_type', selectedFile.type.startsWith('image/') ? 'IMAGE' : 'FILE');
         formData.append('metadata', JSON.stringify({ size: selectedFile.size, name: selectedFile.name }));
         if (hasText) formData.append('content', inputText);
       } else {
-        // Text Message
         formData.append('content', inputText);
         formData.append('message_type', 'TEXT');
       }
 
-      // Prepare Headers (Exclude Content-Type for FormData to let browser set boundary)
       const headers = getAuthHeaders();
       delete headers["Content-Type"]; 
 
@@ -314,7 +277,7 @@ function MessagesContent() {
         setInputText("");
         clearAttachment();
         await fetchMessages(activeConversationId, true);
-        fetchInbox(); // Update sidebar last message
+        fetchInbox(); 
       } else {
         throw new Error();
       }
@@ -325,7 +288,6 @@ function MessagesContent() {
     }
   };
 
-  // --- DERIVED DATA ---
   const activeUser = conversations.find(c => c.user_id === activeConversationId);
   const filteredConversations = useMemo(() => {
     return conversations.filter(c => 
@@ -333,18 +295,35 @@ function MessagesContent() {
     );
   }, [conversations, searchQuery]);
 
+  // [FIX] Action Handlers
+  const handleCallUser = () => {
+    if (!activeUser?.phone_number) {
+        toast.error("شماره تماس این کاربر در دسترس نیست.");
+        return;
+    }
+
+    // Standard way to trigger phone dialer
+    window.location.href = `tel:${activeUser.phone_number}`;
+  };
+
+  const handleViewProfile = () => {
+    if (!activeUser) return;
+    // Doctor Agent Slug
+    const doctorAgentSlug = "vania-doctor-assistant";
+    const newThreadId = `local-${crypto.randomUUID()}`;
+    // Navigate to Chat with Patient Context
+    router.push(`/chat/${doctorAgentSlug}/${newThreadId}?patientId=${activeUser.user_id}`);
+  };
+
   return (
     <div className="flex h-[calc(100vh-8rem)] w-full max-w-7xl mx-auto rounded-xl overflow-hidden bg-card border border-border shadow-sm mt-4" dir="rtl">
       
-      {/* =====================================================================================
-          SIDEBAR (User List)
-         ===================================================================================== */}
+      {/* SIDEBAR (User List) - No changes here */}
       <div className={cn(
         "w-full md:w-80 h-full border-l border-border bg-background flex flex-col transition-all duration-300",
         mobileView === 'CHAT' ? "hidden md:flex" : "flex"
       )}>
-        
-        {/* Header */}
+        {/* ... (Sidebar Header, Search, List Container - Exact same as before) ... */}
         <div className="p-4 h-16 border-b border-border flex items-center justify-between shrink-0 bg-muted/10">
             <h2 className="font-bold text-lg flex items-center gap-2 text-foreground">
                 <MessageSquare className="w-5 h-5 text-primary" />
@@ -355,7 +334,6 @@ function MessagesContent() {
             </div>
         </div>
 
-        {/* Search */}
         <div className="p-3 border-b border-border bg-muted/5 shrink-0">
             <div className="relative">
                 <Search className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground opacity-50" />
@@ -368,7 +346,6 @@ function MessagesContent() {
             </div>
         </div>
 
-        {/* List Container */}
         <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin">
             {isLoadingInbox ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-3 text-muted-foreground">
@@ -430,16 +407,14 @@ function MessagesContent() {
         </div>
       </div>
 
-      {/* =====================================================================================
-          CHAT AREA (Active Conversation)
-         ===================================================================================== */}
+      {/* CHAT AREA */}
       <div className={cn(
         "flex-1 flex flex-col bg-muted/5 relative h-full min-w-0 overflow-hidden",
         mobileView === 'LIST' ? "hidden md:flex" : "flex"
       )}>
         {activeConversationId && activeUser ? (
             <>
-                {/* --- Header --- */}
+                {/* --- Header with Actions [FIXED] --- */}
                 <div className="h-16 border-b border-border flex items-center justify-between px-4 bg-background/80 backdrop-blur-sm z-10 shrink-0 shadow-sm">
                     <div className="flex items-center gap-3">
                         <Button variant="ghost" size="icon" className="md:hidden -mr-2 text-muted-foreground" onClick={handleClearActiveConversation}>
@@ -467,9 +442,18 @@ function MessagesContent() {
                     </div>
 
                     <div className="flex items-center gap-1">
-                        <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+                        {/* Call Button [FIXED] */}
+                        <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={handleCallUser}
+                            title="تماس صوتی"
+                        >
                             <Phone className="h-4 w-4" />
                         </Button>
+
+                        {/* Dropdown Menu [FIXED] */}
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
@@ -477,15 +461,18 @@ function MessagesContent() {
                                 </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                                <DropdownMenuItem>
-                                    <User className="h-4 w-4 ml-2" /> مشاهده پروفایل
-                                </DropdownMenuItem>
+                                {/* Only show "View Profile" if current user is Doctor */}
+                                {isDoctor && (
+                                    <DropdownMenuItem onClick={handleViewProfile} className="cursor-pointer">
+                                        <User className="h-4 w-4 ml-2" /> مشاهده پرونده پزشکی
+                                    </DropdownMenuItem>
+                                )}
                             </DropdownMenuContent>
                         </DropdownMenu>
                     </div>
                 </div>
 
-                {/* --- Messages Area --- */}
+                {/* --- Messages Area (Unchanged) --- */}
                 <div className="flex-1 overflow-y-auto min-h-0 p-4 scroll-smooth">
                     <div className="flex flex-col gap-3 min-h-full">
                         <div className="flex-1" />
@@ -529,7 +516,6 @@ function MessagesContent() {
                                         
                                         {!isMe && isSequence && <div className="w-8 shrink-0" />}
 
-                                        {/* Use the Rich Bubble Component */}
                                         <MessageBubble message={msg} isSequence={isSequence} />
                                     </div>
                                 );
@@ -539,10 +525,9 @@ function MessagesContent() {
                     </div>
                 </div>
 
-                {/* --- Input Area --- */}
+                {/* --- Input Area (Unchanged) --- */}
                 <div className="p-3 bg-background border-t border-border shrink-0 z-20">
-                    
-                    {/* 1. Attachment Previews (Files / Images) */}
+                    {/* ... (Attachments & Audio Preview) ... */}
                     {selectedFile && !audioBlob && (
                         <div className="mb-2 flex items-center gap-3 p-2 bg-muted/40 rounded-xl border border-border animate-in slide-in-from-bottom-2 relative group max-w-md">
                             <div className="h-12 w-12 bg-background border rounded-lg flex items-center justify-center overflow-hidden shrink-0 shadow-sm relative">
@@ -562,7 +547,6 @@ function MessagesContent() {
                         </div>
                     )}
 
-                    {/* 2. Audio Preview (Pre-Send) */}
                     {audioBlob && audioPreviewUrl && !isRecording && (
                         <div className="mb-2 flex flex-col gap-2 p-3 bg-card rounded-xl border border-border shadow-sm animate-in slide-in-from-bottom-2 max-w-md">
                             <div className="flex items-center justify-between">
@@ -574,8 +558,6 @@ function MessagesContent() {
                                     <Trash2 className="h-4 w-4" />
                                 </Button>
                             </div>
-                            
-                            {/* Player for Preview */}
                             <div className="w-full">
                                 <AudioPlayer src={audioPreviewUrl} preview={true} isMe={true} />
                             </div>
@@ -584,15 +566,12 @@ function MessagesContent() {
 
                     {/* Input Controls */}
                     {isRecording ? (
-                        // --- RECORDING MODE UI ---
                         <div className="flex items-center gap-3 h-14 px-1 animate-in fade-in zoom-in-95 duration-200">
                             <div className="flex-1 bg-red-50 dark:bg-red-950/20 rounded-full h-12 flex items-center px-5 gap-4 border border-red-100 dark:border-red-900/50 relative overflow-hidden shadow-inner">
                                 <div className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.6)]" />
                                 <span className="text-sm font-mono font-bold text-red-600 dark:text-red-400 min-w-[50px]">
                                     {formatDuration(recordingTime)}
                                 </span>
-                                
-                                {/* Visualizer Mockup */}
                                 <div className="flex-1 flex items-center justify-end gap-1 opacity-60 h-6">
                                     {[...Array(12)].map((_, i) => (
                                         <div 
@@ -606,19 +585,15 @@ function MessagesContent() {
                                     ))}
                                 </div>
                             </div>
-                            
                             <Button variant="ghost" size="icon" className="h-12 w-12 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-full" onClick={cancelRecording}>
                                 <X className="h-6 w-6" />
                             </Button>
-                            
                             <Button size="icon" className="h-12 w-12 bg-red-600 hover:bg-red-700 text-white rounded-full shadow-lg shadow-red-500/20 animate-in zoom-in" onClick={() => { stopRecording(); }}>
                                 <StopCircle className="h-6 w-6 fill-current" />
                             </Button>
                         </div>
                     ) : (
-                        // --- STANDARD MODE UI ---
                         <form onSubmit={handleSendMessage} className="flex items-end gap-2">
-                            {/* Hidden File Input */}
                             <input 
                                 type="file" 
                                 ref={fileInputRef} 
@@ -627,7 +602,6 @@ function MessagesContent() {
                                 accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt" 
                             />
                             
-                            {/* Attachment Button */}
                             <Button 
                                 type="button" 
                                 variant="ghost" 
@@ -637,12 +611,11 @@ function MessagesContent() {
                                     selectedFile ? "text-primary bg-primary/10" : ""
                                 )}
                                 onClick={() => fileInputRef.current?.click()}
-                                disabled={!!audioBlob} // Cannot attach file if audio recorded
+                                disabled={!!audioBlob} 
                             >
                                 {selectedFile ? <ImageIcon className="h-5 w-5" /> : <Paperclip className="h-5 w-5" />}
                             </Button>
 
-                            {/* Text Input */}
                             <Input 
                                 value={inputText} 
                                 onChange={(e) => setInputText(e.target.value)} 
@@ -650,7 +623,6 @@ function MessagesContent() {
                                 className="flex-1 border-transparent bg-muted/30 focus-visible:ring-0 focus-visible:bg-muted/50 px-4 min-h-[44px] py-3 rounded-3xl shadow-none transition-all placeholder:text-muted-foreground/50"
                             />
                             
-                            {/* Action Button: Mic OR Send */}
                             {inputText.trim() || selectedFile || audioBlob ? (
                                 <Button 
                                     type="submit" 
@@ -675,7 +647,6 @@ function MessagesContent() {
                 </div>
             </>
         ) : (
-            // --- EMPTY STATE (No chat selected) ---
             <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-6 bg-muted/5">
                 <div className="p-8 bg-background border border-dashed border-border rounded-full animate-pulse shadow-sm">
                     <MessageSquare className="h-12 w-12 opacity-20" />
@@ -700,4 +671,3 @@ export default function MessagesPage() {
     </Suspense>
   );
 }
-// end of frontend/app/(dashboard)/dashboard/messages/page.tsx

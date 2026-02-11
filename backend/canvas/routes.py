@@ -13,7 +13,7 @@ from services.models import AgentService
 from services.models_canvas import CanvasInstance
 from canvas.manager import canvas_manager
 from agents.context import resource_context 
-
+from vania_core.services import ProfileService 
 # [FIX] Import Registry to use in sync helper
 from agents.factory import CapabilityRegistry, CanvasType
 
@@ -82,18 +82,22 @@ def perform_hydration(agent_id: str, session_id: str, resource_id: str, user: Cu
             try:
                 ctype = CanvasType.objects.get(component_key=key)
                 
-                start_state = None
-                if resource_id:
-                    # This call triggers DB access inside Capability
-                    start_state = CapabilityRegistry.get_initial_state_for_domains(
-                        active_caps, user, session_id, resource_id, canvas_key=key
-                    )
+                # [CHANGED] Removed "if resource_id:" check.
+                # We always ask the Capability for state. 
+                # If it requires a resource_id and none is provided, the Capability itself returns None.
+                # If it targets the logged-in user (like Vania Patient), it returns data.
+                start_state = CapabilityRegistry.get_initial_state_for_domains(
+                    active_caps, user, session_id, resource_id, canvas_key=key
+                )
                 
                 if start_state:
-                    print(f"   -> Hydration State Generated for {key}")
+                    # print(f"   -> Hydration State Generated for {key}") # Optional logging
+                    pass
 
+                # If start_state is None (capability didn't provide one), fallback to default
                 final_state = start_state if start_state else ctype.default_state
                 
+                # Use update_or_create to ensure we don't duplicate or fail on existing rows
                 CanvasInstance.objects.update_or_create(
                     session_id=session_id,
                     canvas_def=ctype,
@@ -106,7 +110,7 @@ def perform_hydration(agent_id: str, session_id: str, resource_id: str, user: Cu
                 pass
                 
     except Exception as e:
-        print(f"❌ [CanvasRoutes] Hydration Helper Error: {e}")
+        logger.error(f"❌ [CanvasRoutes] Hydration Helper Error: {e}")
         raise e
 
 # ==========================================
@@ -181,15 +185,43 @@ async def update_canvas_instance(
         logger.info(f"✏️ [CanvasRoutes] User updating Canvas {instance_id}")
         instance = await get_instance_for_update(instance_id, user.id)
         if not instance:
-            raise HTTPException(status_code=404, detail="Canvas instance not found or access denied.")
+            raise HTTPException(status_code=404, detail="Canvas not found.")
 
+        # --- [FIX] PERMANENT PERSISTENCE HOOK ---
+        # If the frontend is sending profile or summary updates, 
+        # we save them to the permanent DB tables, not just the canvas JSON.
+        
+        delta = payload.delta
+        
+        # 1. Identify the patient linked to this session
+        # (This relies on the fact that Vania doctor sessions are mapped to 1 patient)
+        # We get the patient_id from the context set by middleware
+        patient_id = resource_context.get()
+        
+        if patient_id:
+            try:
+                patient = await CustomUser.objects.aget(pk=patient_id)
+                
+                # A. Permanent Summary Update
+                if "clinical_summary" in delta:
+                    await sync_to_async(ProfileService.update_summary)(patient, delta["clinical_summary"])
+                
+                # B. Permanent Demographics Update
+                if "patient_profile" in delta:
+                    await sync_to_async(ProfileService.update_demographics)(patient, delta["patient_profile"])
+                    
+            except CustomUser.DoesNotExist:
+                pass
+
+        # 2. Standard Canvas State Update (for the current session)
         result = await sync_to_async(canvas_manager.update_canvas_state)(
             canvas_id=instance_id,
-            patch_data=payload.delta,
+            patch_data=delta,
             operation="merge"
         )
         return {"status": "success", "new_state": result["new_state"]}
+    
     except Exception as e:
-        logger.error(f"❌ [CanvasRoutes] Internal Sync Error: {e}")
+        logger.error(f"❌ [CanvasRoutes] Sync Error: {e}")
         raise HTTPException(status_code=500, detail="Internal Sync Error")
 # end of backend/canvas/routes.py

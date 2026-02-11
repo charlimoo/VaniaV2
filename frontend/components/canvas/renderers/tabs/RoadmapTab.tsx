@@ -8,7 +8,8 @@ import {
   Lock,
   Map,
   Play,
-  Plus
+  Plus,
+  Target 
 } from "lucide-react";
 import { TherapyRoadmap, RoadmapSession } from "@/lib/types/vania";
 import { Button } from "@/components/ui/button";
@@ -26,9 +27,10 @@ import { AddSessionDialog } from "./roadmap/AddSessionDialog";
 // --- Props Interface ---
 interface Props {
   roadmap: TherapyRoadmap;
+  activeGoals: string[]; // [NEW]
   patientId: number;
   patientName: string;
-  allSessionsHistory: any[]; // Added this
+  allSessionsHistory: any[]; 
   onEdit: (delta: any) => void;
 }
 /**
@@ -39,7 +41,7 @@ interface Props {
  * - View detailed, structured reports for completed sessions.
  * - Manually add new sessions to the plan.
  */
-export function RoadmapTab({ roadmap, patientId, patientName, allSessionsHistory, onEdit }: Props) { // [FIX] Destructure it here
+export function RoadmapTab({ roadmap, activeGoals, patientId, patientName, allSessionsHistory, onEdit }: Props) {
   const runtime = useAssistantRuntime();
   const [selectedSession, setSelectedSession] = useState<RoadmapSession | null>(null);
 
@@ -84,17 +86,19 @@ export function RoadmapTab({ roadmap, patientId, patientName, allSessionsHistory
   };
 
 
-  if (selectedSession) {
+if (selectedSession) {
     return (
         <SessionDetail 
             session={selectedSession}
             allSessionsHistory={allSessionsHistory}
-            patientName={patientName} 
+            patientName={patientName}
+            patientId={patientId} // [FIX] Pass this prop
             onBack={() => setSelectedSession(null)} 
+            // [FIX] Pass onEdit to handle updates from the dialog
+            onUpdate={(data) => onEdit({ roadmap_data: data.roadmap, sessions: data.history })} 
         />
     );
-  }
-
+}
   // Handle Empty State with Add Button
   if (!roadmap || !roadmap.sessions || roadmap.sessions.length === 0) {
     return (
@@ -120,6 +124,26 @@ export function RoadmapTab({ roadmap, patientId, patientName, allSessionsHistory
   // 3. List View (Timeline): The default view showing all sessions
   return (
     <div className="space-y-6 pb-10 animate-in fade-in slide-in-from-right-2 duration-300">
+
+      {/* [NEW] Active Goals Section */}
+      {activeGoals && activeGoals.length > 0 && (
+        <div className="bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 rounded-xl p-4 shadow-sm">
+            <h3 className="text-sm font-bold text-emerald-800 dark:text-emerald-400 flex items-center gap-2 mb-3">
+                <Target className="w-4 h-4"/>
+                اهداف درمانی فعال (SMART Goals)
+            </h3>
+            <div className="grid gap-2">
+                {activeGoals.map((goal, idx) => (
+                    <div key={idx} className="flex items-start gap-2 bg-background p-2 rounded-lg border border-emerald-100/50 text-xs">
+                        <span className="bg-emerald-100 text-emerald-700 w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-bold shrink-0 mt-0.5">
+                            {idx + 1}
+                        </span>
+                        <span className="text-foreground/90 leading-relaxed">{goal}</span>
+                    </div>
+                ))}
+            </div>
+        </div>
+      )}
       
       <div className="bg-card border rounded-xl p-4 shadow-sm flex flex-col gap-3">
         <div className="flex justify-between items-center">

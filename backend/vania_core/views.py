@@ -1,4 +1,3 @@
-# start of backend/vania_core/views.py
 # backend/vania_core/views.py
 import logging
 from django.db.models import Q
@@ -7,8 +6,8 @@ from rest_framework import generics, status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
-from asgiref.sync import async_to_sync
-
+import json
+from django.utils import timezone
 # --- Vania Core Imports ---
 from .services import (
     PatientManagementService, 
@@ -24,7 +23,7 @@ from .models import (
     Notification, 
     SecureMessage, 
     RoleVerificationRequest, 
-    Location
+    Location, 
 )
 from .permissions import IsDoctorUser, VaniaAccessControl
 from .serializers import (
@@ -38,10 +37,8 @@ from .serializers import (
     TherapyRoadmapSerializer, CulturalResourceSerializer, AddSessionSerializer
 )
 
-# --- Agent & Canvas Integration ---
-from users.models import CustomUser
-from capabilities.vania_doctor.tools import _refresh_doctor_canvas
-from capabilities.vania_patient.tools import _refresh_patient_canvas
+# --- User Imports ---
+from users.models import CustomUser, UserContextEntry
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
@@ -263,7 +260,6 @@ class ConversationListView(APIView):
             other = conn.patient if conn.doctor == user else conn.doctor
             role_label = "بیمار" if conn.doctor == user else "پزشک"
             
-            # [FIXED] Safely handle doctor_profile access
             try:
                 profile = other.doctor_profile
             except DoctorProfile.DoesNotExist:
@@ -276,7 +272,7 @@ class ConversationListView(APIView):
             
             last_msg = SecureMessage.objects.filter(Q(sender=user, recipient=other) | Q(sender=other, recipient=user)).last()
             unread = SecureMessage.objects.filter(sender=other, recipient=user, is_read=False).count()
-            results.append({"user_id": other.id, "name": other.full_name or other.phone_number, "avatar": avatar, "role_label": role_label, "specialty": specialty, "last_message": last_msg.content if last_msg else "گفتگو را شروع کنید...", "last_message_date": last_msg.created_at if last_msg else conn.updated_at, "unread_count": unread})
+            results.append({"user_id": other.id, "name": other.full_name or other.phone_number,"phone_number": other.phone_number, "avatar": avatar, "role_label": role_label, "specialty": specialty, "last_message": last_msg.content if last_msg else "گفتگو را شروع کنید...", "last_message_date": last_msg.created_at if last_msg else conn.updated_at, "unread_count": unread})
         results.sort(key=lambda x: x['last_message_date'], reverse=True)
         serializer = ConversationSerializer(results, many=True)
         return Response(serializer.data)
@@ -287,14 +283,12 @@ class MessageThreadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def get(self, request, other_user_id):
-        # ... (full get implementation) ...
         messages = SecureMessage.objects.filter(Q(sender=request.user, recipient_id=other_user_id) | Q(sender_id=other_user_id, recipient=request.user))
         messages.filter(sender_id=other_user_id, is_read=False).update(is_read=True)
         serializer = SecureMessageSerializer(messages, many=True, context={'request': request})
         return Response(serializer.data)
 
     def post(self, request, other_user_id):
-        # ... (full post implementation) ...
         serializer = SecureMessageSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save(sender=request.user, recipient_id=other_user_id)
@@ -333,14 +327,6 @@ class RoadmapView(APIView):
                 title=serializer.validated_data['title'],
                 instructions=serializer.validated_data.get('instructions', "")
             )
-            
-            session_id = request.data.get('session_id')
-            if session_id:
-                try: 
-                    async_to_sync(_refresh_doctor_canvas)(session_id, patient)
-                except Exception as e:
-                    logger.warning(f"Canvas sync failed after adding session: {e}")
-                
             return Response(new_session.model_dump(), status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -365,14 +351,6 @@ class AppendixView(APIView):
         serializer = CulturalResourceSerializer(data=request.data)
         if serializer.is_valid():
             new_resource = AppendixService.add_resource(patient, request.user, serializer.validated_data)
-            
-            session_id = request.data.get('session_id')
-            if session_id:
-                try: 
-                    async_to_sync(_refresh_doctor_canvas)(session_id, patient)
-                except Exception as e:
-                    logger.warning(f"Canvas sync failed after adding resource: {e}")
-                
             return Response(new_resource.model_dump(), status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -394,14 +372,6 @@ class ActiveSessionView(APIView):
         
         try:
             RoadmapService.set_active_session(patient, int(session_number))
-            
-            session_id = request.data.get('session_id')
-            if session_id:
-                try: 
-                    async_to_sync(_refresh_doctor_canvas)(session_id, patient)
-                except Exception as e:
-                    logger.warning(f"Canvas sync failed after setting active session: {e}")
-
             return Response({"status": "updated", "active_session": session_number})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -412,119 +382,208 @@ class ActiveSessionView(APIView):
 
 class TaskManagementView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    
     def post(self, request):
         patient_id = request.data.get('patient_id')
         text = request.data.get('text')
         due_date = request.data.get('due_date')
         patient = get_object_or_404(CustomUser, pk=patient_id)
-        if not VaniaAccessControl.verify_doctor_access(request.user, patient): return Response({"error": "Access denied"}, status=403)
+        
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
+            return Response({"error": "Access denied"}, status=403)
+            
         new_task = TaskService.assign_task(patient, request.user, text, due_date)
-        session_id = request.data.get('session_id')
-        if session_id:
-            try: async_to_sync(_refresh_doctor_canvas)(session_id, patient)
-            except: pass
         return Response(new_task, status=status.HTTP_201_CREATED)
+    
     def put(self, request, task_id):
         patient_id = request.data.get('patient_id')
         text = request.data.get('text')
         due_date = request.data.get('due_date')
         patient = get_object_or_404(CustomUser, pk=patient_id)
-        if not VaniaAccessControl.verify_doctor_access(request.user, patient): return Response({"error": "Access denied"}, status=403)
+        
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
+            return Response({"error": "Access denied"}, status=403)
+            
         success = TaskService.edit_task(patient, task_id, text, due_date)
         if success:
-            session_id = request.data.get('session_id')
-            if session_id:
-                try: async_to_sync(_refresh_doctor_canvas)(session_id, patient)
-                except: pass
             return Response({"status": "updated"})
         return Response({"error": "Task not found"}, status=404)
+    
     def delete(self, request, task_id):
         patient_id = request.query_params.get('patient_id') 
-        session_id = request.query_params.get('session_id')
         patient = get_object_or_404(CustomUser, pk=patient_id)
-        if not VaniaAccessControl.verify_doctor_access(request.user, patient): return Response({"error": "Access denied"}, status=403)
+        
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
+            return Response({"error": "Access denied"}, status=403)
+            
         success = TaskService.delete_task(patient, task_id)
         if success:
-            if session_id:
-                try: async_to_sync(_refresh_doctor_canvas)(session_id, patient)
-                except: pass
             return Response({"status": "deleted"})
         return Response({"error": "Task not found"}, status=404)
     
     
 class SessionManagementView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    
     def post(self, request):
         patient_id = request.data.get('patient_id')
         summary = request.data.get('summary')
         private_notes = request.data.get('private_notes', '')
-        date_str = request.data.get('date') 
+        # date_str = request.data.get('date') # Not used in current service signature
         patient = get_object_or_404(CustomUser, pk=patient_id)
-        if not VaniaAccessControl.verify_doctor_access(request.user, patient): return Response({"error": "Access denied"}, status=403)
+        
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
+            return Response({"error": "Access denied"}, status=403)
+            
         SessionService.log_session(patient, request.user, summary, private_notes)
-        session_id = request.data.get('session_id')
-        if session_id:
-            try: async_to_sync(_refresh_doctor_canvas)(session_id, patient)
-            except: pass
         return Response({"status": "created"}, status=status.HTTP_201_CREATED)
+    
     def put(self, request, entry_id):
         summary = request.data.get('summary')
         private_notes = request.data.get('private_notes', '')
         date = request.data.get('date')
+        
         success = SessionService.update_session(entry_id, request.user, summary, private_notes, date)
         if success:
-            patient_id = request.data.get('patient_id')
-            session_id = request.data.get('session_id')
-            if patient_id and session_id:
-                try: 
-                    p = CustomUser.objects.get(pk=patient_id)
-                    async_to_sync(_refresh_doctor_canvas)(session_id, p)
-                except: pass
             return Response({"status": "updated"})
         return Response({"error": "Update failed"}, status=400)
+    
     def delete(self, request, entry_id):
         success = SessionService.delete_session(entry_id, request.user)
         if success:
-            patient_id = request.query_params.get('patient_id')
-            session_id = request.query_params.get('session_id')
-            if patient_id and session_id:
-                try: 
-                    p = CustomUser.objects.get(pk=patient_id)
-                    async_to_sync(_refresh_doctor_canvas)(session_id, p)
-                except: pass
             return Response({"status": "deleted"})
         return Response({"error": "Delete failed"}, status=400)
 
 class CompleteTaskView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+
     def post(self, request, task_id):
-        patient = request.user
-        session_id = request.data.get('session_id')
+        # Determine target patient based on Role
+        target_patient = request.user
+        
+        # Check if Doctor is acting on behalf of a patient
+        if hasattr(request.user, 'role') and request.user.role and request.user.role.slug == 'doctor':
+            patient_id = request.data.get('patient_id')
+            if patient_id:
+                target_patient = get_object_or_404(CustomUser, pk=patient_id)
+                # Verify permission
+                if not VaniaAccessControl.verify_doctor_access(request.user, target_patient):
+                    return Response({"error": "Access denied to this patient."}, status=status.HTTP_403_FORBIDDEN)
+        
         reflection = request.data.get('reflection', "") 
-        success = TaskService.update_task_status(patient=patient, task_id=task_id, status="DONE", reflection=reflection)
-        if not success: return Response({"error": "Task not found or access denied."}, status=status.HTTP_404_NOT_FOUND)
-        if session_id:
-            try: async_to_sync(_refresh_patient_canvas)(session_id, patient)
-            except Exception as e: logger.error(f"Failed to refresh patient journey canvas: {e}")
+        new_status = request.data.get('status', 'DONE') 
+
+        success = TaskService.update_task_status(
+            patient=target_patient, 
+            task_id=task_id, 
+            status=new_status, 
+            reflection=reflection
+        )
+        
+        if not success: 
+            return Response({"error": "Task not found."}, status=status.HTTP_404_NOT_FOUND)
+        
         return Response({"status": "success"})
     
 class RoleVerificationRequestView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    
     def post(self, request):
         role_id = request.data.get('target_role_id')
         if RoleVerificationRequest.objects.filter(user=request.user, target_role_id=role_id, status__in=[RoleVerificationRequest.Status.PENDING, RoleVerificationRequest.Status.APPROVED]).exists():
             return Response({"error": "You already have a pending or active request for this role."}, status=status.HTTP_400_BAD_REQUEST)
+        
         serializer = RoleVerificationRequestSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save(user=request.user)
             return Response({"message": "Request submitted successfully."}, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-
-
 class LocationListView(generics.ListAPIView):
     """Publicly accessible list of locations for filtering doctors."""
     permission_classes = [permissions.AllowAny]
     queryset = Location.objects.all().order_by('name')
     serializer_class = LocationSerializer
-# end of backend/vania_core/views.py
+    
+class SessionReportView(APIView):
+    """
+    Allows a doctor to manually create or update the 'Session Support Document' 
+    (Summary, Flashcards, etc.) for a specific session number.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+
+    def post(self, request):
+        patient_id = request.data.get('patient_id')
+        session_number = request.data.get('session_number')
+        
+        # Report Data
+        summary = request.data.get('summary', '')
+        private_notes = request.data.get('private_notes', '')
+        flashcards = request.data.get('flashcards', []) # List of {title, content}
+        
+        if not patient_id or session_number is None:
+            return Response({"error": "Patient ID and Session Number required."}, status=400)
+
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied."}, status=403)
+
+        # 1. Get Roadmap to check if session exists and if it has a doc_id
+        roadmap = RoadmapService.get_or_create_roadmap(patient)
+        target_session = next((s for s in roadmap.sessions if s.session_number == int(session_number)), None)
+        
+        if not target_session:
+            return Response({"error": "Session not found in roadmap."}, status=404)
+
+        # 2. Prepare Payload (Structured JSON)
+        # We merge with existing data if we are updating, to not lose other AI generated fields
+        rich_payload = {
+            "is_structured_report": True,
+            "session_number": int(session_number),
+            "date": request.data.get('date') or timezone.now().strftime('%Y-%m-%d'),
+            "topic": target_session.title,
+            "symptoms_analysis": summary, # This maps to the main summary
+            "flashcards": flashcards,
+            # We preserve existing smart_goals/swot if we are just editing the text
+        }
+
+        log_entry = None
+
+        # 3. Update Existing or Create New
+        if target_session.doc_id:
+            try:
+                log_entry = UserContextEntry.objects.get(pk=target_session.doc_id)
+                
+                # Merge existing data so we don't wipe SWOT/Goals if they exist
+                current_data = log_entry.data if isinstance(log_entry.data, dict) else {}
+                current_data.update(rich_payload)
+                
+                log_entry.data = current_data
+                log_entry.data['summary'] = json.dumps(current_data, ensure_ascii=False) # Keep summary field compatible
+                log_entry.data['private_notes'] = private_notes
+                log_entry.save()
+            except UserContextEntry.DoesNotExist:
+                # Fallback to create new if ID was bad
+                pass
+
+        if not log_entry:
+            # Create new log
+            log_entry = SessionService.log_session(
+                patient=patient,
+                doctor=request.user,
+                summary=json.dumps(rich_payload, ensure_ascii=False),
+                private_notes=private_notes
+            )
+
+        # 4. Ensure Roadmap is updated (Status -> COMPLETED, Link Doc ID)
+        RoadmapService.complete_session(patient, int(session_number), str(log_entry.id))
+        
+        # 5. Fetch updated states to return for UI Sync
+        updated_roadmap = RoadmapService.get_or_create_roadmap(patient)
+        updated_history = SessionService.get_patient_history(patient, viewer_role='DOCTOR')
+
+        return Response({
+            "status": "success", 
+            "roadmap": updated_roadmap.model_dump(),
+            "history": updated_history
+        })

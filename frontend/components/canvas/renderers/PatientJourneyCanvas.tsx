@@ -124,7 +124,7 @@ export default function PatientJourneyCanvas({ data, onEdit, isLocked }: Props) 
                   <div className="absolute inset-0 bg-primary/10 rounded-xl animate-in zoom-in-95 duration-200" />
                 )}
                 
-                <tab.icon className={cn("w-5 h-5 mb-1 z-10 transition-transform", isActive && "scale-110 fill-current")} />
+                <tab.icon className={cn("w-5 h-5 mb-1 z-10 transition-transform", isActive && "scale-110")} />
                 <span className="text-[10px] z-10">{tab.label}</span>
               </button>
             );

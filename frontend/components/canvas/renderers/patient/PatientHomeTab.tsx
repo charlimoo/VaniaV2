@@ -65,7 +65,7 @@ export function PatientHomeTab({ greeting, currentPhase, activeGoals, onTabChang
         {activeGoals && activeGoals.length > 0 ? (
           <div className="grid gap-3">
             {activeGoals.map((goal, idx) => (
-              <Card key={idx} className="border-emerald-100 bg-gradient-to-r from-emerald-50/40 to-transparent shadow-sm hover:shadow-md transition-shadow">
+              <Card key={idx} className="border-muted-100 bg-gradient-to-r from-muted to-transparent shadow-sm hover:shadow-md transition-shadow">
                 <CardContent className="p-4 flex items-start gap-3">
                   <div className="mt-0.5 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px] font-bold shrink-0 border border-emerald-200">
                     {idx + 1}
@@ -83,36 +83,6 @@ export function PatientHomeTab({ greeting, currentPhase, activeGoals, onTabChang
             <p className="text-xs text-muted-foreground">هنوز هدف مشخصی برای این مرحله ثبت نشده است.</p>
           </div>
         )}
-      </section>
-
-      {/* --- Quick Access Actions --- */}
-      <section>
-        <h3 className="text-xs font-bold text-muted-foreground mb-3 px-1">دسترسی سریع</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <button 
-            onClick={() => onTabChange("RESCUE")}
-            className="flex flex-col items-center justify-center p-4 bg-card border rounded-xl hover:bg-muted/50 hover:border-primary/30 transition-all gap-2 shadow-sm group"
-          >
-            <div className="w-10 h-10 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center group-hover:scale-110 transition-transform border border-blue-100">
-              <CalendarDays className="w-5 h-5" />
-            </div>
-            <span className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors">
-              تور نجات (تکالیف)
-            </span>
-          </button>
-
-          <button 
-            onClick={() => onTabChange("TIMELINE")}
-            className="flex flex-col items-center justify-center p-4 bg-card border rounded-xl hover:bg-muted/50 hover:border-primary/30 transition-all gap-2 shadow-sm group"
-          >
-            <div className="w-10 h-10 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center group-hover:scale-110 transition-transform border border-purple-100">
-              <ArrowLeft className="w-5 h-5" />
-            </div>
-            <span className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors">
-              مرور جلسات
-            </span>
-          </button>
-        </div>
       </section>
 
     </div>

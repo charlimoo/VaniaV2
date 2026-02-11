@@ -59,7 +59,7 @@ export default function LandingPage() {
                   className="block text-zinc-500 mb-2"
                 />
                 <BlurText
-                  text="همراه هوشمند سلامت روان"
+                  text="همراه هوشمند شما"
                   delay={300}
                   animateBy="words"
                   direction="bottom"

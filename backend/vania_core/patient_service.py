@@ -1,5 +1,6 @@
 # backend/vania_core/patient_service.py
 import logging
+import json # [FIX] Added import
 from asgiref.sync import sync_to_async
 from users.models import UserContextEntry
 from users.services import user_context_manager
@@ -10,10 +11,6 @@ logger = logging.getLogger(__name__)
 class PatientDataService:
     """
     Aggregates and Sanitizes VCOS data for the Patient Interface.
-    
-    This service acts as a 'View Controller' for the patient side. It fetches
-    data from the Roadmap, Tasks, and Session logs, but strictly ensures that
-    private doctor notes and draft protocols are NEVER exposed to the patient.
     """
 
     @staticmethod
@@ -26,40 +23,52 @@ class PatientDataService:
         appendix = AppendixService.get_library(patient)
         
         # 2. Fetch Roadmap & Process Timeline
-        # We need to iterate through the roadmap sessions to find completed ones,
-        # then fetch the corresponding detailed report (UserContextEntry) to get
-        # the public summary and flashcards.
         roadmap = RoadmapService.get_or_create_roadmap(patient)
         sanitized_timeline = []
         active_smart_goals = []
 
         for session in roadmap.sessions:
-            # Only show COMPLETED sessions to the patient
             if session.status == "COMPLETED" and session.doc_id:
                 try:
                     # Retrieve the full report entry by ID
-                    # We use the generic manager to find the entry
-                    log_entry = user_context_manager.get_entry_by_id(session.doc_id)
+                    log_entry = UserContextEntry.objects.filter(pk=session.doc_id).first()
                     
                     if log_entry and isinstance(log_entry.data, dict):
                         doc = log_entry.data
                         
-                        # [SANITIZATION] Extract ONLY public fields
-                        # Explicitly exclude 'private_notes', 'doctor_instructions'
+                        # [FIX] Logic to Unpack Structured Report from JSON String
+                        # The Agent stores the full JSON report inside the 'summary' text field.
+                        raw_summary = doc.get("summary", "")
+                        
+                        # Default values (fallback)
+                        display_summary = raw_summary
+                        display_flashcards = doc.get("flashcards", [])
+                        
+                        # Detect and Parse JSON
+                        if isinstance(raw_summary, str) and raw_summary.strip().startswith("{"):
+                            try:
+                                parsed = json.loads(raw_summary)
+                                # If it's our structured report, extract the readable parts
+                                if isinstance(parsed, dict) and parsed.get("is_structured_report"):
+                                    display_summary = parsed.get("symptoms_analysis") or parsed.get("summary", "")
+                                    display_flashcards = parsed.get("flashcards", [])
+                                    
+                                    # Also update goals from this latest session
+                                    if parsed.get("smart_goals"):
+                                        active_smart_goals = parsed.get("smart_goals")
+                            except (json.JSONDecodeError, TypeError):
+                                # If parsing fails, it's just plain text
+                                pass
+
                         timeline_item = {
                             "session_number": session.session_number,
                             "title": session.title,
                             "date": doc.get("date"),
-                            "summary": doc.get("symptoms_analysis") or doc.get("summary", ""),
-                            # Flashcards are the primary educational output for the patient
-                            "flashcards": doc.get("flashcards", []), 
+                            "summary": display_summary, # Now contains clean text
+                            "flashcards": display_flashcards, 
                             "doc_id": str(session.doc_id)
                         }
                         sanitized_timeline.append(timeline_item)
-                        
-                        # Update active goals (take from the latest session)
-                        if doc.get("smart_goals"):
-                            active_smart_goals = doc.get("smart_goals")
 
                 except Exception as e:
                     logger.warning(f"Error fetching session log {session.doc_id} for patient {patient.id}: {e}")
@@ -67,15 +76,16 @@ class PatientDataService:
         # Reverse timeline so the newest session is first
         sanitized_timeline.reverse()
 
+        # Serialize Pydantic objects
+        library_serialized = [res.model_dump() for res in appendix.resources]
+
         # 3. Assemble Final Payload
         return {
             "greeting": f"سلام {patient.full_name or 'دوست من'}",
             "current_phase": roadmap.current_phase,
             "tasks": tasks,
             "timeline": sanitized_timeline,
-            "library": appendix.resources,
+            "library": library_serialized,
             "active_goals": active_smart_goals,
-            
-            # Helper for UI to link back to the doctors
-            "my_doctors": [] # Populated by capability if needed, or kept empty
+            "my_doctors": []
         }

@@ -56,7 +56,7 @@ You work in close coordination with their doctor's clinical treatment plan.
 - **Action:** If they ask for advice, gently remind them that the comprehensive plan is being designed.
 """
             
-            elif phase == TherapyPhase.PHASE_2_APPROACHES or phase == TherapyPhase.PHASE_3_SELECTION or phase == TherapyPhase.PHASE_4_PROTOCOL:
+            elif phase in [TherapyPhase.PHASE_2_APPROACHES, TherapyPhase.PHASE_3_SELECTION, TherapyPhase.PHASE_4_PROTOCOL]:
                 return base_prompt + """
 **PHASE 2-4: PLANNING & STRATEGY**
 - **Context:** The doctor is designing the specific treatment protocol and selecting therapy approaches.
@@ -98,23 +98,22 @@ You work in close coordination with their doctor's clinical treatment plan.
         """
         Auto-Hydrates the 'Patient Journey' Canvas when the chat loads.
         Fetches aggregated data via PatientDataService.
+        
+        [FIX] This logic is now simplified. For the patient agent, the context
+        is ALWAYS the authenticated user themselves. The 'resource_id' is ignored.
         """
         if canvas_key != "VANIA_PATIENT_JOURNEY":
             return None
 
-        # In the Patient Agent, 'user' is the patient.
-        # If 'resource_id' is present (e.g. Doctor viewing as patient), use that.
-        target_user = user
-        if resource_id:
-            try:
-                target_user = CustomUser.objects.get(pk=resource_id)
-            except CustomUser.DoesNotExist:
-                pass
+        # The 'user' object here IS the patient. We don't need to look up a resource.
+        target_patient = user
         
         try:
-            # Use the dedicated service to get a sanitized snapshot
-            data = PatientDataService.get_patient_dashboard_snapshot(target_user)
+            # Use the dedicated service to get a sanitized, aggregated snapshot of the patient's data.
+            # This service correctly queries all necessary tables (tasks, roadmap, logs, etc.)
+            data = PatientDataService.get_patient_dashboard_snapshot(target_patient)
 
+            # This payload directly matches the frontend's PatientState interface
             return {
                 "is_active": True,
                 "active_tab": "HOME",
@@ -124,10 +123,11 @@ You work in close coordination with their doctor's clinical treatment plan.
                 "timeline": data["timeline"],
                 "library": data["library"],
                 "active_goals": data["active_goals"],
-                "my_doctors": [] # Placeholder if needed for multi-doctor support later
+                "my_doctors": data.get("my_doctors", []) 
             }
         except Exception as e:
-            logger.error(f"Failed to hydrate Patient Canvas: {e}")
+            logger.error(f"❌ [VaniaPatientCapability] Failed to hydrate Patient Canvas for user {target_patient.id}: {e}", exc_info=True)
+            # Return None to allow fallback to default empty state, preventing a crash.
             return None
 
     def get_default_canvases(self) -> List[str]:

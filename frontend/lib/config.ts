@@ -14,7 +14,7 @@ export const APP_CONFIG = {
   // --- CORE IDENTITY ---
   BRANDING: {
     APP_NAME: "وانیا",
-    APP_TAGLINE: "همراه هوشمند سلامت روان",
+    APP_TAGLINE: "همراه هوشمند شما",
     COMPANY_NAME: "وانیا",
   },
 

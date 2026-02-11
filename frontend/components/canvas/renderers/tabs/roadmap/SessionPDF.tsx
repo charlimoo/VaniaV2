@@ -12,10 +12,10 @@ import {
 // --- 1. Font Registration (CRITICAL for Persian) ---
 // This requires the font files to be present in the `public/fonts/` directory.
 Font.register({
-  family: 'Vazirmatn',
+  family: 'Estedad',
   fonts: [
-    { src: '/fonts/Vazirmatn-Regular.ttf' },
-    { src: '/fonts/Vazirmatn-Bold.ttf', fontWeight: 'bold' }
+    { src: '/fonts/Estedad-Medium.ttf' },
+    { src: '/fonts/Estedad-Bold.ttf', fontWeight: 'bold' }
   ]
 });
 
@@ -23,7 +23,7 @@ Font.register({
 const styles = StyleSheet.create({
   page: {
     padding: 40,
-    fontFamily: 'Vazirmatn',
+    fontFamily: 'Estedad',
     fontSize: 10,
     lineHeight: 1.6,
     flexDirection: 'column',

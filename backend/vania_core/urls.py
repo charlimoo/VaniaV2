@@ -23,7 +23,7 @@ from .views import (
     RoadmapView,
     AppendixView,
     ActiveSessionView,
-    # --- [NEW] Views for 6-Phase Protocol ---
+    SessionReportView,
     RoadmapView,
     AppendixView,
     ActiveSessionView,
@@ -69,4 +69,6 @@ urlpatterns = [
     # Sets the currently active session for the agent's context.
     # POST: /api/vania/roadmap/active/
     path('roadmap/active/', ActiveSessionView.as_view(), name='set-active-session'),
+    
+    path('roadmap/report/', SessionReportView.as_view(), name='manage-session-report'),
 ]

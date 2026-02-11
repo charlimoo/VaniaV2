@@ -101,29 +101,34 @@ export interface FormDefinition {
  */
 export interface PatientManagerState {
   is_active: boolean;
-  active_tab: "ROADMAP" | "RESCUENET" | "APPENDIX" | "FORMS";
+  active_tab: "PROFILE" | "ROADMAP" | "RESCUENET" | "APPENDIX" | "FORMS";
   
   patient_profile: {
     id: number;
     name: string;
     phone: string;
     avatar_url?: string;
+    age?: number | string;
+    marital_status?: string;
+    education?: string;
+    job?: string;
   };
+
+  clinical_summary?: string;
 
   // --- The 4 Data Pillars ---
   roadmap_data: TherapyRoadmap;
+  active_goals: string[]; // [NEW] Added this field
   appendix_data: ThoughtAppendix;
-  tasks: RescueTask[]; // For the Rescue Net tab
-  forms: any[]; // History of completed forms
-  available_forms: FormDefinition[]; // Form templates
+  tasks: RescueTask[]; 
+  forms: any[]; 
+  available_forms: FormDefinition[];
 
-  // Legacy/flat session history, can be used to find full report data by doc_id
   sessions: any[]; 
   
-  // For real-time UI updates triggered by the agent
   ui_signal?: { 
     type: "OPEN_FORM" | "DRAFT_FORM"; 
     form?: FormDefinition; 
-    data?: Record<string, any>; // Pre-filled data for drafts
+    data?: Record<string, any>; 
   };
 }

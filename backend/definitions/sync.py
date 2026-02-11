@@ -10,7 +10,7 @@ from django.contrib.auth import get_user_model  # [NEW] Import for User model
 from billing.models import BillingProduct, DiscountCode, SubscriptionPlan, BillingConfig
 from services.models import AgentService, ServiceSuggestion
 from services.models_canvas import CanvasType, AgentCanvasConfig
-
+from vania_core.models import Location
 # --- Registries ---
 from .billing import ALL_PRODUCTS, DISCOUNTS, PLANS
 from .agents.vania import AGENTS 
@@ -20,6 +20,23 @@ from .support import SUPPORT_INFO, FAQS       # [NEW] Import Definitions
 
 logger = logging.getLogger(__name__)
 
+VANIA_LOCATIONS = [
+    "تهران - شمال",
+    "تهران - مرکز",
+    "تهران - شرق",
+    "تهران - غرب",
+    "تهران - جنوب",
+    "سعادت‌آباد / شهرک غرب",
+    "ونک / ملاصدرا",
+    "جردن / آفریقا",
+    "پاسداران / دروس",
+    "یوسف‌آباد / امیرآباد",
+    "تجریش / نیاوران",
+    "تهرانپارس",
+    "صادقیه / آریاشهر",
+    "انقلاب / ولیعصر",
+]
+    
 class DefinitionSync:
     
     @staticmethod
@@ -211,7 +228,19 @@ class DefinitionSync:
                     "is_active": True
                 }
             )
-            
+
+
+    @staticmethod
+    def sync_locations():
+        """
+        Syncs predefined Vania locations from definitions to the DB.
+        """
+        logger.info(f"🔄 [Sync] Vania Locations: {len(VANIA_LOCATIONS)} items")
+        for loc_name in VANIA_LOCATIONS:
+            Location.objects.update_or_create(
+                name=loc_name,
+            )
+                    
     @classmethod
     def sync_all(cls):
         logger.info("--- Starting Definition Synchronization ---")
@@ -223,6 +252,7 @@ class DefinitionSync:
             cls.sync_billing_config()
             cls.sync_faqs()
             cls.sync_agents() 
+            cls.sync_locations()
             cls.sync_plans_and_products()
             cls.sync_discounts()
         logger.info("--- Synchronization Complete ---")
