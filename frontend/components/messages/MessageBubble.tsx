@@ -41,6 +41,44 @@ const getValidUrl = (url: string | null | undefined) => {
   return url;
 };
 
+const URL_PATTERN = /(https?:\/\/[^\s]+|www\.[^\s]+)/gi;
+const TRAILING_PUNCTUATION_PATTERN = /[),.!?:;]+$/;
+
+const renderTextWithLinks = (text: string) => {
+  if (!text) return null;
+
+  const parts = text.split(URL_PATTERN);
+
+  return parts.map((part, index) => {
+    if (!part) return null;
+    const match = part.match(URL_PATTERN);
+    if (!match) return <span key={index}>{part}</span>;
+
+    const trailingMatch = part.match(TRAILING_PUNCTUATION_PATTERN);
+    const trailing = trailingMatch?.[0] ?? "";
+    const rawUrl = trailing ? part.slice(0, -trailing.length) : part;
+    const href = rawUrl.startsWith("www.") ? `https://${rawUrl}` : rawUrl;
+
+    return (
+      <span key={index}>
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "underline underline-offset-2 break-all",
+            "hover:opacity-90",
+            "focus:outline-none focus-visible:ring-1 focus-visible:ring-current rounded-sm"
+          )}
+        >
+          {rawUrl}
+        </a>
+        {trailing}
+      </span>
+    );
+  });
+};
+
 export function MessageBubble({ message, isSequence = false }: MessageBubbleProps) {
   const { is_me, message_type, attachment_url, content } = message;
   const [isImageOpen, setIsImageOpen] = useState(false);
@@ -63,7 +101,7 @@ export function MessageBubble({ message, isSequence = false }: MessageBubbleProp
       
       {/* 1. TEXT MESSAGE */}
       {message_type === 'TEXT' && (
-        <p className="whitespace-pre-wrap min-w-[80px]">{content}</p>
+        <p className="whitespace-pre-wrap min-w-[80px] break-words">{renderTextWithLinks(content)}</p>
       )}
 
       {/* 2. AUDIO MESSAGE */}
@@ -74,7 +112,11 @@ export function MessageBubble({ message, isSequence = false }: MessageBubbleProp
              <span className="text-[10px]">پیام صوتی</span>
           </div>
           <AudioPlayer src={validUrl} isMe={is_me} />
-          {content && <p className="mt-2 text-xs opacity-90 border-t border-white/20 pt-1.5 mx-1">{content}</p>}
+          {content && (
+            <p className="mt-2 text-xs opacity-90 border-t border-white/20 pt-1.5 mx-1 whitespace-pre-wrap break-words">
+              {renderTextWithLinks(content)}
+            </p>
+          )}
         </div>
       )}
 
@@ -106,7 +148,11 @@ export function MessageBubble({ message, isSequence = false }: MessageBubbleProp
             </DialogContent>
           </Dialog>
           
-          {content && <p className={cn("px-3 py-2 text-sm", is_me ? "text-primary-foreground" : "text-foreground")}>{content}</p>}
+          {content && (
+            <p className={cn("px-3 py-2 text-sm whitespace-pre-wrap break-words", is_me ? "text-primary-foreground" : "text-foreground")}>
+              {renderTextWithLinks(content)}
+            </p>
+          )}
         </div>
       )}
 
@@ -140,7 +186,11 @@ export function MessageBubble({ message, isSequence = false }: MessageBubbleProp
               </div>
             </div>
           </a>
-          {content && <p className="text-xs opacity-90 whitespace-pre-wrap">{content}</p>}
+          {content && (
+            <p className="text-xs opacity-90 whitespace-pre-wrap break-words">
+              {renderTextWithLinks(content)}
+            </p>
+          )}
         </div>
       )}
 

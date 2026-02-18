@@ -29,6 +29,9 @@ class PatientManagerCanvas(BaseCanvas):
             "sessions": [],            # List of session log objects
             "tasks": [],               # List of active homework/tasks
             "forms": [],               # List of filled forms meta-data
+            "tests": [],               # List of prescribed psychology tests
+            "tests_catalog": [],       # Static catalog used to prescribe tests
+            "forms_tests_analysis": "",
             
             # UX Hints
             "last_update": None,       # Timestamp of last sync

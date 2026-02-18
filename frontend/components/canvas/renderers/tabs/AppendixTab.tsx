@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AddResourceDialog } from "./appendix/AddResourceDialog";
+import { AppendixDownloadButton } from "./appendix/AppendixDownloadButton";
 
 interface Props {
   library: ThoughtAppendix;
@@ -54,6 +55,7 @@ export function AppendixTab({ library, patientId, onEdit }: Props) {
                 </Button>
             }
         />
+        <AppendixDownloadButton library={library} patientId={patientId} />
       </div>
     );
   }
@@ -62,7 +64,8 @@ export function AppendixTab({ library, patientId, onEdit }: Props) {
     <div className="space-y-4 pb-10 animate-in fade-in slide-in-from-right-2 duration-300">
       
       {/* Header Action */}
-      <div className="flex justify-end mb-2">
+      <div className="mb-2 flex flex-wrap justify-end gap-2">
+         <AppendixDownloadButton library={library} patientId={patientId} />
          <AddResourceDialog 
             patientId={patientId}
             onSuccess={handleResourceAdded}
@@ -78,17 +81,17 @@ export function AppendixTab({ library, patientId, onEdit }: Props) {
             <div className={`absolute top-0 right-0 w-1.5 h-full bg-gradient-to-b from-primary/40 to-transparent ${conf.color}`} />
             
             <CardContent className="p-5">
-              <div className="flex justify-between items-start mb-3">
-                <div className="flex items-center gap-3">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-3">
                   <div className={`p-2 rounded-xl ${conf.color}`}>
                     <Icon className="w-5 h-5" />
                   </div>
-                  <div>
-                    <h4 className="font-bold text-sm text-foreground leading-tight">{res.title}</h4>
-                    <p className="text-xs text-muted-foreground mt-0.5">{res.creator}</p>
+                  <div className="min-w-0">
+                    <h4 className="truncate font-bold text-sm text-foreground leading-tight">{res.title}</h4>
+                    <p className="truncate text-xs text-muted-foreground mt-0.5">{res.creator}</p>
                   </div>
                 </div>
-                <Badge variant="outline" className={`text-[10px] font-normal ${conf.color}`}>
+                <Badge variant="outline" className={`shrink-0 text-[10px] font-normal ${conf.color}`}>
                   {conf.label}
                 </Badge>
               </div>

@@ -73,7 +73,7 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
     <div className="flex flex-col h-full bg-background font-sans relative overflow-hidden" dir="rtl">
       
       {/* --- HEADER SECTION --- */}
-      <div className="p-6 pb-2 shrink-0 border-b border-border/40 bg-background/50 backdrop-blur-sm z-10">
+      <div className="z-10 shrink-0 border-b border-border/40 bg-background/50 p-4 pb-2 backdrop-blur-sm sm:p-6 sm:pb-2">
         
         {/* Patient Identity */}
         <div className="flex justify-between items-start">
@@ -96,7 +96,8 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
         </div>
 
         {/* --- NAVIGATION TABS --- */}
-        <div className="mt-6 flex gap-1 p-1 bg-muted/30 border border-border/50 rounded-xl">
+        <div className="-mx-1 mt-4 overflow-x-auto pb-1 sm:mx-0 sm:mt-6">
+          <div className="inline-flex min-w-max gap-1 rounded-xl border border-border/50 bg-muted/30 p-1">
           {[
             { id: "PROFILE", label: "پرونده", icon: User },
             { id: "ROADMAP", label: "سند پشتیبان", icon: Map },
@@ -112,27 +113,31 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
                 onEdit({ active_tab: tab.id as any }); 
               }}
               className={cn(
-                "flex-1 flex items-center justify-center gap-2 py-2 text-xs font-medium rounded-lg transition-all duration-200",
+                "flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-medium transition-all duration-200 sm:gap-2 sm:px-4",
                 activeTab === tab.id 
                   ? "bg-background text-primary shadow-sm border border-border/50" 
                   : "text-muted-foreground hover:bg-muted hover:text-foreground"
               )}
             >
               <tab.icon className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{tab.label}</span>
+              <span className="hidden truncate sm:inline">{tab.label}</span>
             </button>
           ))}
+          </div>
         </div>
       </div>
 
       {/* --- CONTENT AREA --- */}
       {/* This area dynamically renders the content of the active tab. */}
-      <div className="flex-1 overflow-y-auto min-h-0 p-4 sm:p-6 bg-muted/5">
+      <div className="flex-1 min-h-0 min-w-0 overflow-y-auto bg-muted/5 p-3 sm:p-6">
         
         {activeTab === "PROFILE" && (
           <ProfileTab 
             patientProfile={patient_profile}
             clinicalSummary={clinical_summary || ""}
+            formsTestsAnalysis={data.forms_tests_analysis || ""}
+            forms={data.forms || []}
+            tests={data.tests || []}
             onEdit={onEdit}
             isLocked={isLocked}
           />
@@ -168,6 +173,8 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
         {activeTab === "FORMS" && (
           <FormsTab 
             forms={data.forms || []} 
+            tests={data.tests || []}
+            testsCatalog={data.tests_catalog || []}
             availableForms={data.available_forms || []}
             uiSignal={data.ui_signal}
             onEdit={onEdit}

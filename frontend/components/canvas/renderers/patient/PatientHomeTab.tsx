@@ -9,6 +9,7 @@ interface Props {
   greeting: string;
   currentPhase: string;
   activeGoals: string[];
+  formsTestsAnalysis: string;
   onTabChange: (tab: string) => void;
 }
 
@@ -22,7 +23,7 @@ const PHASE_LABELS: Record<string, string> = {
   "PHASE_6_APPENDIX": "فاز ۶: تثبیت و پیوست اندیشه"
 };
 
-export function PatientHomeTab({ greeting, currentPhase, activeGoals, onTabChange }: Props) {
+export function PatientHomeTab({ greeting, currentPhase, activeGoals, formsTestsAnalysis, onTabChange }: Props) {
   
   return (
     <div className="space-y-6 pb-10 animate-in fade-in slide-in-from-right-2 duration-300 font-sans">
@@ -84,6 +85,19 @@ export function PatientHomeTab({ greeting, currentPhase, activeGoals, onTabChang
           </div>
         )}
       </section>
+
+      {formsTestsAnalysis?.trim() && (
+        <section>
+          <div className="flex items-center justify-between mb-3 px-1">
+            <h3 className="text-sm font-bold text-foreground">تحلیل بالینی تست ها و فرم ها</h3>
+          </div>
+          <Card className="border-muted-100 shadow-sm">
+            <CardContent className="p-4 text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
+              {formsTestsAnalysis}
+            </CardContent>
+          </Card>
+        </section>
+      )}
 
     </div>
   );

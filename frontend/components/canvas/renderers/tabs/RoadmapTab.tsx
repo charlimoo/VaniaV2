@@ -146,7 +146,7 @@ if (selectedSession) {
       )}
       
       <div className="bg-card border rounded-xl p-4 shadow-sm flex flex-col gap-3">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-wrap justify-between items-center gap-2">
           <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
               <Map className="w-4 h-4 text-primary"/>
               نقشه راه درمان
@@ -173,13 +173,13 @@ if (selectedSession) {
       </div>
 
       {/* --- Session Timeline --- */}
-      <div className="relative border-r-2 border-border/60 mr-3.5 space-y-8 pl-1">
+      <div className="relative mr-1.5 space-y-6 border-r-2 border-border/60 pl-1 sm:mr-3.5 sm:space-y-8">
         {roadmap.sessions.map((session, index) => (
-          <div key={index} className="relative pr-8 group">
+          <div key={index} className="group relative pr-5 sm:pr-8">
             
             {/* Timeline Dot and Line */}
             <div className={cn(
-                "absolute -right-[9px] top-5 w-4 h-4 rounded-full border-4 border-background shadow-sm z-10 transition-colors",
+                "absolute -right-[8px] top-5 z-10 h-3.5 w-3.5 rounded-full border-4 border-background shadow-sm transition-colors sm:-right-[9px] sm:h-4 sm:w-4",
                 session.status === "COMPLETED" ? "bg-emerald-500" :
                 session.status === "READY" ? "bg-blue-500 ring-2 ring-blue-100" :
                 "bg-muted-foreground/30"
@@ -192,11 +192,16 @@ if (selectedSession) {
             )}>
               <CardContent className="p-4">
                 {/* Session Header */}
-                <div className="flex justify-between items-start mb-3">
-                  <div>
-                    <h4 className="font-bold text-sm text-foreground flex items-center gap-2">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <h4 className="flex items-center gap-2 truncate font-bold text-sm text-foreground">
                       جلسه {session.session_number}: {session.title}
                     </h4>
+                    {session.scheduled_date && (
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        تاریخ برنامه‌ریزی: {new Date(session.scheduled_date).toLocaleDateString("fa-IR")}
+                      </div>
+                    )}
                     <span className={cn(
                         "text-[10px] font-medium px-2 py-0.5 rounded mt-1.5 inline-block",
                         session.status === "DRAFT" && "bg-muted text-muted-foreground",
@@ -208,7 +213,7 @@ if (selectedSession) {
                     </span>
                   </div>
                   
-                  <div className="flex items-center gap-1">
+                  <div className="flex shrink-0 items-center gap-1">
                     {/* View/Details Button */}
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => setSelectedSession(session)}>
                       <Eye className="w-3.5 h-3.5" />
@@ -232,9 +237,9 @@ if (selectedSession) {
 
                 {/* Private Doctor Instructions (Preview) */}
                 {session.doctor_instructions && (
-                  <div className="relative p-2 pl-8 bg-amber-50/50 dark:bg-amber-900/10 border-r-2 border-amber-300 text-xs mt-2">
+                  <div className="relative mt-2 border-r-2 border-amber-300 bg-amber-50/50 p-2 pl-8 text-xs dark:bg-amber-900/10">
                       <Lock className="w-3 h-3 absolute top-2 left-2 text-amber-400" />
-                      <p className="opacity-70 leading-relaxed text-amber-900 dark:text-amber-100 truncate">
+                      <p className="line-clamp-2 opacity-70 leading-relaxed text-amber-900 dark:text-amber-100">
                         <span className="font-semibold text-amber-700">راهنما:</span> {session.doctor_instructions}
                       </p>
                   </div>

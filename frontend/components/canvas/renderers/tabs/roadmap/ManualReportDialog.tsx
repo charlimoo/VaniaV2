@@ -169,12 +169,12 @@ export function ManualReportDialog({ patientId, sessionNumber, sessionTitle, ini
             <Label className="flex items-center gap-2 text-xs font-semibold text-foreground/80">
                 <ShieldAlert className="w-3.5 h-3.5 text-red-500" />
                 یادداشت‌های محرمانه 
-                <span className="text-[9px] bg-red-950/20 text-red-400 border border-red-900/30 px-2 py-0.5 rounded-full">فقط پزشک</span>
+                <span className="text-[9px] bg-red-950/20 text-red-400 border border-red-900/30 px-2 py-0.5 rounded-full">فقط متخصص</span>
             </Label>
             <Textarea 
               value={privateNotes} 
               onChange={(e) => setPrivateNotes(e.target.value)} 
-              placeholder="یادداشت‌های شخصی پزشک..."
+              placeholder="یادداشت‌های شخصی متخصص..."
               className="bg-red-950/10 border-red-900/30 focus:border-red-900/60 min-h-[80px] text-sm text-red-200/90 placeholder:text-red-200/30"
             />
           </div>

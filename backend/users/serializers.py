@@ -27,13 +27,24 @@ class PasswordLoginSerializer(serializers.Serializer):
         return attrs
 
 class ChangePasswordSerializer(serializers.Serializer):
-    old_password = serializers.CharField(required=True)
+    old_password = serializers.CharField(required=False, allow_blank=True)
     new_password = serializers.CharField(required=True)
     confirm_password = serializers.CharField(required=True)
 
     def validate(self, attrs):
+        user = self.context.get('user')
+        has_existing_password = bool(getattr(user, 'password', '')) and user.has_usable_password() if user else False
+
+        if has_existing_password and not attrs.get('old_password'):
+            raise serializers.ValidationError({"old_password": "Current password is required."})
+
+        if has_existing_password and user and not user.check_password(attrs.get('old_password', '')):
+            raise serializers.ValidationError({"old_password": "Current password is incorrect."})
+
         if attrs['new_password'] != attrs['confirm_password']:
             raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+
+        validate_password(attrs['new_password'], user=user)
         return attrs
 
 class UserWalletSerializer(serializers.ModelSerializer):
@@ -52,13 +63,15 @@ class UserSerializer(serializers.ModelSerializer):
     wallet = UserWalletSerializer(read_only=True)
     role_label = serializers.CharField(source='role.name', read_only=True)
     role_slug = serializers.CharField(source='role.slug', read_only=True)
+    has_password = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
         fields = (
             'id', 'phone_number', 'email', 'full_name', 
             'date_joined', 'password', 'wallet',
-            'role_label', 'role_slug', 'medical_license', 'is_verified_doctor'
+            'role_label', 'role_slug', 'medical_license', 'is_verified_doctor',
+            'has_password'
         )
         read_only_fields = ('phone_number', 'date_joined', 'id', 'role_label', 'role_slug', 'is_verified_doctor')
 
@@ -69,6 +82,9 @@ class UserSerializer(serializers.ModelSerializer):
             instance.set_password(password)
             instance.save()
         return instance
+
+    def get_has_password(self, obj):
+        return bool(getattr(obj, 'password', '')) and obj.has_usable_password()
 
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:

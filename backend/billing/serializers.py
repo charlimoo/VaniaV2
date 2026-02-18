@@ -37,12 +37,18 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
         slug_field='name',
         source='agents' 
     )
+    included_agent_slugs = serializers.SlugRelatedField(
+        many=True,
+        read_only=True,
+        slug_field='slug',
+        source='agents'
+    )
 
     class Meta:
         model = SubscriptionPlan
         fields = (
             'id', 'slug', 'name', 'description', 'price', 
-            'duration_days', 'included_credits', 'included_agents'
+            'duration_days', 'included_credits', 'included_agents', 'included_agent_slugs'
         )
 
 # --- Updated Product Serializer ---

@@ -72,7 +72,7 @@ export function PatientSelector() {
         .then(res => res.ok ? res.json() : Promise.reject('Failed to fetch patients'))
         .then(data => {
           const validPatients: Patient[] = data
-            .filter((p: any) => p.patient_id !== null)
+            .filter((p: any) => p.patient_id !== null && p.status === "ACTIVE")
             .map((p: any) => ({
               id: p.patient_id,
               full_name: p.name,
@@ -224,9 +224,9 @@ export function PatientSelector() {
           
           <CommandSeparator />
           
-          <div className="p-1 bg-muted/30">
+          {/* <div className="p-1 bg-muted/30">
              <AddPatientModal />
-          </div>
+          </div> */}
         </Command>
       </PopoverContent>
     </Popover>

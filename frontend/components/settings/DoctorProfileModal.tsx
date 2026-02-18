@@ -51,6 +51,76 @@ interface DoctorProfileModalProps {
   onUpdate: () => void;
 }
 
+const ONES = ["", "یک", "دو", "سه", "چهار", "پنج", "شش", "هفت", "هشت", "نه"];
+const TEENS = ["ده", "یازده", "دوازده", "سیزده", "چهارده", "پانزده", "شانزده", "هفده", "هجده", "نوزده"];
+const TENS = ["", "", "بیست", "سی", "چهل", "پنجاه", "شصت", "هفتاد", "هشتاد", "نود"];
+const HUNDREDS = ["", "صد", "دویست", "سیصد", "چهارصد", "پانصد", "ششصد", "هفتصد", "هشتصد", "نهصد"];
+const EN_NUMBER_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+function tripletToPersianWords(num: number): string {
+  if (num === 0) return "";
+
+  const parts: string[] = [];
+  const hundred = Math.floor(num / 100);
+  const remainder = num % 100;
+
+  if (hundred > 0) parts.push(HUNDREDS[hundred]);
+
+  if (remainder >= 10 && remainder <= 19) {
+    parts.push(TEENS[remainder - 10]);
+  } else {
+    const ten = Math.floor(remainder / 10);
+    const one = remainder % 10;
+    if (ten > 0) parts.push(TENS[ten]);
+    if (one > 0) parts.push(ONES[one]);
+  }
+
+  return parts.join(" و ");
+}
+
+function numberToPersianWords(num: number): string {
+  if (num === 0) return "صفر";
+
+  const scales = ["", "هزار", "میلیون", "میلیارد", "تریلیون"];
+  const parts: string[] = [];
+  let remaining = num;
+  let scaleIndex = 0;
+
+  while (remaining > 0 && scaleIndex < scales.length) {
+    const chunk = remaining % 1000;
+    if (chunk > 0) {
+      const words = tripletToPersianWords(chunk);
+      const scale = scales[scaleIndex];
+      parts.unshift(scale ? `${words} ${scale}` : words);
+    }
+    remaining = Math.floor(remaining / 1000);
+    scaleIndex += 1;
+  }
+
+  return parts.join(" و ");
+}
+
+function parseMeetingPriceValue(value: number | string | null | undefined): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "string" ? Number(value.replace(/,/g, "")) : value;
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.round(parsed);
+}
+
+function formatMeetingPriceInput(value: number | string | null | undefined): string {
+  const parsed = parseMeetingPriceValue(value);
+  if (parsed === null) return "";
+  return EN_NUMBER_FORMATTER.format(parsed);
+}
+
+function getMeetingPriceDisplay(value: number | string | null | undefined): { words: string } | null {
+  const rounded = parseMeetingPriceValue(value);
+  if (rounded === null) return null;
+  return {
+    words: `${numberToPersianWords(rounded)} تومان`,
+  };
+}
+
 export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorProfileModalProps) {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -158,6 +228,7 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
   };
   
   const isPublic = watch("is_public");
+  const meetingPriceDisplay = getMeetingPriceDisplay(watch("meeting_price"));
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
@@ -244,7 +315,32 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
                 
                 <div className="grid gap-2">
                     <Label htmlFor="meeting_price">هزینه جلسه (تومان)</Label>
-                    <Input id="meeting_price" type="number" {...register("meeting_price", { valueAsNumber: true })} />
+                    <Controller
+                        control={control}
+                        name="meeting_price"
+                        render={({ field }) => (
+                            <Input
+                                id="meeting_price"
+                                type="text"
+                                inputMode="numeric"
+                                dir="ltr"
+                                className="text-left"
+                                value={formatMeetingPriceInput(field.value)}
+                                onBlur={field.onBlur}
+                                name={field.name}
+                                ref={field.ref}
+                                onChange={(e) => {
+                                    const digitsOnly = e.target.value.replace(/[^\d]/g, "");
+                                    field.onChange(digitsOnly ? Number(digitsOnly) : undefined);
+                                }}
+                            />
+                        )}
+                    />
+                    {meetingPriceDisplay && (
+                      <div className="space-y-1 text-xs">
+                        <p className="text-muted-foreground">{meetingPriceDisplay.words}</p>
+                      </div>
+                    )}
                 </div>
                 
                 <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20">

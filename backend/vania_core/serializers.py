@@ -91,7 +91,7 @@ class InvitePatientSerializer(serializers.Serializer):
     [MODIFIED] Includes demographic fields required for Phase 1 analysis.
     """
     phone_number = serializers.CharField(max_length=20, required=True)
-    full_name = serializers.CharField(max_length=100, required=True, allow_blank=False)
+    full_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
     
     # --- Demographics for Phase 1 ---
     age = serializers.IntegerField(required=False, min_value=0, max_value=120, allow_null=True)
@@ -127,6 +127,16 @@ class ConnectionListSerializer(serializers.ModelSerializer):
 class RespondConnectionSerializer(serializers.Serializer):
     """Validates the 'ACCEPT' or 'REJECT' action for connection requests."""
     action = serializers.ChoiceField(choices=['ACCEPT', 'REJECT'])
+
+
+class PatientLookupSerializer(serializers.Serializer):
+    """Validates lookup input for checking patient existence by phone."""
+    phone_number = serializers.CharField(max_length=20, required=True)
+
+
+class UpdateConnectionStatusSerializer(serializers.Serializer):
+    """Validates doctor-driven patient status transitions."""
+    action = serializers.ChoiceField(choices=['ACTIVATE', 'DEACTIVATE'])
 
 class AppointmentRequestSerializer(serializers.Serializer):
     """Validates the form data a patient submits when requesting a doctor."""
@@ -218,3 +228,4 @@ class AddSessionSerializer(serializers.Serializer):
     """Validates data for manually adding a new planned session to the roadmap."""
     title = serializers.CharField(max_length=200)
     instructions = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    scheduled_date = serializers.CharField(required=False, allow_blank=True, allow_null=True)

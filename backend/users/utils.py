@@ -40,7 +40,7 @@ def verify_doctor_license(full_name, license_code):
     Includes a backdoor for '123456'.
     """
     if not license_code or not full_name:
-        return False, "نام و کد نظام الزامی است", None
+        return False, "نام و کد عضویت الزامی است", None
 
     # --- BACKDOOR FOR TESTING ---
     if str(license_code) == "123456":
@@ -60,7 +60,7 @@ def verify_doctor_license(full_name, license_code):
         response = requests.get(url, headers=headers, verify=False, timeout=10)
         
         if response.status_code != 200:
-            return False, "عدم پاسخگویی سامانه نظام روانشناسی", None
+            return False, "عدم پاسخگویی سامانه", None
 
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -68,7 +68,7 @@ def verify_doctor_license(full_name, license_code):
         title_tag = soup.select_one('.card-title')
         
         if not title_tag:
-            return False, "عضوی با این کد نظام یافت نشد", None
+            return False, "عضوی با این کد یافت نشد", None
 
         found_name = title_tag.get_text(strip=True)
         is_valid = is_loose_match(full_name, found_name)

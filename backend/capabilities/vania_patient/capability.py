@@ -123,6 +123,7 @@ You work in close coordination with their doctor's clinical treatment plan.
                 "timeline": data["timeline"],
                 "library": data["library"],
                 "active_goals": data["active_goals"],
+                "forms_tests_analysis": data.get("forms_tests_analysis", ""),
                 "my_doctors": data.get("my_doctors", []) 
             }
         except Exception as e:

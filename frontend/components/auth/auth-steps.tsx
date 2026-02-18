@@ -104,7 +104,7 @@ export function StepRegistration({
 
   const handleVerify = async () => {
     const { fullName, licenseCode } = form.getValues()
-    if (!licenseCode || licenseCode.length < 3) return toast.error("کد نظام نامعتبر است");
+    if (!licenseCode || licenseCode.length < 3) return toast.error("شماره عضویت نامعتبر است");
     if (!fullName || fullName.length < 3) return toast.error("نام و نام خانوادگی الزامی است");
 
     setVerificationStatus("verifying")
@@ -126,7 +126,7 @@ export function StepRegistration({
 
   const onFormSubmit = (data: any) => {
     if (role === 'doctor') {
-        if (!data.licenseCode) return form.setError("licenseCode", { message: "کد نظام الزامی است" })
+        if (!data.licenseCode) return form.setError("licenseCode", { message: "شماره عضویت الزامی است" })
         if (verificationStatus !== 'verified' && !bypassVerification) {
             if (verificationStatus === 'idle') return toast.warning("لطفاً دکمه استعلام را بزنید");
             return 
@@ -200,7 +200,7 @@ export function StepRegistration({
               )}>
                 <Input 
                   {...form.register("licenseCode")} 
-                  placeholder="کد نظام روانشناسی" 
+                  placeholder="شماره عضویت نظام روانشناسی و روانپزشکی" 
                   className="h-8 border-0 bg-transparent focus-visible:ring-0 text-center font-mono text-sm placeholder:text-zinc-600 w-full"
                   disabled={verificationStatus === 'verified'}
                 />

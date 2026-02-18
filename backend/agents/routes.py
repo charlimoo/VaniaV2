@@ -562,7 +562,7 @@ async def transcribe_audio(
                 file=audio_file,
                 language="fa",
                 response_format="verbose_json", 
-                prompt="the user is talking in Persian about trade and business"
+                prompt="the user is talking in Persian language in a therapy session. there might be multiple speakers."
             )
         
         text = transcript_response.text

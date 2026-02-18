@@ -83,14 +83,14 @@ export function AddResourceDialog({ patientId, onSuccess, trigger }: Props) {
         )}
       </DialogTrigger>
       
-      <DialogContent className="sm:max-w-md" dir="rtl">
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-md" dir="rtl">
         <DialogHeader className="text-right">
           <DialogTitle>افزودن به پیوست اندیشه</DialogTitle>
         </DialogHeader>
         
         <div className="grid gap-4 py-4">
-          <div className="grid grid-cols-3 gap-3">
-            <div className="col-span-2 grid gap-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid gap-2 sm:col-span-2">
                 <Label className="text-xs flex gap-1"><BookOpen className="w-3 h-3"/> عنوان اثر</Label>
                 <Input value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})} />
             </div>
@@ -133,7 +133,7 @@ export function AddResourceDialog({ patientId, onSuccess, trigger }: Props) {
         </div>
 
         <DialogFooter>
-          <Button onClick={handleSubmit} disabled={loading} className="w-full">
+          <Button onClick={handleSubmit} disabled={loading} className="w-full sm:w-auto">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "افزودن به کتابخانه"}
           </Button>
         </DialogFooter>

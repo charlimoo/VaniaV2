@@ -18,6 +18,8 @@ import { BillingProduct } from "@/lib/types";
 import { formatCurrency, cn } from "@/lib/utils";
 import { APP_CONFIG } from "@/lib/config";
 
+const DOCTOR_ONLY_AGENT_SLUG = "vania-doctor-assistant";
+
 export default function BillingPage() {
 const { user, loading: userLoading, refreshUser } = useUser();
   const { config } = useConfig();
@@ -86,6 +88,12 @@ const { user, loading: userLoading, refreshUser } = useUser();
 
   // --- Logic to get Active Plan Description ---
   const currentPlanName = user?.wallet?.active_plan_name;
+  const isDoctor = user?.role_slug === "doctor";
+  const visiblePlans = plans.filter((prod) => {
+    const includedAgentSlugs = prod.plan_details?.included_agent_slugs || [];
+    const isDoctorOnlyPlan = includedAgentSlugs.includes(DOCTOR_ONLY_AGENT_SLUG);
+    return isDoctor || !isDoctorOnlyPlan;
+  });
   
   // Find the plan product that matches the user's active plan name to get the description
   const activePlanProduct = plans.find(
@@ -130,12 +138,12 @@ const { user, loading: userLoading, refreshUser } = useUser();
          </div>
 
          {loadingProducts ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {[1,2].map(i => <div key={i} className="h-64 bg-muted/20 animate-pulse rounded-xl" />)}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                {[1, 2, 3].map(i => <div key={i} className="h-64 bg-muted/20 animate-pulse rounded-xl" />)}
             </div>
          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {plans.map((prod: any) => {
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-6">
+                {visiblePlans.map((prod: any) => {
                     const plan = prod.plan_details; 
                     const isCurrent = currentPlanName === plan.name;
 
@@ -240,6 +248,11 @@ const { user, loading: userLoading, refreshUser } = useUser();
                         </Card>
                     );
                 })}
+            </div>
+         )}
+         {!loadingProducts && visiblePlans.length === 0 && (
+            <div className="rounded-xl border border-dashed border-muted-foreground/30 p-6 text-center text-sm text-muted-foreground">
+              در حال حاضر طرح قابل نمایش برای حساب شما وجود ندارد.
             </div>
          )}
       </div>

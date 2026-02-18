@@ -90,7 +90,7 @@ export function EditTaskDialog({ task, patientId, onSuccess }: Props) {
             <Pencil className="w-3 h-3" />
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md" dir="rtl">
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-md" dir="rtl">
         <DialogHeader className="text-right">
           <DialogTitle>ویرایش تکلیف</DialogTitle>
         </DialogHeader>
@@ -112,7 +112,7 @@ export function EditTaskDialog({ task, patientId, onSuccess }: Props) {
           </div>
         </div>
         <DialogFooter>
-          <Button onClick={handleSubmit} disabled={loading} className="w-full gap-2">
+          <Button onClick={handleSubmit} disabled={loading} className="w-full gap-2 sm:w-auto">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
             ذخیره تغییرات
           </Button>

@@ -1,7 +1,10 @@
 # backend/vania_core/views.py
 import logging
+import mimetypes
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from django.http import FileResponse
+from django.core.files.storage import default_storage
 from rest_framework import generics, status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -14,8 +17,10 @@ from .services import (
     RoadmapService, 
     AppendixService, 
     TaskService, 
-    SessionService
+    SessionService,
+    ProfileService,
 )
+from .tests_service import ClinicalTestsService
 from .models import (
     TreatmentConnection, 
     PatientInvite, 
@@ -32,6 +37,7 @@ from .serializers import (
     PublicDoctorSerializer, AppointmentRequestSerializer, NotificationSerializer,
     SecureMessageSerializer, ConversationSerializer, RoleVerificationRequestSerializer,
     DoctorProfileUpdateSerializer, LocationSerializer,
+    PatientLookupSerializer, UpdateConnectionStatusSerializer,
     
     # New VCOS Serializers
     TherapyRoadmapSerializer, CulturalResourceSerializer, AddSessionSerializer
@@ -59,7 +65,7 @@ class DoctorInvitePatientView(APIView):
         if serializer.is_valid():
             data = serializer.validated_data
             
-            success, message, patient = PatientManagementService.invite_patient_by_phone(
+            success, message, patient, conn_status, activation_locked = PatientManagementService.invite_patient_by_phone(
                 doctor_user=request.user, 
                 phone_number=data['phone_number'], 
                 full_name=data.get('full_name', '')
@@ -72,7 +78,9 @@ class DoctorInvitePatientView(APIView):
                 return Response({
                     "message": message, 
                     "patient_id": patient.id,
-                    "name": patient.full_name
+                    "name": patient.full_name,
+                    "status": conn_status,
+                    "activation_locked": activation_locked
                 }, status=status.HTTP_201_CREATED)
                 
             else: 
@@ -88,7 +96,14 @@ class DoctorDashboardPatientsView(APIView):
     
     def get(self, request):
         user = request.user
-        connections = TreatmentConnection.objects.filter(doctor=user, status__in=[TreatmentConnection.Status.ACTIVE, TreatmentConnection.Status.PENDING_PATIENT_APPROVAL]).select_related('patient')
+        connections = TreatmentConnection.objects.filter(
+            doctor=user,
+            status__in=[
+                TreatmentConnection.Status.ACTIVE,
+                TreatmentConnection.Status.PENDING_PATIENT_APPROVAL,
+                TreatmentConnection.Status.ARCHIVED
+            ]
+        ).select_related('patient')
         requests = TreatmentConnection.objects.filter(doctor=user, status=TreatmentConnection.Status.PENDING_DOCTOR_APPROVAL).select_related('patient')
         invites = PatientInvite.objects.filter(doctor=user, status=PatientInvite.InviteStatus.SENT)
         
@@ -102,6 +117,41 @@ class DoctorDashboardPatientsView(APIView):
         
         results.sort(key=lambda x: x['date'], reverse=True)
         return Response(results)
+
+
+class DoctorPatientLookupView(APIView):
+    """
+    Allows doctors to check whether a patient already exists by phone and if activation is currently locked.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+
+    def post(self, request):
+        serializer = PatientLookupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        phone = serializer.validated_data["phone_number"].strip()
+        patient = CustomUser.objects.filter(phone_number=phone).first()
+        if not patient:
+            return Response({"exists": False})
+
+        existing_conn = TreatmentConnection.objects.filter(
+            doctor=request.user,
+            patient=patient
+        ).first()
+
+        return Response({
+            "exists": True,
+            "patient": {
+                "id": patient.id,
+                "full_name": patient.full_name or "کاربر بدون نام",
+                "phone_number": patient.phone_number,
+            },
+            "existing_connection_status": existing_conn.status if existing_conn else None,
+            "activation_locked": PatientManagementService.is_activation_locked(
+                patient=patient,
+                current_doctor=request.user
+            ),
+        })
 
 class PublicDoctorListView(generics.ListAPIView):
     """Provides a list of public doctor profiles for the 'Find a Doctor' directory."""
@@ -182,7 +232,7 @@ class RequestAppointmentView(APIView):
             payload={"url": "/dashboard/patients?tab=REQUESTS", "data": form_data}
         )
 
-        return Response({"message": "درخواست شما برای پزشک ارسال شد."})
+        return Response({"message": "درخواست شما برای متخصص ارسال شد."})
 
 class PatientConnectionRequestsView(APIView):
     """Endpoint for a patient to view their pending connection requests from doctors."""
@@ -202,8 +252,17 @@ class RespondToConnectionView(APIView):
         serializer = RespondConnectionSerializer(data=request.data)
         if serializer.is_valid():
             action = serializer.validated_data['action']
-            connection.status = TreatmentConnection.Status.ACTIVE if action == 'ACCEPT' else TreatmentConnection.Status.REJECTED
-            connection.save()
+            if action == 'ACCEPT':
+                _, locked = PatientManagementService.activate_connection_or_lock(connection)
+                if locked:
+                    return Response({
+                        "message": "Connection accepted but currently archived due to another active doctor.",
+                        "status": connection.status,
+                        "activation_locked": True
+                    })
+            else:
+                connection.status = TreatmentConnection.Status.REJECTED
+                connection.save(update_fields=['status', 'updated_at'])
             return Response({"message": f"Connection {action.lower()}ed."})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -216,10 +275,55 @@ class DoctorRespondToRequestView(APIView):
         serializer = RespondConnectionSerializer(data=request.data)
         if serializer.is_valid():
             action = serializer.validated_data['action']
-            connection.status = TreatmentConnection.Status.ACTIVE if action == 'ACCEPT' else TreatmentConnection.Status.REJECTED
-            connection.save()
+            if action == 'ACCEPT':
+                _, locked = PatientManagementService.activate_connection_or_lock(connection)
+                if locked:
+                    return Response({
+                        "message": "Request accepted but patient remains inactive due to another active doctor.",
+                        "status": connection.status,
+                        "activation_locked": True
+                    })
+            else:
+                connection.status = TreatmentConnection.Status.REJECTED
+                connection.save(update_fields=['status', 'updated_at'])
             return Response({"message": f"Request {action.lower()}ed."})
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class DoctorUpdatePatientStatusView(APIView):
+    """
+    Allows doctors to activate/deactivate their patient connection.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+
+    def post(self, request, connection_id):
+        connection = get_object_or_404(TreatmentConnection, id=connection_id, doctor=request.user)
+        serializer = UpdateConnectionStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        action = serializer.validated_data["action"]
+        if action == "DEACTIVATE":
+            connection.status = TreatmentConnection.Status.ARCHIVED
+            connection.save(update_fields=["status", "updated_at"])
+            return Response({
+                "status": connection.status,
+                "activation_locked": False,
+                "message": "وضعیت بیمار غیرفعال شد."
+            })
+
+        activated, locked = PatientManagementService.activate_connection_or_lock(connection)
+        if not activated:
+            return Response({
+                "status": connection.status,
+                "activation_locked": locked,
+                "message": "این بیمار هم‌اکنون در پنل پزشک دیگری فعال است و فعلا قابل فعال‌سازی نیست."
+            }, status=status.HTTP_409_CONFLICT)
+
+        return Response({
+            "status": connection.status,
+            "activation_locked": locked,
+            "message": "وضعیت بیمار فعال شد."
+        })
 
 # ==============================================================================
 # == 3. MESSAGING & NOTIFICATION VIEWS
@@ -325,10 +429,159 @@ class RoadmapView(APIView):
             new_session = RoadmapService.add_session(
                 patient=patient, 
                 title=serializer.validated_data['title'],
-                instructions=serializer.validated_data.get('instructions', "")
+                instructions=serializer.validated_data.get('instructions', ""),
+                scheduled_date=serializer.validated_data.get('scheduled_date'),
             )
             return Response(new_session.model_dump(), status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ClinicalTestsView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_patient(self, request):
+        patient_id = request.query_params.get("patient_id") or request.data.get("patient_id")
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return None
+        return patient
+
+    def get(self, request):
+        patient = self.get_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied."}, status=403)
+        return Response({
+            "catalog": ClinicalTestsService.list_catalog(),
+            "tests": ClinicalTestsService.get_tests(patient),
+        })
+
+    def post(self, request):
+        patient = self.get_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied."}, status=403)
+
+        catalog_id = request.data.get("catalog_id")
+        title = request.data.get("title")
+        url = request.data.get("url")
+        result_summary = request.data.get("result_summary")
+        new_test = ClinicalTestsService.add_test(
+            patient=patient,
+            created_by=request.user,
+            catalog_id=int(catalog_id) if catalog_id else None,
+            title=title,
+            url=url,
+            result_summary=result_summary,
+        )
+        return Response(new_test, status=201)
+
+    def put(self, request, test_id):
+        patient = self.get_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied."}, status=403)
+
+        updated = ClinicalTestsService.update_test(
+            patient=patient,
+            created_by=request.user,
+            test_id=test_id,
+            payload=request.data,
+        )
+        if not updated:
+            return Response({"error": "Test not found."}, status=404)
+        return Response(updated)
+
+    def delete(self, request, test_id):
+        patient = self.get_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied."}, status=403)
+
+        deleted = ClinicalTestsService.delete_test(
+            patient=patient,
+            created_by=request.user,
+            test_id=test_id,
+        )
+        if not deleted:
+            return Response({"error": "Test not found."}, status=404)
+        return Response(status=204)
+
+
+class ClinicalTestFileUploadView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, test_id):
+        patient_id = request.data.get("patient_id")
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied."}, status=403)
+
+        uploaded_file = request.FILES.get("file")
+        if not uploaded_file:
+            return Response({"error": "File is required."}, status=400)
+
+        if not uploaded_file.name.lower().endswith(".pdf"):
+            return Response({"error": "Only PDF files are allowed."}, status=400)
+
+        doctor_summary = request.data.get("result_summary", "")
+        auto_summarize = str(request.data.get("auto_summarize", "true")).lower() == "true"
+
+        updated = ClinicalTestsService.attach_pdf_and_summarize(
+            patient=patient,
+            created_by=request.user,
+            test_id=test_id,
+            uploaded_file=uploaded_file,
+            doctor_summary=doctor_summary,
+            auto_summarize=auto_summarize,
+        )
+        if not updated:
+            return Response({"error": "Test not found."}, status=404)
+
+        return Response(updated)
+
+
+class ClinicalTestFileDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+
+    def delete(self, request, test_id):
+        patient_id = request.query_params.get("patient_id")
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied."}, status=403)
+
+        removed = ClinicalTestsService.remove_test_file(
+            patient=patient,
+            created_by=request.user,
+            test_id=test_id,
+        )
+        if not removed:
+            return Response({"error": "Test not found."}, status=404)
+
+        return Response({"status": "deleted"})
+
+
+class ClinicalTestFileDownloadView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+
+    def get(self, request, test_id):
+        patient_id = request.query_params.get("patient_id")
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied."}, status=403)
+
+        test = ClinicalTestsService.get_test(patient, test_id)
+        if not test or not test.get("file_path"):
+            return Response({"error": "File not found."}, status=404)
+
+        storage_path = test["file_path"]
+        if not default_storage.exists(storage_path):
+            return Response({"error": "Stored file missing."}, status=404)
+
+        file_name = test.get("file_name") or "test-result.pdf"
+        file_obj = default_storage.open(storage_path, "rb")
+        content_type = mimetypes.guess_type(file_name)[0] or "application/pdf"
+        response = FileResponse(file_obj, content_type=content_type)
+        response["Content-Disposition"] = f'attachment; filename=\"{file_name}\"'
+        return response
 
 
 class AppendixView(APIView):

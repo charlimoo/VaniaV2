@@ -443,7 +443,7 @@ export default function ChatPage() {
       <AuthDialog />
       <ChartToolUI /><DataTableToolUI /><OptionListToolUI /><MediaCardToolUI /><ProductCarouselToolUI /><DynamicFormToolUI />
 
-      <div key={threadId} className="flex flex-col h-full w-full bg-background overflow-hidden">
+      <div key={threadId} className="flex min-w-0 flex-col h-full w-full bg-background overflow-hidden">
         
         <GlobalHeader variant="chat" title={threadTitle}>
           <DebugInspector service={service} />
@@ -459,19 +459,19 @@ export default function ChatPage() {
           )}
         </GlobalHeader>
 
-        <div className="flex-1 overflow-hidden relative flex flex-col">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {isMobile ? (
             <div 
-                className="relative w-full h-full overflow-hidden"
+                className="relative h-full w-full overflow-hidden"
                 onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
             >
                 <div 
                     className={cn(
-                        "flex w-[200%] h-full transition-transform duration-300 ease-in-out will-change-transform",
+                        "flex h-full w-[200%] min-w-0 overflow-hidden transition-transform duration-300 ease-in-out will-change-transform",
                         mobileView === 'canvas' ? "translate-x-1/2" : "translate-x-0"
                     )}
                 >
-                    <div className="w-1/2 h-full overflow-hidden">
+                    <div className="h-full w-1/2 min-w-0 overflow-hidden">
                         <ChatPanel 
                             service={service}
                             threadId={threadId}
@@ -482,7 +482,7 @@ export default function ChatPage() {
                             currentUsage={realtimeUsage}
                         />
                     </div>
-                    <div className="w-1/2 h-full overflow-hidden border-l">
+                    <div className="h-full w-1/2 min-w-0 overflow-hidden border-l">
                         {hasCanvasCapability ? (
                             <CanvasPanel 
                                 onCollapse={handleMobileToggle} 
@@ -500,7 +500,7 @@ export default function ChatPage() {
           ) : (
             <>
               {hasCanvasCapability ? (
-                <ResizablePanelGroup direction="horizontal" className="h-full">
+                <ResizablePanelGroup direction="horizontal" className="h-full min-w-0">
                   <ResizablePanel 
                     ref={chatPanelRef}
                     id="chat-panel" 
@@ -511,7 +511,7 @@ export default function ChatPage() {
                     collapsedSize={4}
                     onCollapse={() => { if (!isLayoutTransitioning.current && !isChatCollapsed) toggleChat(); }}
                     onExpand={() => { if (!isLayoutTransitioning.current && isChatCollapsed) toggleChat(); }}
-                    className="transition-all duration-500 ease-in-out h-full"
+                    className="h-full min-w-0 transition-all duration-500 ease-in-out"
                   >
                     <ChatPanel 
                       service={service} 
@@ -537,7 +537,7 @@ export default function ChatPage() {
                     collapsedSize={4}
                     onCollapse={() => { if (!isLayoutTransitioning.current && !isCanvasCollapsed) toggleCanvas(); }}
                     onExpand={() => { if (!isLayoutTransitioning.current && isCanvasCollapsed) toggleCanvas(); }}
-                    className="transition-all duration-500 ease-in-out h-full"
+                    className="h-full min-w-0 transition-all duration-500 ease-in-out"
                   >
                     {isCanvasCollapsed ? (
                       <CollapsedPanel side="left" title="بوم کار" onExpand={toggleCanvas} />

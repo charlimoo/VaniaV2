@@ -91,6 +91,25 @@ export interface FormDefinition {
   schema: any[]; // JSON Schema for form fields
 }
 
+export interface ClinicalTestCatalogItem {
+  id: number;
+  title: string;
+  url: string;
+}
+
+export interface ClinicalTestEntry {
+  id: string;
+  catalog_id?: number | null;
+  title: string;
+  url?: string;
+  result_summary?: string;
+  file_name?: string | null;
+  file_path?: string | null;
+  file_uploaded_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
 // ==============================================================================
 // == ROOT CANVAS STATE: The main object hydrated from the backend
 // ==============================================================================
@@ -115,6 +134,7 @@ export interface PatientManagerState {
   };
 
   clinical_summary?: string;
+  forms_tests_analysis?: string;
 
   // --- The 4 Data Pillars ---
   roadmap_data: TherapyRoadmap;
@@ -122,6 +142,8 @@ export interface PatientManagerState {
   appendix_data: ThoughtAppendix;
   tasks: RescueTask[]; 
   forms: any[]; 
+  tests: ClinicalTestEntry[];
+  tests_catalog: ClinicalTestCatalogItem[];
   available_forms: FormDefinition[];
 
   sessions: any[]; 

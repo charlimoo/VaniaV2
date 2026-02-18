@@ -95,6 +95,18 @@ export async function checkUserExistence(phone: string) {
   });
 }
 
+export async function lookupPatientForDoctor(phone: string) {
+  return fetcher<{
+    exists: boolean;
+    patient?: { id: number; full_name: string; phone_number: string };
+    existing_connection_status?: string | null;
+    activation_locked?: boolean;
+  }>('/api/vania/patients/lookup/', {
+    method: 'POST',
+    body: JSON.stringify({ phone_number: phone })
+  });
+}
+
 export async function verifyDoctorCredentials(fullName: string, code: string) {
   return fetcher<{ verified: boolean; message: string; found_name?: string }>('/api/auth/verify-doctor/', {
     method: 'POST',

@@ -68,7 +68,7 @@ export default function SettingsPage() {
 
           
           <section id="security">
-            <PasswordForm />
+            <PasswordForm user={user} />
           </section>
 
           {/* Upgrade Section (Only visible if NOT a verified doctor yet) */}
@@ -105,7 +105,7 @@ function DoctorPublicProfileSection({ user }: { user: any }) {
               <UserCog className="w-6 h-6" />
             </div>
             <div className="flex flex-col gap-1">
-              <h3 className="font-bold text-base text-foreground">پروفایل عمومی پزشک</h3>
+              <h3 className="font-bold text-base text-foreground">پروفایل عمومی متخصص</h3>
               <p className="text-sm text-muted-foreground">
                 مدیریت اطلاعات نمایش داده شده در لیست متخصصین (بیوگرافی، آدرس، هزینه).
               </p>
@@ -146,7 +146,7 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
 
   const handleVerify = async () => {
     if (!license || license.length < 3) {
-        toast.error("کد نظام معتبر نیست");
+        toast.error("کد معتبر نیست");
         return;
     }
 
@@ -196,7 +196,7 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
           <div className="flex flex-col gap-0.5">
             <span className="text-sm font-medium">ارتقا به حساب متخصص</span>
             <span className="text-xs text-muted-foreground">
-              آیا پزشک یا روانشناس هستید؟ برای دسترسی به امکانات مطب، حساب خود را فعال کنید.
+              آیا متخصص یا روانشناس هستید؟ برای دسترسی به امکانات مطب، حساب خود را فعال کنید.
             </span>
           </div>
         </div>
@@ -214,12 +214,12 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
           >
             <div className="px-4 pb-4 pt-0 border-t border-dashed bg-muted/10">
               <p className="text-xs text-muted-foreground py-3 leading-relaxed">
-                لطفاً کد نظام روانشناسی خود را وارد کنید. سیستم به صورت خودکار نام شما را با سامانه نظام روانشناسی تطبیق می‌دهد.
+                لطفاً شماره عضویت نظام روانشناسی و روانپزشکی خود را وارد کنید. سیستم به صورت خودکار نام شما را با سامانه تطبیق می‌دهد.
               </p>
               
               <div className="flex gap-2 max-w-sm">
                 <Input 
-                    placeholder="کد نظام (مثال: 12345)" 
+                    placeholder="شماره عضویت نظام روانشناسی و روانپزشکی"
                     value={license} 
                     onChange={(e) => setLicense(e.target.value)} 
                     className="bg-background text-center font-mono h-9 text-sm"
@@ -368,10 +368,11 @@ function ProfileForm({ user, refreshUser }: { user: any, refreshUser: () => Prom
 
 // --- SUB-COMPONENT: PASSWORD FORM ---
 
-function PasswordForm() {
+function PasswordForm({ user }: { user: any }) {
   const [isLoading, setIsLoading] = useState(false)
   const [success, setSuccess] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const hasPassword = user?.has_password !== false
 
   const [passwords, setPasswords] = useState({
     old_password: "",
@@ -391,6 +392,12 @@ function PasswordForm() {
       return
     }
 
+    if (hasPassword && !passwords.old_password) {
+      setError("لطفاً رمز عبور فعلی را وارد کنید.")
+      setIsLoading(false)
+      return
+    }
+
     const headers = getAuthHeaders()
     if (!headers.Authorization) return
 
@@ -398,7 +405,11 @@ function PasswordForm() {
       const res = await fetch(`${API_BASE_URL}/api/auth/change-password/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...headers },
-        body: JSON.stringify(passwords),
+        body: JSON.stringify({
+          old_password: passwords.old_password,
+          new_password: passwords.new_password,
+          confirm_password: passwords.confirm_password,
+        }),
       })
 
       const data = await res.json()
@@ -408,7 +419,7 @@ function PasswordForm() {
         throw new Error(msg)
       }
 
-      setSuccess("رمز عبور با موفقیت تغییر یافت.")
+      setSuccess(hasPassword ? "رمز عبور با موفقیت تغییر یافت." : "رمز عبور اولیه با موفقیت تنظیم شد.")
       setPasswords({ old_password: "", new_password: "", confirm_password: "" })
       setTimeout(() => setSuccess(null), 3000)
     } catch (e: any) {
@@ -435,7 +446,7 @@ function PasswordForm() {
       <form onSubmit={handleSubmit}>
         <CardContent className="space-y-6 pt-6 text-start">
           {success && (
-            <Alert className="bg-green-50 text-green-800 border-green-200">
+            <Alert className="bg-muted-50 text-green-400 border-muted-200">
               <CheckCircle2 className="h-4 w-4" />
               <AlertTitle>موفق</AlertTitle>
               <AlertDescription>{success}</AlertDescription>
@@ -450,17 +461,27 @@ function PasswordForm() {
           )}
 
           <div className="grid gap-6 md:grid-cols-2">
-            <div className="space-y-2 md:col-span-2">
-              <Label htmlFor="old">رمز عبور فعلی</Label>
-              <Input 
-                id="old" 
-                type="password"
-                value={passwords.old_password}
-                onChange={(e) => setPasswords({...passwords, old_password: e.target.value})}
-                required
-                className="text-left ltr"
-              />
-            </div>
+            {hasPassword ? (
+              <div className="space-y-2 md:col-span-2">
+                <Label htmlFor="old">رمز عبور فعلی</Label>
+                <Input 
+                  id="old" 
+                  type="password"
+                  value={passwords.old_password}
+                  onChange={(e) => setPasswords({...passwords, old_password: e.target.value})}
+                  required
+                  className="text-left ltr"
+                />
+              </div>
+            ) : (
+              <Alert className="md:col-span-2 bg-muted-50 text-blue-400 border-muted-200">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>تنظیم رمز اولیه</AlertTitle>
+                <AlertDescription>
+                  برای حساب شما رمز عبور فعلی ثبت نشده است. رمز عبور جدید را برای فعال‌سازی ورود با رمز تعیین کنید.
+                </AlertDescription>
+              </Alert>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="new">رمز عبور جدید</Label>
@@ -491,7 +512,7 @@ function PasswordForm() {
         <CardFooter className="px-6 py-4 bg-muted/5 rounded-b-xl flex justify-end">
           <Button type="submit" disabled={isLoading} className="gap-2">
             {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
-            تغییر رمز عبور
+            {hasPassword ? "تغییر رمز عبور" : "ثبت رمز عبور"}
           </Button>
         </CardFooter>
       </form>

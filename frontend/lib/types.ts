@@ -31,6 +31,7 @@ export interface SubscriptionPlan {
   duration_days: number;
   included_credits: string;
   included_agents: string[]; // List of agent names/slugs unlocked
+  included_agent_slugs?: string[];
   is_active: boolean;
 }
 

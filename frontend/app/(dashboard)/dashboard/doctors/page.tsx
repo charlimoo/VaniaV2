@@ -95,32 +95,32 @@ export default function MyDoctorsPage() {
 
   return (
     <RoleGuard allowedRoles={['patient']}>
-    <div className="flex flex-col w-full h-full space-y-8 pb-10 max-w-6xl mx-auto pt-6" dir="rtl">
+    <div className="mx-auto flex h-full w-full max-w-6xl flex-col space-y-8 pb-10 pt-6" dir="rtl">
       
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
             <Stethoscope className="h-6 w-6 text-primary" />
-            پزشکان من
+            متخصصان من
           </h1>
           <p className="text-muted-foreground text-sm">
-            لیست پزشکانی که با آنها در ارتباط هستید.
+            لیست متخصصانی که با آنها در ارتباط هستید.
           </p>
         </div>
 
-        <Button asChild className="gap-2 shadow-sm">
+        <Button asChild className="w-full gap-2 shadow-sm sm:w-auto">
           <Link href="/dashboard/doctors/find">
-            <Plus className="h-4 w-4" /> یافتن پزشک جدید
+            <Plus className="h-4 w-4" /> یافتن متخصص جدید
           </Link>
         </Button>
       </div>
 
       {/* Search */}
-      <div className="relative max-w-sm">
+      <div className="relative w-full max-w-md">
         <Search className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
         <Input 
-          placeholder="جستجو در پزشکان من..." 
+          placeholder="جستجو در متخصصان من..." 
           className="pr-9"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
@@ -141,13 +141,13 @@ export default function MyDoctorsPage() {
       ) : filteredDoctors.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-muted-foreground bg-muted/10 border-2 border-dashed rounded-xl">
             <Stethoscope className="h-12 w-12 mb-4 opacity-20" />
-            <p className="font-medium">شما هنوز با هیچ پزشکی در ارتباط نیستید.</p>
+            <p className="font-medium">شما هنوز با هیچ متخصصی در ارتباط نیستید.</p>
             <Button variant="link" asChild className="mt-2 text-primary">
-                <Link href="/dashboard/doctors/find">جستجوی پزشک</Link>
+                <Link href="/dashboard/doctors/find">جستجوی متخصص</Link>
             </Button>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3 animate-in fade-in">
           {filteredDoctors.map(doc => (
             <Card key={doc.user_id} className="hover:shadow-md transition-shadow flex flex-col">
                <CardHeader className="flex flex-row items-start justify-between pb-2 space-y-0">

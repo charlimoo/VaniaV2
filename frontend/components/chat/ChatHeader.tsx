@@ -9,7 +9,6 @@ import {
   Sparkles,
   Gauge,
   Bot,
-  Share2 
 } from "lucide-react";
 import { useThread } from "@assistant-ui/react";
 
@@ -21,7 +20,6 @@ import { useAgentSettings } from "@/lib/agent-settings-store";
 import { AgentService } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { ShareDialog } from "@/components/chat/share-dialog"; 
 
 interface ChatHeaderProps {
   service: AgentService;
@@ -71,14 +69,14 @@ export function ChatHeader({ service, threadId, onCollapse, allowCollapse = true
   return (
     <div 
       className={cn(
-        "flex h-12 items-center justify-between border-b px-2 sm:px-3 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 shrink-0 transition-all", 
+        "flex h-12 min-w-0 items-center justify-between border-b px-2 sm:px-3 bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60 shrink-0 transition-all",
         className
       )} 
       dir="rtl"
     >
       
       {/* --- LEFT SECTION: Agent Identity --- */}
-      <div className="flex items-center gap-1 sm:gap-2 overflow-hidden shrink">
+      <div className="flex min-w-0 items-center gap-1 overflow-hidden sm:gap-2">
         <AgentCard 
           service={service} 
           trigger={
@@ -92,7 +90,7 @@ export function ChatHeader({ service, threadId, onCollapse, allowCollapse = true
           }
         />
         {/* [NEW] Share Button (Hidden in Demo mode) */}
-        {!isDemo && (
+        {/* {!isDemo && (
           <>
             <ShareDialog 
               threadId={threadId}
@@ -109,11 +107,11 @@ export function ChatHeader({ service, threadId, onCollapse, allowCollapse = true
             />
             {allowCollapse && <Separator orientation="vertical" className="h-4 mx-1 hidden sm:block" />}
           </>
-        )}
+        )} */}
         {isModelOverridden && (
            <Badge 
              variant="outline" 
-             className="h-6 gap-1.5 text-[10px] bg-muted/80 text-primary-700 border-amber-800/80 px-2 animate-in fade-in"
+             className="h-6 gap-1 px-1.5 text-[10px] bg-muted/80 text-primary-700 border-amber-800/80 sm:px-2 animate-in fade-in"
            >
               <Bot className="w-3 h-3" />
               <span className="hidden sm:inline">دمو</span>
@@ -122,7 +120,7 @@ export function ChatHeader({ service, threadId, onCollapse, allowCollapse = true
       </div>
 
       {/* --- RIGHT SECTION: Controls --- */}
-      <div className="flex items-center gap-1 sm:gap-0 shrink-0">
+      <div className="flex shrink-0 items-center gap-0.5 sm:gap-0">
         
         {isRunning && (
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 text-emerald-600 text-[10px] font-medium border border-emerald-500/20 animate-in fade-in zoom-in-95 duration-300">
@@ -139,7 +137,7 @@ export function ChatHeader({ service, threadId, onCollapse, allowCollapse = true
                {getEffortLabel(settings.reasoningEffort)}
             </span>
 
-            <div className="flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/50 scale-90 sm:scale-100 origin-right">
+            <div className="hidden sm:flex items-center bg-muted/50 rounded-lg p-0.5 border border-border/50 scale-90 sm:scale-100 origin-right">
               <ToggleGroup 
                 type="single" 
                 value={settings.reasoningEffort} 
@@ -191,9 +189,9 @@ export function ChatHeader({ service, threadId, onCollapse, allowCollapse = true
 
         {showReasoningControls && isHybridReasoning && !isRunning && (
           <>
-             <div 
+             <div
                 className={cn(
-                  "flex items-center gap-1.5 px-2 py-1 rounded-md border transition-all cursor-pointer select-none",
+                  "flex items-center gap-1.5 px-1.5 sm:px-2 py-1 rounded-md border transition-all cursor-pointer select-none",
                   settings.isReasoningEnabled 
                     ? "bg-purple-50 border-purple-200 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-300"
                     : "bg-transparent border-transparent text-muted-foreground hover:bg-muted"
@@ -216,7 +214,7 @@ export function ChatHeader({ service, threadId, onCollapse, allowCollapse = true
           <Button 
             variant="ghost" 
             size="icon" 
-            className="h-8 w-8 text-muted-foreground hover:bg-muted hover:text-foreground rounded-md transition-colors"
+            className="h-7 w-7 sm:h-8 sm:w-8 text-muted-foreground hover:bg-muted hover:text-foreground rounded-md transition-colors"
             onClick={onCollapse}
             title="بستن پنل گفتگو"
           >

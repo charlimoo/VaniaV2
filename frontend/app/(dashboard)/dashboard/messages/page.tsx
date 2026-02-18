@@ -316,12 +316,12 @@ function MessagesContent() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] w-full max-w-7xl mx-auto rounded-xl overflow-hidden bg-card border border-border shadow-sm mt-4" dir="rtl">
+    <div className="mx-auto mt-4 flex h-[calc(100vh-8rem)] w-full max-w-7xl overflow-hidden rounded-xl border border-border bg-card shadow-sm" dir="rtl">
       
       {/* SIDEBAR (User List) - No changes here */}
       <div className={cn(
-        "w-full md:w-80 h-full border-l border-border bg-background flex flex-col transition-all duration-300",
-        mobileView === 'CHAT' ? "hidden md:flex" : "flex"
+        "h-full w-full border-l border-border bg-background flex flex-col transition-all duration-300 lg:w-80 xl:w-96",
+        mobileView === 'CHAT' ? "hidden lg:flex" : "flex"
       )}>
         {/* ... (Sidebar Header, Search, List Container - Exact same as before) ... */}
         <div className="p-4 h-16 border-b border-border flex items-center justify-between shrink-0 bg-muted/10">
@@ -388,14 +388,14 @@ function MessagesContent() {
                                 
                                 <div className="flex-1 min-w-0 space-y-1">
                                     <div className="flex justify-between items-center">
-                                        <span className={cn("font-semibold text-sm truncate", isActive ? "text-primary" : "text-foreground")}>
+                                        <span className={cn("truncate font-semibold text-sm", isActive ? "text-primary" : "text-foreground")}>
                                             {conv.name}
                                         </span>
                                         <span className="text-[10px] text-muted-foreground shrink-0 font-mono">
                                             {formatDate(conv.last_message_date)}
                                         </span>
                                     </div>
-                                    <p className="text-xs text-muted-foreground truncate opacity-80 leading-relaxed max-w-[180px]">
+                                    <p className="max-w-[160px] truncate text-xs leading-relaxed text-muted-foreground opacity-80 xl:max-w-[220px]">
                                         {conv.last_message.includes('voice_message') ? '🎤 پیام صوتی' : conv.last_message}
                                     </p>
                                 </div>
@@ -410,14 +410,14 @@ function MessagesContent() {
       {/* CHAT AREA */}
       <div className={cn(
         "flex-1 flex flex-col bg-muted/5 relative h-full min-w-0 overflow-hidden",
-        mobileView === 'LIST' ? "hidden md:flex" : "flex"
+        mobileView === 'LIST' ? "hidden lg:flex" : "flex"
       )}>
         {activeConversationId && activeUser ? (
             <>
                 {/* --- Header with Actions [FIXED] --- */}
                 <div className="h-16 border-b border-border flex items-center justify-between px-4 bg-background/80 backdrop-blur-sm z-10 shrink-0 shadow-sm">
                     <div className="flex items-center gap-3">
-                        <Button variant="ghost" size="icon" className="md:hidden -mr-2 text-muted-foreground" onClick={handleClearActiveConversation}>
+                        <Button variant="ghost" size="icon" className="lg:hidden -mr-2 text-muted-foreground" onClick={handleClearActiveConversation}>
                             <ArrowRight className="h-5 w-5" />
                         </Button>
                         
@@ -441,7 +441,7 @@ function MessagesContent() {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex shrink-0 items-center gap-1">
                         {/* Call Button [FIXED] */}
                         <Button 
                             variant="ghost" 
@@ -464,7 +464,7 @@ function MessagesContent() {
                                 {/* Only show "View Profile" if current user is Doctor */}
                                 {isDoctor && (
                                     <DropdownMenuItem onClick={handleViewProfile} className="cursor-pointer">
-                                        <User className="h-4 w-4 ml-2" /> مشاهده پرونده پزشکی
+                                        <User className="h-4 w-4 ml-2" /> مشاهده پرونده
                                     </DropdownMenuItem>
                                 )}
                             </DropdownMenuContent>

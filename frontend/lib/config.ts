@@ -108,7 +108,7 @@ export const APP_CONFIG = {
       // [NEW] Patient Specific View
       {
         key: "doctors",
-        title: "پزشکان من",
+        title: "متخصصان من",
         url: "/dashboard/doctors",
         icon: Stethoscope,
         visible: true,

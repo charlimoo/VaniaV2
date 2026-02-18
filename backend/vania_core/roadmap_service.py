@@ -1,4 +1,5 @@
 import logging
+from datetime import date, timedelta
 from users.services import user_context_manager
 from users.models import UserContextEntry
 from .schemas import TherapyRoadmap, TherapyPhase, RoadmapSession
@@ -52,20 +53,60 @@ class RoadmapService:
         RoadmapService.save_roadmap(patient, roadmap)
 
     @staticmethod
-    def add_session(patient, title: str, instructions: str):
+    def add_session(patient, title: str, instructions: str, scheduled_date: str = None):
         roadmap = RoadmapService.get_or_create_roadmap(patient)
         
         next_num = len(roadmap.sessions) + 1
+
+        # If date is not provided, schedule with a weekly cadence from today/last session.
+        resolved_date = scheduled_date
+        if not resolved_date:
+            last_session_date = None
+            if roadmap.sessions:
+                last = roadmap.sessions[-1]
+                if last.scheduled_date:
+                    try:
+                        last_session_date = date.fromisoformat(last.scheduled_date)
+                    except ValueError:
+                        last_session_date = None
+
+            if last_session_date:
+                resolved_date = (last_session_date + timedelta(days=7)).isoformat()
+            else:
+                resolved_date = date.today().isoformat()
+
         new_session = RoadmapSession(
             session_number=next_num,
             title=title,
-            doctor_instructions=instructions
+            doctor_instructions=instructions,
+            scheduled_date=resolved_date,
+            status="READY",
         )
         roadmap.sessions.append(new_session)
         
         RoadmapService.save_roadmap(patient, roadmap)
         
         return new_session # [FIX] Return the object!
+
+    @staticmethod
+    def set_active_session(patient, session_number: int):
+        roadmap = RoadmapService.get_or_create_roadmap(patient)
+        target_found = False
+
+        for sess in roadmap.sessions:
+            if sess.session_number == session_number:
+                target_found = True
+                # Any non-completed session becomes READY when selected.
+                if sess.status != "COMPLETED":
+                    sess.status = "READY"
+                break
+
+        if not target_found:
+            raise ValueError(f"Session {session_number} not found in roadmap.")
+
+        roadmap.active_session_number = session_number
+        roadmap.current_phase = TherapyPhase.PHASE_5_EXECUTION
+        RoadmapService.save_roadmap(patient, roadmap)
 
     @staticmethod
     def complete_session(patient, session_number: int, doc_id: str):

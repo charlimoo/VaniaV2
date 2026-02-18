@@ -53,7 +53,7 @@ export default function DashboardLayout({
         />
         
         {/* Main Content Area */}
-        <main className="flex flex-1 flex-col gap-4 p-4 pt-4 h-full">
+        <main className="flex h-full min-w-0 flex-1 flex-col gap-4 p-4 pt-4">
           {children}
         </main>
       </SidebarInset>

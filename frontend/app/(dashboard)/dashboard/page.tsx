@@ -50,12 +50,12 @@ export default function DashboardOverviewPage() {
   const userName = user?.full_name?.split(" ")[0] || "کاربر";
 
   return (
-    <div className="flex flex-col w-full h-full space-y-8 pb-10 max-w-6xl mx-auto pt-6" dir="rtl">
+    <div className="mx-auto flex h-full w-full max-w-6xl flex-col space-y-6 pb-10 pt-6 md:space-y-8" dir="rtl">
       
       {/* Header */}
       <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-bold tracking-tight">پیشخوان</h1>
-        <p className="text-muted-foreground">
+        <h1 className="text-xl font-bold tracking-tight sm:text-2xl">پیشخوان</h1>
+        <p className="text-sm text-muted-foreground sm:text-base">
           {APP_CONFIG.TEXT.DASHBOARD_GREETING} {userName} جان!
         </p>
       </div>
@@ -85,15 +85,15 @@ export default function DashboardOverviewPage() {
 
 
       {/* Analytics */}
-      <div className="grid gap-6 grid-cols-1 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 md:gap-6 xl:grid-cols-3">
         
         {/* Usage Chart (takes 2/3 of the width on large screens) */}
-        <div className="lg:col-span-2 h-[350px]">
+        <div className="h-[320px] md:h-[350px] xl:col-span-2">
           <UsageChart sessions={sessions} days={7} />
         </div>
         
         {/* Message Summary (takes 1/3 of the width on large screens) */}
-        <div className="lg:col-span-1 h-[350px]">
+        <div className="h-[320px] md:h-[350px] xl:col-span-1">
           <MessageSummary />
         </div>
         

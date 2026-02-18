@@ -5,7 +5,7 @@ from capabilities.base import BaseFormHandler
 from capabilities.registry import register_form_handler
 from users.models import CustomUser, ContextDefinition, UserContextEntry
 from users.services import user_context_manager
-from .form_definitions import ALL_FORMS_LIST
+from .forms import ALL_FORMS_LIST
 logger = logging.getLogger(__name__)
 
 @register_form_handler

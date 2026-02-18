@@ -24,13 +24,14 @@ from vania_core.services import (
     AppendixService, 
     SessionService, 
     TaskService,
-    ProfileService  
+    ProfileService,
+    ClinicalTestsService,
 )
 from vania_core.schemas import TherapyPhase, SessionStatus
 from services.models_canvas import CanvasInstance # [FIX] Added Import
 
 # --- Form Definitions ---
-from .form_definitions import ALL_FORMS_LIST
+from .forms import ALL_FORMS_LIST
 
 # Configure Logger
 logger = logging.getLogger(__name__)
@@ -176,7 +177,8 @@ async def manage_roadmap(
 
         instructions = data.get("instructions", "No specific protocol instructions provided.")
         
-        await sync_to_async(RoadmapService.add_session)(patient, title, instructions)
+        scheduled_date = data.get("scheduled_date")
+        await sync_to_async(RoadmapService.add_session)(patient, title, instructions, scheduled_date)
         yield f"✅ Session '{title}' added to the roadmap."
 
     elif action.upper() == "UPDATE_STRATEGY":
@@ -524,16 +526,141 @@ async def submit_clinical_form(
         })
 
     canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
+    
+    # 1. Always update the Forms List
+    form_entries = await get_forms_history_sync(patient)
+    forms_history = []
+    for f in form_entries:
+        forms_history.append({
+            "id": str(f.id),
+            "form_key": f.data.get('form_key'),
+            "type": f.data.get('form_title', f.definition.key),
+            "date": f.created_at.isoformat(),
+            "data": f.data
+        })
+    
+    updates = {
+        "forms": forms_history
+    }
 
+    # 2. IF Base Profile was updated, refresh the Patient Profile Header
+    if form_key == "BASE_PROFILE_V1":
+        updates["patient_profile"] = {
+            "id": patient.id,
+            "name": actual_data.get("full_name") or patient.full_name,
+            "phone": patient.phone_number,
+            "age": actual_data.get("birth_date"),
+            "job": f"{actual_data.get('job_status', '')} {actual_data.get('job_title', '')}",
+            "education": actual_data.get("education_level"),
+            "marital_status": actual_data.get("marital_status")
+        }
+
+    # 3. Emit Event
+    yield CanvasUpdateEvent(value={
+        "canvas_id": canvas_id,
+        "component_key": "VANIA_PATIENT_MANAGER",
+        "delta": updates
+    })
+
+    yield f"✅ Form submitted. Context updated."
+
+
+@tool
+async def manage_clinical_tests(
+    run_context: RunContext,
+    action: str,
+    data: Dict[str, Any] = {}
+) -> AsyncGenerator[Any, None]:
+    """
+    Manage psychology tests in the patient's tests panel.
+    Actions:
+    - ADD_TEST: data={catalog_id:int} or data={title:str, url:str}
+    - UPDATE_SUMMARY: data={test_id:str, result_summary:str}
+    - DELETE_TEST: data={test_id:str}
+    """
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+
+    if not patient:
+        yield "Error: No patient selected."
+        return
+
+    action_key = (action or "").upper()
+    if action_key == "ADD_TEST":
+        catalog_id = data.get("catalog_id")
+        title = data.get("title")
+        url = data.get("url")
+        created = await sync_to_async(ClinicalTestsService.add_test)(
+            patient=patient,
+            created_by=doctor,
+            catalog_id=int(catalog_id) if catalog_id else None,
+            title=title,
+            url=url,
+        )
+        msg = f"✅ Test added: {created.get('title')}"
+    elif action_key == "UPDATE_SUMMARY":
+        test_id = data.get("test_id")
+        result_summary = data.get("result_summary", "")
+        updated = await sync_to_async(ClinicalTestsService.update_test)(
+            patient=patient,
+            created_by=doctor,
+            test_id=test_id,
+            payload={"result_summary": result_summary},
+        )
+        if not updated:
+            yield "❌ Test not found."
+            return
+        msg = "✅ Test summary updated."
+    elif action_key == "DELETE_TEST":
+        test_id = data.get("test_id")
+        deleted = await sync_to_async(ClinicalTestsService.delete_test)(
+            patient=patient,
+            created_by=doctor,
+            test_id=test_id,
+        )
+        if not deleted:
+            yield "❌ Test not found."
+            return
+        msg = "✅ Test deleted."
+    else:
+        yield f"❌ Unknown action '{action}'."
+        return
+
+    tests_history = await sync_to_async(ClinicalTestsService.get_tests)(patient)
+    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
     yield CanvasUpdateEvent(value={
         "canvas_id": canvas_id,
         "component_key": "VANIA_PATIENT_MANAGER",
         "delta": {
-            "forms": forms_history
+            "tests": tests_history
         }
     })
+    yield msg
 
-    yield f"✅ Form '{form_def['title']}' submitted successfully."
+
+@tool
+async def update_forms_tests_analysis(
+    run_context: RunContext,
+    analysis_text: str
+) -> AsyncGenerator[Any, None]:
+    """
+    Saves 'تحلیل بالینی تست ها و فرم ها' into the patient profile canvas.
+    """
+    patient = await _get_active_patient()
+    if not patient:
+        yield "Error: No patient selected."
+        return
+
+    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, analysis_text)
+    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
+    yield CanvasUpdateEvent(value={
+        "canvas_id": canvas_id,
+        "component_key": "VANIA_PATIENT_MANAGER",
+        "delta": {
+            "forms_tests_analysis": analysis_text
+        }
+    })
+    yield "✅ تحلیل بالینی تست‌ها و فرم‌ها ذخیره شد."
 
 
 # ==========================================
@@ -571,4 +698,6 @@ class VaniaDoctorToolFactory(BaseCapability):
             # General Clinical Utils
             get_form_schema,
             submit_clinical_form, # New automated form filling
+            manage_clinical_tests,
+            update_forms_tests_analysis,
         ]

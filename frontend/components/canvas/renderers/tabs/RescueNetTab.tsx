@@ -2,14 +2,7 @@
 "use client";
 
 import { RescueTask, RescueDimension } from "@/lib/types/vania";
-import { 
-  Check, 
-  Circle, 
-  LifeBuoy,
-  Plus,
-  Trash2,
-  CalendarClock
-} from "lucide-react";
+import { Check, LifeBuoy, Plus, Trash2, CalendarClock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,6 +11,7 @@ import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 
 import { AddTaskDialog } from "./rescuenet/AddTaskDialog";
 import { EditTaskDialog } from "./rescuenet/EditTaskDialog";
+import { RescueNetDownloadButton } from "./rescuenet/RescueNetDownloadButton";
 
 interface Props {
   tasks: RescueTask[];
@@ -120,8 +114,8 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
     <div className="space-y-6 pb-10 animate-in fade-in slide-in-from-right-2 duration-300">
       
       {/* Overview Banner */}
-      <div className="bg-card border rounded-xl p-4 shadow-sm flex flex-col sm:flex-row justify-between items-center gap-4">
-        <div>
+      <div className="flex flex-col gap-4 rounded-xl border bg-card p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
             <h3 className="font-bold text-sm flex items-center gap-2">
                 <LifeBuoy className="w-4 h-4 text-primary"/>
                 تور نجات
@@ -130,16 +124,18 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
               مدیریت تکالیف و تمرین‌های مراجع در ۹ بعد اصلی.
             </p>
         </div>
-        <div className="flex items-center gap-4 text-center">
-            <div>
+        <div className="flex flex-wrap items-center gap-3 text-center sm:gap-4">
+          <RescueNetDownloadButton tasks={tasks || []} patientId={patientId} />
+            <div className="min-w-[64px]">
                 <div className="text-xl font-black text-primary">{`${completedTasks}/${totalTasks}`}</div>
                 <div className="text-[10px] text-muted-foreground">انجام شده</div>
             </div>
-            <div className="w-px h-8 bg-border/50" />
-            <div>
+            <div className="hidden h-8 w-px bg-border/50 sm:block" />
+            <div className="min-w-[64px]">
                 <div className="text-xl font-black text-primary">{coveragePercent}%</div>
                 <div className="text-[10px] text-muted-foreground">تنوع ابعاد</div>
             </div>
+            
             <AddTaskDialog 
                 patientId={patientId}
                 onSuccess={handleTaskAdded}
@@ -149,11 +145,12 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
                     </Button>
                 }
             />
+            
         </div>
       </div>
 
       {/* Dimensions Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {groupedTasks.map((group) => (
           <div key={group.key} className="border border-border/60 rounded-xl overflow-hidden bg-card/50 hover:bg-card transition-colors shadow-sm">
             
@@ -205,7 +202,7 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
                     </div>
 
                     {/* Actions (Edit/Delete) - Only show on hover */}
-                    <div className="flex items-center opacity-0 group-hover/task:opacity-100 transition-opacity gap-0.5">
+                    <div className="flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover/task:opacity-100">
                         <EditTaskDialog task={task} patientId={patientId} onSuccess={handleTaskUpdated} />
                         
                         <Button 

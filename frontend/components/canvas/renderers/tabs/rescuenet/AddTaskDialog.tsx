@@ -89,7 +89,7 @@ export function AddTaskDialog({ patientId, onSuccess, trigger }: Props) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md" dir="rtl">
+      <DialogContent className="w-[calc(100vw-2rem)] sm:max-w-md" dir="rtl">
         <DialogHeader className="text-right">
           <DialogTitle>افزودن تکلیف (تور نجات)</DialogTitle>
         </DialogHeader>
@@ -102,7 +102,7 @@ export function AddTaskDialog({ patientId, onSuccess, trigger }: Props) {
                 placeholder="مثال: مطالعه کتاب به مدت ۲۰ دقیقه"
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
                 <Label className="text-xs">بعد زندگی</Label>
                 <Select value={formData.dimension} onValueChange={(v) => setFormData({...formData, dimension: v as RescueDimension})}>
@@ -125,7 +125,7 @@ export function AddTaskDialog({ patientId, onSuccess, trigger }: Props) {
           </div>
         </div>
         <DialogFooter>
-          <Button onClick={handleSubmit} disabled={loading} className="w-full">
+          <Button onClick={handleSubmit} disabled={loading} className="w-full sm:w-auto">
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : "ثبت تکلیف"}
           </Button>
         </DialogFooter>

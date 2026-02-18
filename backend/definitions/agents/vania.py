@@ -39,10 +39,14 @@ Before every response, you MUST check the `Active Patient Context` and `Therapy 
 #### **PHASE 1: COMPREHENSIVE ANALYSIS (تحلیل جامع)**
 *   **Context:** New patient or Roadmap is in `PHASE_1_ANALYSIS`.
 *   **Goal:** Create a rich "Clinical Summary" in the patient's **Profile Tab**.
-*   **Action:** Your primary task is to gather information from the doctor via chat. Ask open-ended questions like:
+*   **Action:** Your primary task is to gather information from the doctor via chat. Inputs may be typed text OR voice-session transcripts converted to text. Ask open-ended questions like:
     - "لطفاً شرح حال بیمار، شکایت اصلی و تاریخچه مشکل فعلی را بیان کنید." (Please describe the patient's story, chief complaint, and history of present illness.)
     - "لطفاً مشاهدات کلیدی خود از تست‌های فرافکن (TAT/Rorschach) را خلاصه کنید." (Please summarize your key observations from the projective tests.)
-*   **Tool:** As you receive information, synthesize it into a cohesive narrative. Then, you MUST save it using the `update_clinical_summary` tool.
+*   **Mandatory order in Phase 1:**
+    1. Always fill `BASE_PROFILE_V1` first via `submit_clinical_form`.
+    2. Fill any other relevant forms via `submit_clinical_form` based on the conversation.
+    3. Save "خلاصه بالینی و مشاهدات" via `update_clinical_summary`.
+    4. Prescribe 1 تا 7 تست از کاتالوگ تست‌ها with `manage_clinical_tests` (using catalog IDs).
 *   **CRITICAL TRANSITION:** Once you have gathered sufficient information and saved a meaningful summary, Phase 1 is COMPLETE. You should then inform the doctor and prepare for Phase 2.
 
 #### **PHASE 2: APPROACH PROPOSAL (پیشنهاد رویکرد)**
@@ -86,7 +90,7 @@ Before every response, you MUST check the `Active Patient Context` and `Therapy 
 ### INTERACTION RULES
 1.  **Greeting:** Always begin a new session with a warm, professional greeting.
 2.  **Clarification:** If a doctor's request is ambiguous, ask 1-3 targeted questions to clarify before proceeding.
-3.  **Tools are Mandatory:** You MUST use the provided tools (`manage_roadmap`, `finalize_session_report`, `prescribe_resource`, `add_rescue_task`) to save state. Do not just output text and assume the system will save it.
+3.  **Tools are Mandatory:** You MUST use the provided tools (`manage_roadmap`, `finalize_session_report`, `prescribe_resource`, `add_rescue_task`, `submit_clinical_form`, `manage_clinical_tests`, `update_clinical_summary`, `update_forms_tests_analysis`) to save state. Do not just output text and assume the system will save it.
 4.  **COMMUNICATION:** Avoid technical talk, speak like a thoughtful clinician in natural Persian, and focus only on real clinical outcomes rather than your internal processes, handling problems clearly and humanly when information is missing.
 """
 
@@ -102,16 +106,16 @@ VANIA_DOCTOR_AGENT = AgentDef(
     system_prompt=VANIA_DOCTOR_SYSTEM_PROMPT,
     
     # --- Access & Economics ---
-    is_free=True, # This is now a paid agent
+    is_free=False, # This is now a paid agent
     
-    # demo_config=DemoConfigDef(
-    #     access_mode=DemoAccessMode.ALLOWED,
-    #     model_override="gpt-5-mini",
-    #     message_limit_scope=DemoLimitScope.DAILY,
-    #     message_limit_count=3,
-    #     canvas_mode=DemoCanvasMode.LOCKED,
-    #     canvas_placeholder_text="برای مشاهده داشبوردها استفاده از ابزارهای بصری پیشرفته، حساب خود را ارتقا دهید."
-    # ),
+    demo_config=DemoConfigDef(
+        access_mode=DemoAccessMode.BLOCKED,
+        model_override="gpt-5-mini",
+        message_limit_scope=DemoLimitScope.DAILY,
+        message_limit_count=3,
+        canvas_mode=DemoCanvasMode.LOCKED,
+        canvas_placeholder_text="برای مشاهده داشبوردها استفاده از ابزارهای بصری پیشرفته، حساب خود را ارتقا دهید."
+    ),
     cost_multiplier=Decimal("1.0"),
     
     # --- Logic & Intelligence ---
@@ -122,7 +126,6 @@ VANIA_DOCTOR_AGENT = AgentDef(
     # --- Capabilities ---
     # 'vania_doctor' loads the specific tools; 'core' might load general utilities
     capabilities=["vania_doctor", "core"],
-    tags=["Clinical", "Protocol", "Vania", "Therapy"],
     
     # --- User Experience ---
     user_guide="""
@@ -137,12 +140,12 @@ VANIA_DOCTOR_AGENT = AgentDef(
     suggestions=[
         SuggestionDef(
             title="شروع تحلیل ",
-            subtitle="تحلیل تست‌ها و پروفایل روان‌شناختی",
+            subtitle="تحلیل پروفایل روان‌شناختی",
             prompt="من فایل‌های تست این مراجع جدید را آپلود کردم. لطفاً تحلیل جامع و نیم‌رخ روانی را بر اساس پروتکل فاز ۱ ارائه بده."
         ),
         SuggestionDef(
             title="پیشنهاد رویکرد ",
-            subtitle="دریافت لیست ۱۷ رویکرد درمانی",
+            subtitle="دریافت رویکرد درمانی",
             prompt="با توجه به تحلیل انجام شده، ۱۷ رویکرد درمانی (نوین، ترکیبی، تلفیقی) مناسب این مراجع را پیشنهاد بده."
         ),
     ],
@@ -228,14 +231,14 @@ VANIA_PATIENT_AGENT = AgentDef(
     # Patient agents are typically part of the service provided by the doctor or a lower-tier subscription
     is_free=True, # This is now a paid agent
     
-    # demo_config=DemoConfigDef(
-    #     access_mode=DemoAccessMode.ALLOWED,
-    #     model_override="gpt-5-mini",
-    #     message_limit_scope=DemoLimitScope.DAILY,
-    #     message_limit_count=3,
-    #     canvas_mode=DemoCanvasMode.LOCKED,
-    #     canvas_placeholder_text="برای مشاهده داشبوردها و استفاده از ابزارهای بصری پیشرفته، حساب خود را ارتقا دهید."
-    # ),
+    demo_config=DemoConfigDef(
+        access_mode=DemoAccessMode.ALLOWED,
+        model_override="gpt-5-mini",
+        message_limit_scope=DemoLimitScope.DAILY,
+        message_limit_count=3,
+        canvas_mode=DemoCanvasMode.HIDDEN,
+        canvas_placeholder_text="برای مشاهده داشبورد، حساب خود را ارتقا دهید."
+    ),
     cost_multiplier=Decimal("1"), # Lower cost than the Doctor agent
     
     # --- Logic & Intelligence ---
@@ -267,10 +270,10 @@ VANIA_PATIENT_AGENT = AgentDef(
 من اینجا هستم تا در فاصله بین جلسات درمان، کنار شما باشم:
 
 1.  **تور نجات:** با هم تکالیف و تمرین‌های روزانه را بررسی می‌کنیم.
-2.  **مرور جلسات:** نکات کلیدی و فلش‌کارت‌هایی که پزشکتان تهیه کرده را مرور می‌کنیم.
+2.  **مرور جلسات:** نکات کلیدی و فلش‌کارت‌هایی که متخصصتان تهیه کرده را مرور می‌کنیم.
 3.  **پیوست اندیشه:** درباره کتاب‌ها و فیلم‌های پیشنهادی گفتگو می‌کنیم.
 
-*توجه: من جایگزین پزشک نیستم. در شرایط بحرانی لطفاً با پزشک خود یا اورژانس تماس بگیرید.*
+*توجه: من جایگزین متخصص نیستم. در شرایط بحرانی لطفاً با متخصص خود یا اورژانس تماس بگیرید.*
     """,
     
     suggestions=[

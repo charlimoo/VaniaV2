@@ -29,18 +29,18 @@ export function GlobalHeader({ title, variant, children, className }: GlobalHead
   return (
     <header 
       className={cn(
-        "flex h-14 shrink-0 items-center justify-between border-b px-4 sticky top-0 z-20 transition-[width,height] ease-linear",
+        "sticky top-0 z-20 flex h-14 shrink-0 items-center justify-between border-b px-2 sm:px-4 transition-[width,height] ease-linear",
         "bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60",
         className
       )}
       dir="rtl"
     >
       {/* Left Side (RTL Right): Navigation */}
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
         <SidebarTrigger className="mr-0" />
         
         {title ? (
-          <span className="text-sm font-medium truncate max-w-[200px] sm:max-w-md animate-in fade-in">
+          <span className="animate-in fade-in truncate text-sm font-medium max-w-[140px] sm:max-w-[240px] md:max-w-md">
             {title}
           </span>
         ) : (
@@ -49,12 +49,12 @@ export function GlobalHeader({ title, variant, children, className }: GlobalHead
       </div>
 
       {/* Right Side (RTL Left): Actions */}
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="ml-2 flex shrink-0 items-center gap-1 sm:gap-2">
         {/* Page Specific Actions */}
         {children}
 
         {/* Global Tools */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5 sm:gap-1">
             {/* 
                [REMOVED] CartDropdown 
                Direct purchase flow replaces the shopping cart.

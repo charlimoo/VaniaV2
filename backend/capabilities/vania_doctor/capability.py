@@ -15,12 +15,14 @@ from vania_core.services import (
     AppendixService, 
     SessionService, 
     TaskService,
-    ProfileService
+    ProfileService,
+    ClinicalTestsService,
 )
 from vania_core.schemas import TherapyPhase
+from vania_core.tests_catalog import TEST_CATALOG
 
 # --- Form & Tooling Imports ---
-from .form_definitions import ALL_FORMS_LIST
+from .forms import ALL_FORMS_LIST
 
 # Configure Logger
 logger = logging.getLogger(__name__)
@@ -43,13 +45,37 @@ class VaniaDoctorCapability(BaseCapability):
         try:
             patient = CustomUser.objects.get(pk=resource_id)
             roadmap = RoadmapService.get_or_create_roadmap(patient)
-            
+
+            # We look for the latest Base Profile form submission
+            base_profile_entry = UserContextEntry.objects.filter(
+                user=patient,
+                definition__key__startswith="clinical_form_base_profile_v1",
+                is_active=True
+            ).order_by('-created_at').first()
+
+            demographics_context = ""
+            if base_profile_entry:
+                d = base_profile_entry.data
+                # Build a string string summary for the AI
+                demographics_context = f"""
+**DEMOGRAPHICS (Source: Base Profile Form):**
+- Age/Birth: {d.get('birth_date', 'N/A')}
+- Job: {d.get('job_status', 'N/A')} ({d.get('job_title', '')})
+- Education: {d.get('education_level', 'N/A')}
+- Marital Status: {d.get('marital_status', 'N/A')}
+- Family: {len(d.get('family_history', []))} recorded members.
+"""
+            else:
+                demographics_context = "\n(No Base Profile Form recorded yet. Please fill 'BASE_PROFILE_V1' first.)\n"
+                
             # --- 1. Base Context ---
             base_msg = f"""
 ### 🏥 ACTIVE CLINICAL CONTEXT
 **Patient:** {patient.full_name} (ID: {patient.id})
 **Current Phase:** {roadmap.current_phase.value}
 **Guiding Doctor:** Dr. {user.full_name or user.phone_number}
+
+{demographics_context}
 """
 
             # --- [FIX] 2. Inject Past Forms History (Perception) ---
@@ -76,6 +102,19 @@ class VaniaDoctorCapability(BaseCapability):
             else:
                 base_msg += "\n(No clinical forms have been filled for this patient yet.)\n"
 
+            # --- 2.5 Inject Test History ---
+            clinical_tests = ClinicalTestsService.get_tests(patient)
+            if clinical_tests:
+                base_msg += "\n### 🧪 PATIENT TEST HISTORY\n"
+                for t in clinical_tests[:7]:
+                    date_str = (t.get("created_at", "") or "")[:10]
+                    base_msg += (
+                        f"- TestID: {t.get('catalog_id') or '-'} | Title: {t.get('title')} | "
+                        f"Date: {date_str} | HasFile: {'Yes' if t.get('file_name') else 'No'} | "
+                        f"Summary: {t.get('result_summary', '')[:240]}\n"
+                    )
+            else:
+                base_msg += "\n(No psychology tests have been prescribed/recorded yet.)\n"
 
             # --- 3. Inject Available Forms Context ---
             forms_context = "\n### 📋 AVAILABLE CLINICAL FORMS (Tools)\n"
@@ -86,6 +125,12 @@ class VaniaDoctorCapability(BaseCapability):
             
             base_msg += forms_context
 
+            tests_context = "\n### 🧪 AVAILABLE PSYCHOLOGY TESTS (Catalog)\n"
+            tests_context += "Use `manage_clinical_tests` with catalog_id to prescribe tests:\n"
+            for test in TEST_CATALOG:
+                tests_context += f"- ID: `{test['id']}` | Title: {test['title']} | URL: {test['url']}\n"
+            base_msg += tests_context
+
             # --- 3. Phase-Specific Instructions ---
 
             # PHASE 1: Initial Analysis
@@ -93,9 +138,11 @@ class VaniaDoctorCapability(BaseCapability):
                 return base_msg + """
 ⚠️ **ACTION REQUIRED: PHASE 1 (ANALYSIS)**
 The patient is in the initial analysis phase.
-1.  **Goal:** Generate the "Integrated Psychological Profile".
-2.  **Check:** Confirm if Projective Tests (TAT/Rorschach) have been provided.
-3.  **Action:** If not, ask the doctor to provide them to you.
+1.  **ALWAYS fill BASE_PROFILE_V1 first** using `submit_clinical_form`.
+2.  The doctor input may come from typed notes OR session voice transcription; treat both as valid clinical input.
+3.  Fill additional clinical forms from available list when the data supports it.
+4.  Write/update `clinical_summary` using `update_clinical_summary`.
+5.  Prescribe 1 to 7 psychology tests via `manage_clinical_tests` (using catalog IDs).
 """
 
             # PHASE 2 & 3: Strategy and Planning
@@ -257,6 +304,34 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
 
         try:
             patient = CustomUser.objects.get(pk=resource_id)
+            
+            # 1. Get Basic DB Info
+            profile_data = {
+                "id": patient.id,
+                "name": patient.full_name or patient.phone_number,
+                "phone": patient.phone_number,
+                # Defaults
+                "age": "N/A",
+                "job": "N/A",
+                "education": "N/A"
+            }
+
+            # 2. Overlay Data from Base Profile Form if exists
+            base_profile_entry = UserContextEntry.objects.filter(
+                user=patient,
+                definition__key__startswith="clinical_form_base_profile_v1"
+            ).order_by('-created_at').first()
+
+            if base_profile_entry:
+                d = base_profile_entry.data
+                # Map Form Fields -> Profile UI Fields
+                profile_data["name"] = d.get("full_name") or profile_data["name"]
+                profile_data["age"] = d.get("birth_date") # Or calculate age from date
+                profile_data["job"] = f"{d.get('job_status', '')} - {d.get('job_title', '')}"
+                profile_data["education"] = d.get("education_level")
+                profile_data["marital_status"] = d.get("marital_status")
+                
+                
             summary_text = ProfileService.get_summary(patient)
             demographics = ProfileService.get_demographics(patient)
             # 1. Roadmap Data
@@ -275,7 +350,7 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
             
             # 5. [FIX] Calculate Active Goals (Logic borrowed from PatientDataService)
             active_smart_goals = []
-            
+            forms_list = self._get_forms_history(patient)
             # We iterate through the roadmap sessions to find the latest completed one
             # Note: Roadmap sessions are stored in order (1, 2, 3...)
             # We check in reverse to find the latest.
@@ -328,15 +403,14 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
                     "data": f.data 
                 })
 
+            tests_history = ClinicalTestsService.get_tests(patient)
+            forms_tests_analysis = ProfileService.get_forms_tests_analysis(patient)
+
             return {
                 "is_active": True,
-                "patient_profile": {
-                    "id": patient.id,
-                    "name": patient.full_name or patient.phone_number,
-                    "phone": patient.phone_number,
-                    **demographics
-                },
+                "patient_profile": profile_data,
                 "clinical_summary": summary_text,
+                "forms_tests_analysis": forms_tests_analysis,
                 "roadmap_data": roadmap.model_dump(),
                 "appendix_data": appendix.model_dump(),
                 "tasks": tasks, 
@@ -344,6 +418,8 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
                 "active_goals": active_smart_goals,
                 # Forms
                 "forms": forms_history, 
+                "tests": tests_history,
+                "tests_catalog": TEST_CATALOG,
                 "available_forms": ALL_FORMS_LIST, 
                 
                 "active_tab": "PROFILE", 
@@ -353,5 +429,23 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
             logger.error(f"❌ Hydration Failed: {e}")
             return None
 
+    def _get_forms_history(self, patient):
+        # Helper to fetch history
+        entries = UserContextEntry.objects.filter(
+            user=patient, 
+            definition__key__startswith="clinical_form_"
+        ).order_by('-created_at')
+        
+        history = []
+        for f in entries:
+            history.append({
+                "id": str(f.id),
+                "form_key": f.data.get('form_key'),
+                "type": f.data.get('form_title', 'Unknown Form'),
+                "date": f.created_at.isoformat(),
+                "data": f.data 
+            })
+        return history
+    
     def get_default_canvases(self) -> List[str]:
         return ["VANIA_PATIENT_MANAGER"]

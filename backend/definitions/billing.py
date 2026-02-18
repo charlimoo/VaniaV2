@@ -15,7 +15,7 @@ PLANS = [
     ),
     PlanDef(
         slug="pro-monthly",
-        name="اشتراک پزشکان",
+        name="اشتراک متخصصان",
         description="مناسب برای استفاده مداوم",
         price=1490000,
         duration_days=30,
@@ -24,7 +24,7 @@ PLANS = [
     ),
     PlanDef(
         slug="enterprise-annual",
-        name="اشتراک پزشکان (سالانه)",
+        name="اشتراک متخصصان (سالانه)",
         description="مناسبت برای استفاده مداوم و طولانی مدت",
         price=19000000,
         duration_days=365,

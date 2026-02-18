@@ -109,7 +109,7 @@ export function AuthContainer() {
 
       // Customized Toasts
       if (signupData?.role === 'doctor' && !signupData.isVerified) {
-          toast.warning("ثبت‌نام انجام شد. برای فعال‌سازی پنل پزشک، لطفاً بعداً مدارک خود را تایید کنید.")
+          toast.warning("ثبت‌نام انجام شد. برای فعال‌سازی پنل متخصص، لطفاً بعداً مدارک خود را تایید کنید.")
       } else {
           toast.success("ورود موفقیت‌آمیز")
       }

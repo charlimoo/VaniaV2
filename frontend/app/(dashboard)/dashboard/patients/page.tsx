@@ -1,4 +1,4 @@
-// frontend/app/(dashboard)/dashboard/patients/page.tsx
+﻿// frontend/app/(dashboard)/dashboard/patients/page.tsx
 "use client";
 
 import { RoleGuard } from "@/components/role-guard";
@@ -13,13 +13,11 @@ import {
   Loader2, 
   User, 
   AlertCircle,
-  FileText,
   Check,
   X,
   Calendar,
   ClipboardList,
   MessageSquare,
-  MoreHorizontal,
   Phone,
   Mail,
   Lock
@@ -46,18 +44,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
-import { API_BASE_URL, getAuthHeaders, checkUserExistence } from "@/lib/api";
+import { API_BASE_URL, getAuthHeaders, lookupPatientForDoctor } from "@/lib/api";
 import { useVaniaStore } from "@/lib/vania/store";
 import { cn } from "@/lib/utils";
 
@@ -69,7 +61,7 @@ interface PatientRow {
   patient_id: number | null;
   name: string;
   phone: string;
-  status: "ACTIVE" | "PENDING_PATIENT_APPROVAL" | "PENDING_DOCTOR_APPROVAL" | "INVITED" | "REJECTED";
+  status: "ACTIVE" | "ARCHIVED" | "PENDING_PATIENT_APPROVAL" | "PENDING_DOCTOR_APPROVAL" | "PENDING_PATIENT" | "PENDING_DOCTOR" | "INVITED" | "REJECTED";
   date: string;
   request_data?: {
     main_concern: string;
@@ -79,6 +71,14 @@ interface PatientRow {
 }
 
 type RequestState = 'PENDING' | 'ACCEPTING' | 'REJECTING' | 'ACCEPTED' | 'REJECTED';
+
+interface ExistingPatientPreview {
+  id: number;
+  full_name: string;
+  phone_number: string;
+  existing_connection_status: string | null;
+  activation_locked: boolean;
+}
 
 function PatientsContent() {
   const router = useRouter();
@@ -92,12 +92,15 @@ function PatientsContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [useCompactRowActions, setUseCompactRowActions] = useState(false);
   
   const [requestStates, setRequestStates] = useState<Record<number, RequestState>>({});
   
   // --- INVITE FLOW STATE ---
   const [isInviteOpen, setIsInviteOpen] = useState(false);        // Modal 1: Phone Entry
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false); // Modal 2: Profile Details
+  const [isExistingPatientModalOpen, setIsExistingPatientModalOpen] = useState(false); // Modal 2-alt: Existing user
+  const [existingPatient, setExistingPatient] = useState<ExistingPatientPreview | null>(null);
   
   const [invitePhone, setInvitePhone] = useState("");
   const [profileData, setProfileData] = useState({
@@ -108,6 +111,7 @@ function PatientsContent() {
 
   const [isChecking, setIsChecking] = useState(false); // Checking phone existence
   const [isInviting, setIsInviting] = useState(false); // Performing final invite
+  const [statusUpdating, setStatusUpdating] = useState<Record<number, boolean>>({});
 
   // --- DATA FETCHING ---
   const fetchPatients = async (isRefresh = false) => {
@@ -118,7 +122,7 @@ function PatientsContent() {
         headers: getAuthHeaders()
       });
       if (!res.ok) {
-        throw new Error("Failed to load patient list.");
+        throw new Error("بارگذاری لیست بیماران ناموفق بود.");
       }
       const data: PatientRow[] = await res.json();
       setPatients(data);
@@ -146,6 +150,24 @@ function PatientsContent() {
     fetchPatients();
   }, []);
 
+  useEffect(() => {
+    const mobileViewport = window.matchMedia("(max-width: 1023px)");
+    const coarsePointer = window.matchMedia("(hover: none), (pointer: coarse)");
+
+    const syncActionMode = () => {
+      setUseCompactRowActions(mobileViewport.matches || coarsePointer.matches);
+    };
+
+    syncActionMode();
+    mobileViewport.addEventListener("change", syncActionMode);
+    coarsePointer.addEventListener("change", syncActionMode);
+
+    return () => {
+      mobileViewport.removeEventListener("change", syncActionMode);
+      coarsePointer.removeEventListener("change", syncActionMode);
+    };
+  }, []);
+
   // --- ACTIONS: ADD PATIENT FLOW ---
 
   // Step 1: Check Phone Number
@@ -154,39 +176,42 @@ function PatientsContent() {
       toast.error("شماره موبایل وارد شده معتبر نیست.");
       return;
     }
-    
+
     setIsChecking(true);
     try {
-        // 1. Check if user exists via API
-        const checkRes = await checkUserExistence(invitePhone);
-        
-        if (checkRes.exists) {
-            // User exists -> Just link them immediately (Skip profile modal)
-            await executeInvite(true); // true = skip profile data sending (backend handles linking)
-        } else {
-            // User DOES NOT exist -> Show Profile Creation Modal
-            setIsInviteOpen(false); // Close first modal
-            setIsProfileModalOpen(true); // Open second modal
-        }
+      const lookup = await lookupPatientForDoctor(invitePhone);
+      if (lookup.exists && lookup.patient) {
+        setExistingPatient({
+          id: lookup.patient.id,
+          full_name: lookup.patient.full_name,
+          phone_number: lookup.patient.phone_number,
+          existing_connection_status: lookup.existing_connection_status ?? null,
+          activation_locked: !!lookup.activation_locked,
+        });
+        setIsInviteOpen(false);
+        setIsExistingPatientModalOpen(true);
+      } else {
+        setIsInviteOpen(false);
+        setIsProfileModalOpen(true);
+      }
     } catch (e) {
-        toast.error("خطا در بررسی شماره موبایل.");
+      toast.error("خطا در بررسی شماره موبایل.");
     } finally {
-        setIsChecking(false);
+      setIsChecking(false);
     }
   };
 
   // Step 2: Execute Invitation (With or Without Profile Data)
   const executeInvite = async (skipProfile = false) => {
     setIsInviting(true);
-    
+
     const payload = {
-        phone_number: invitePhone,
-        // If skipping profile (or user exists), sending empty fields is fine, backend handles defaults
-        ...(skipProfile ? {} : {
-            full_name: profileData.fullName,
-            password: profileData.password,
-            email: profileData.email
-        })
+      phone_number: invitePhone,
+      ...(skipProfile ? {} : {
+        full_name: profileData.fullName,
+        password: profileData.password,
+        email: profileData.email
+      })
     };
 
     try {
@@ -196,15 +221,21 @@ function PatientsContent() {
         body: JSON.stringify(payload)
       });
       const data = await res.json();
-      
+
       if (res.ok) {
-        toast.success(data.message || "عملیات با موفقیت انجام شد.");
-        // Reset All States
+        if (data.activation_locked || data.status === "ARCHIVED") {
+          toast.success("بیمار به لیست اضافه شد اما فعلا غیرفعال است.");
+        } else {
+          toast.success(data.message || "عملیات با موفقیت انجام شد.");
+        }
+
         setIsInviteOpen(false);
         setIsProfileModalOpen(false);
+        setIsExistingPatientModalOpen(false);
+        setExistingPatient(null);
         setInvitePhone("");
         setProfileData({ fullName: "", password: "", email: "" });
-        fetchPatients(true); 
+        fetchPatients(true);
       } else {
         toast.error(data.error || "خطا در افزودن بیمار");
       }
@@ -242,8 +273,12 @@ function PatientsContent() {
 
   const handleOpenClinicalChat = (patient: PatientRow) => {
     if (!patient.patient_id) {
-        toast.info("این بیمار هنوز ثبت‌نام نکرده است و پرونده‌ای ندارد.");
-        return;
+      toast.info("این بیمار هنوز ثبت‌نام نکرده است و پرونده‌ای ندارد.");
+      return;
+    }
+    if (patient.status !== "ACTIVE") {
+      toast.info("پرونده بالینی فقط برای بیماران فعال در دسترس است.");
+      return;
     }
     setActivePatient(patient.patient_id, patient.name);
     const threadId = `local-${crypto.randomUUID()}`;
@@ -255,6 +290,35 @@ function PatientsContent() {
     router.push(`/dashboard/messages?userId=${patientId}`);
   };
 
+  const handleToggleStatus = async (patient: PatientRow, action: "ACTIVATE" | "DEACTIVATE") => {
+    if (patient.type !== "CONNECTION") return;
+    setStatusUpdating((prev) => ({ ...prev, [patient.db_id]: true }));
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/vania/my-patients/${patient.db_id}/status/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({ action })
+      });
+      const data = await res.json();
+
+      if (res.ok) {
+        toast.success(data.message || "وضعیت بیمار به‌روز شد.");
+        fetchPatients(true);
+        return;
+      }
+
+      if (res.status === 409) {
+        toast.error("این بیمار در حال حاضر نزد پزشک دیگری فعال است و فعلا قابل فعال‌سازی نیست.");
+      } else {
+        toast.error(data.error || data.message || "خطا در تغییر وضعیت بیمار.");
+      }
+    } catch {
+      toast.error("خطا در برقراری ارتباط با سرور.");
+    } finally {
+      setStatusUpdating((prev) => ({ ...prev, [patient.db_id]: false }));
+    }
+  };
+
   // --- FILTERING ---
   const filteredPatients = patients.filter(p => 
     p.name.toLowerCase().includes(searchQuery.toLowerCase()) || p.phone.includes(searchQuery)
@@ -264,9 +328,19 @@ function PatientsContent() {
   const activeList = filteredPatients.filter(p => p.type !== 'REQUEST' && !(p.db_id in requestStates));
 
   const pendingRequestCount = requests.filter(r => requestStates[r.db_id] === 'PENDING').length;
+  const connectionRows = patients.filter((p) => p.type === "CONNECTION" && p.patient_id !== null);
+  const kpiTotal = connectionRows.length;
+  const kpiActive = connectionRows.filter((p) => p.status === "ACTIVE").length;
+  const kpiDeactive = connectionRows.filter((p) => p.status === "ARCHIVED").length;
+  const kpiPending = patients.filter((p) =>
+    p.status === "PENDING_PATIENT_APPROVAL" ||
+    p.status === "PENDING_DOCTOR_APPROVAL" ||
+    p.status === "PENDING_PATIENT" ||
+    p.status === "PENDING_DOCTOR"
+  ).length;
 
   return (
-    <div className="flex flex-col w-full h-full space-y-8 pb-10 max-w-6xl mx-auto" dir="rtl">
+    <div className="mx-auto flex h-full w-full min-w-0 max-w-6xl flex-col space-y-8 pb-10" dir="rtl">
       
       {/* --- HEADER SECTION --- */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-border/40 py-6">
@@ -287,7 +361,7 @@ function PatientsContent() {
               <Plus className="h-5 w-5" /> افزودن بیمار جدید
             </Button>
           </DialogTrigger>
-          <DialogContent dir="rtl">
+          <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] sm:max-w-lg">
             <DialogHeader className="text-right">
               <DialogTitle>افزودن بیمار جدید</DialogTitle>
               <DialogDescription>
@@ -317,7 +391,7 @@ function PatientsContent() {
 
         {/* --- MODAL 2: CREATE PROFILE (Only if new user) --- */}
         <Dialog open={isProfileModalOpen} onOpenChange={setIsProfileModalOpen}>
-            <DialogContent dir="rtl" className="max-w-md">
+            <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-md">
                 <DialogHeader className="text-right">
                     <DialogTitle>تکمیل پروفایل بیمار</DialogTitle>
                     <DialogDescription>
@@ -381,6 +455,38 @@ function PatientsContent() {
             </DialogContent>
         </Dialog>
 
+        <Dialog open={isExistingPatientModalOpen} onOpenChange={setIsExistingPatientModalOpen}>
+          <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-md">
+            <DialogHeader className="text-right">
+              <DialogTitle>کاربر موجود در پلتفرم</DialogTitle>
+              <DialogDescription>
+                این شماره قبلا در سیستم ثبت شده است. برای افزودن به لیست بیماران تایید کنید.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div className="rounded-md border p-3">
+                <p className="text-sm font-semibold">{existingPatient?.full_name || "کاربر بدون نام"}</p>
+                <p className="text-xs text-muted-foreground font-mono mt-1" dir="ltr">{existingPatient?.phone_number}</p>
+              </div>
+              <Badge variant={existingPatient?.activation_locked ? "outline" : "secondary"} className="font-normal">
+                {existingPatient?.activation_locked ? "در صورت افزودن، غیرفعال ثبت می‌شود" : "پس از افزودن، فعال خواهد بود"}
+              </Badge>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                variant="outline"
+                onClick={() => setIsExistingPatientModalOpen(false)}
+                disabled={isInviting}
+              >
+                انصراف
+              </Button>
+              <Button onClick={() => executeInvite(true)} disabled={isInviting}>
+                {isInviting ? <Loader2 className="w-4 h-4 animate-spin" /> : "افزودن به لیست بیماران"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
       </div>
 
       {error && (
@@ -392,10 +498,10 @@ function PatientsContent() {
       )}
 
       {/* --- CONTENT TABS --- */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-6">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0 space-y-6">
         
         {/* Toolbar: Tabs & Search */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <TabsList className="bg-muted/50 p-1 rounded-xl h-auto self-start">
                 <TabsTrigger value="ACTIVE" className="rounded-lg px-4 py-2 data-[state=active]:shadow-sm">
                     لیست بیماران
@@ -410,7 +516,7 @@ function PatientsContent() {
                 </TabsTrigger>
             </TabsList>
 
-            <div className="relative w-full md:w-80">
+            <div className="relative w-full min-w-0 md:w-80">
                 <Search className="absolute right-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input 
                     placeholder="جستجو بر اساس نام یا شماره..." 
@@ -423,14 +529,40 @@ function PatientsContent() {
 
         {/* --- TAB 1: ACTIVE PATIENTS TABLE --- */}
         <TabsContent value="ACTIVE" className="mt-0">
-            <Card className="border-border shadow-sm overflow-hidden">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground text-right">کل بیماران</p>
+                  <p className="text-2xl font-bold mt-1 text-right">{kpiTotal}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground text-right">بیماران فعال</p>
+                  <p className="text-2xl font-bold mt-1 text-emerald-600 text-right">{kpiActive}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground text-right">بیماران غیرفعال</p>
+                  <p className="text-2xl font-bold mt-1 text-amber-600 text-right">{kpiDeactive}</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground text-right">در انتظار تایید</p>
+                  <p className="text-2xl font-bold mt-1 text-blue-600 text-right">{kpiPending}</p>
+                </CardContent>
+              </Card>
+            </div>
+            <Card className="min-w-0 overflow-hidden border-border shadow-sm">
                 <CardContent className="p-0">
                 <Table dir="rtl">
 <TableHeader className="bg-muted/40">
   <TableRow className="hover:bg-transparent">
     <TableHead className="w-[300px] text-right font-semibold h-12 pr-6">نام بیمار</TableHead>
     <TableHead className="text-right font-semibold">شماره تماس</TableHead>
-    <TableHead className="text-center font-semibold w-[120px]">وضعیت</TableHead>
+    <TableHead className="text-center font-semibold w-[220px]">وضعیت</TableHead>
     <TableHead className="text-right font-semibold hidden md:table-cell">تاریخ عضویت</TableHead>
     <TableHead className="text-left font-semibold pl-6">عملیات</TableHead>
   </TableRow>
@@ -476,15 +608,53 @@ function PatientsContent() {
                                 </span>
                             </TableCell>
                             <TableCell className="text-center">
-                                {patient.status === 'ACTIVE' ? (
-                                    <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 border-emerald-500/30 shadow-none font-normal gap-1">
-                                        <CheckCircle2 className="w-3 h-3"/> فعال
-                                    </Badge>
-                                ) : (
-                                    <Badge variant="outline" className="text-muted-foreground gap-1 font-normal bg-background">
-                                        <Clock className="w-3 h-3"/> منتظر تایید
-                                    </Badge>
+                              {patient.type === "CONNECTION" &&
+                                (patient.status === "ACTIVE" || patient.status === "ARCHIVED") && (
+                                  <Button
+                                    size="sm"
+                                    variant={patient.status === "ACTIVE" ? "default" : "outline"}
+                                    className={cn(
+                                      "h-8 min-w-[100px] text-[11px] gap-1.5",
+                                      patient.status === "ACTIVE"
+                                        ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-700"
+                                        : "text-primary-700 border-amber-300 bg-amber-50 hover:bg-amber-100"
+                                    )}
+                                    disabled={!!statusUpdating[patient.db_id]}
+                                    onClick={() =>
+                                      handleToggleStatus(
+                                        patient,
+                                        patient.status === "ACTIVE" ? "DEACTIVATE" : "ACTIVATE"
+                                      )
+                                    }
+                                  >
+                                    {statusUpdating[patient.db_id] ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    ) : patient.status === "ACTIVE" ? (
+                                      <>
+                                        <CheckCircle2 className="w-3.5 h-3.5" />
+                                        فعال
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Clock className="w-3.5 h-3.5" />
+                                        غیرفعال
+                                      </>
+                                    )}
+                                  </Button>
                                 )}
+                              {(patient.status === "PENDING_PATIENT_APPROVAL" ||
+                                patient.status === "PENDING_DOCTOR_APPROVAL" ||
+                                patient.status === "PENDING_PATIENT" ||
+                                patient.status === "PENDING_DOCTOR") && (
+                                <Badge variant="outline" className="text-muted-foreground gap-1 font-normal bg-background">
+                                  <Clock className="w-3 h-3" /> منتظر تایید
+                                </Badge>
+                              )}
+                              {patient.status === "INVITED" && (
+                                <Badge variant="outline" className="text-muted-foreground gap-1 font-normal bg-background">
+                                  دعوت شده
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell className="text-muted-foreground text-xs hidden md:table-cell">
                                 <span className="flex items-center gap-1.5">
@@ -495,36 +665,44 @@ function PatientsContent() {
                             <TableCell className="text-left pl-4" dir="ltr">
                                 {patient.status === 'ACTIVE' && (
                                     <div className="flex justify-start items-center gap-2 w-full">
-                                        {/* Desktop Actions */}
-                                        <div className="hidden md:flex gap-2">
-
-                                            <Button size="sm" variant="default" className="h-8 gap-1.5 shadow-sm text-xs font-medium" onClick={() => handleOpenClinicalChat(patient)}>
-                                                <ClipboardList className="h-3.5 w-3.5" /> پرونده بالینی
+                                        {!useCompactRowActions ? (
+                                          <div className="flex gap-2">
+                                              <Button size="sm" variant="default" className="h-8 gap-1.5 shadow-sm text-xs font-medium" onClick={() => handleOpenClinicalChat(patient)}>
+                                                  <ClipboardList className="h-3.5 w-3.5" /> پرونده بالینی
+                                              </Button>
+                                              <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-muted-foreground hover:text-primary" onClick={() => handleMessage(patient.patient_id)}>
+                                                  <MessageSquare className="h-4 w-4" />
+                                              </Button>
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center gap-1.5">
+                                            <Button
+                                              size="sm"
+                                              variant="outline"
+                                              className="h-8 px-2"
+                                              onClick={() => handleOpenClinicalChat(patient)}
+                                              title="پرونده بالینی"
+                                            >
+                                              <ClipboardList className="h-4 w-4" />
                                             </Button>
-                                            <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-muted-foreground hover:text-primary" onClick={() => handleMessage(patient.patient_id)}>
-                                                <MessageSquare className="h-4 w-4" />
+                                            <Button
+                                              size="sm"
+                                              variant="ghost"
+                                              className="h-8 px-2 text-muted-foreground hover:text-primary"
+                                              onClick={() => handleMessage(patient.patient_id)}
+                                              title="ارسال پیام"
+                                            >
+                                              <MessageSquare className="h-4 w-4" />
                                             </Button>
-                                        </div>
-                                        
-                                        {/* Mobile Menu */}
-                                        <div className="md:hidden">
-                                            <DropdownMenu>
-                                                <DropdownMenuTrigger asChild>
-                                                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                                                        <MoreHorizontal className="h-4 w-4" />
-                                                    </Button>
-                                                </DropdownMenuTrigger>
-                                                <DropdownMenuContent align="end">
-                                                    <DropdownMenuItem onClick={() => handleOpenClinicalChat(patient)}>
-                                                        <ClipboardList className="h-4 w-4 ml-2" /> پرونده بالینی
-                                                    </DropdownMenuItem>
-                                                    <DropdownMenuItem onClick={() => handleMessage(patient.patient_id)}>
-                                                        <MessageSquare className="h-4 w-4 ml-2" /> ارسال پیام
-                                                    </DropdownMenuItem>
-                                                </DropdownMenuContent>
-                                            </DropdownMenu>
-                                        </div>
+                                          </div>
+                                        )}
                                     </div>
+                                )}
+                                {patient.status === 'ARCHIVED' && (
+                                  <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                                    <Lock className="h-3.5 w-3.5" />
+                                    <span>برای پرونده بالینی و چت باید فعال شود</span>
+                                  </div>
                                 )}
                             </TableCell>
                         </TableRow>
@@ -538,15 +716,15 @@ function PatientsContent() {
 
 {/* --- TAB 2: REQUESTS --- */}
         <TabsContent value="REQUESTS">
-            <Card className="border border-border shadow-sm overflow-hidden">
+            <Card className="min-w-0 overflow-hidden border border-border shadow-sm">
                 <CardContent className="p-0">
                     <Table dir="rtl">
                         <TableHeader className="bg-muted/40 h-10">
                             <TableRow>
                                 <TableHead className="w-[220px] text-right font-medium text-xs pr-4">بیمار</TableHead>
-                                <TableHead className="text-right font-medium text-xs">شرح حال / علت مراجعه</TableHead>
-                                <TableHead className="text-center font-medium text-xs w-[140px]">زمان پیشنهادی</TableHead>
-                                <TableHead className="text-left font-medium text-xs pl-4 w-[180px]">عملیات</TableHead>
+                                <TableHead className="text-right font-medium text-xs">شرح مشکل</TableHead>
+                                <TableHead className="text-center font-medium text-xs w-[140px]">زمان ترجیحی</TableHead>
+                                <TableHead className="text-left font-medium text-xs pl-4 w-[180px]">اقدامات</TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -564,7 +742,7 @@ function PatientsContent() {
                                     <TableCell colSpan={4} className="h-40 text-center">
                                         <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground opacity-60">
                                             <ClipboardList className="h-8 w-8" />
-                                            <p className="text-xs">هیچ درخواست نوبت جدیدی وجود ندارد.</p>
+                                            <p className="text-xs">درخواست جدیدی یافت نشد.</p>
                                         </div>
                                     </TableCell>
                                 </TableRow>
@@ -648,7 +826,7 @@ function PatientsContent() {
                                                                 onClick={() => handleRespond(req.db_id, 'ACCEPT')}
                                                                 disabled={isLoading}
                                                             >
-                                                                {state === 'ACCEPTING' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "پذیرش"}
+                                                                {state === 'ACCEPTING' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "تایید"}
                                                             </Button>
                                                             <Button 
                                                                 size="sm" 
@@ -687,3 +865,4 @@ export default function PatientsPage() {
     </RoleGuard>
   );
 }
+

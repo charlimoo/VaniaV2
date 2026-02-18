@@ -4,6 +4,23 @@ from django_jsonform.widgets import JSONFormWidget
 from .models import AgentService
 
 # --- JSON SCHEMAS FOR VISUAL EDITORS ---
+def _get_capability_domains():
+    """
+    Build capability choices from the registry so admin stays in sync
+    with backend/capabilities modules.
+    """
+    try:
+        from capabilities import CapabilityRegistry
+
+        CapabilityRegistry.autodiscover()
+        domains = sorted(CapabilityRegistry._domain_capabilities.keys())
+        if domains:
+            return domains
+    except Exception:
+        pass
+
+    # Safe fallback for first-load edge cases
+    return ["core"]
 
 CAPABILITIES_SCHEMA = {
     "type": "array",
@@ -11,7 +28,7 @@ CAPABILITIES_SCHEMA = {
     "items": {
         "type": "string",
         "title": "Domain",
-        "enum": ["core", "shop", "trade"], 
+        "enum": _get_capability_domains(),
         "widget": "select"
     }
 }

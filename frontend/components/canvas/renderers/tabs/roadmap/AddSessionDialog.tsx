@@ -2,7 +2,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Loader2, BookText, Lightbulb } from "lucide-react";
+import { Plus, Loader2, BookText, Lightbulb, CalendarDays } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -30,7 +30,7 @@ interface Props {
 export function AddSessionDialog({ patientId, onSuccess, trigger }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [formData, setFormData] = useState({ title: "", instructions: "" });
+  const [formData, setFormData] = useState({ title: "", instructions: "", scheduled_date: "" });
 
   const handleSubmit = async () => {
     if (!formData.title.trim()) {
@@ -49,6 +49,7 @@ export function AddSessionDialog({ patientId, onSuccess, trigger }: Props) {
           patient_id: patientId,
           title: formData.title,
           instructions: formData.instructions,
+          scheduled_date: formData.scheduled_date || undefined,
         }),
       });
 
@@ -60,7 +61,7 @@ export function AddSessionDialog({ patientId, onSuccess, trigger }: Props) {
       toast.success("جلسه جدید اضافه شد.");
       
       setOpen(false);
-      setFormData({ title: "", instructions: "" });
+      setFormData({ title: "", instructions: "", scheduled_date: "" });
       
       onSuccess(newSession); // Pass object back
 
@@ -104,6 +105,19 @@ export function AddSessionDialog({ patientId, onSuccess, trigger }: Props) {
             />
           </div>
           
+          <div className="grid gap-2">
+            <Label htmlFor="session-date" className="flex items-center gap-2">
+              <CalendarDays className="w-3.5 h-3.5" />
+              تاریخ جلسه (اختیاری)
+            </Label>
+            <Input
+              id="session-date"
+              type="date"
+              value={formData.scheduled_date}
+              onChange={(e) => setFormData({ ...formData, scheduled_date: e.target.value })}
+            />
+          </div>
+
           <div className="grid gap-2">
             <Label htmlFor="session-instructions" className="flex items-center gap-2">
               <Lightbulb className="w-3.5 h-3.5" />

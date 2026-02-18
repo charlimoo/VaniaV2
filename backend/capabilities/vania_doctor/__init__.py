@@ -5,3 +5,4 @@ from . import capability
 from . import canvas
 from . import forms
 from . import tools
+from . import handlers

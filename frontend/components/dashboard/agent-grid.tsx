@@ -6,7 +6,6 @@ import {
   Bot, Lock, Zap, ArrowLeft, Clock
 } from "lucide-react";
 
-import { Card } from "@/components/ui/card"; // Removing CardContent to control padding manually
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge"; 
 import { AgentService } from "@/lib/types";
@@ -53,11 +52,12 @@ export function AgentGrid() {
         const multiplier = parseFloat(agent.cost_multiplier);
 
         return (
-          <Card 
+          <button
+            type="button"
             key={agent.id} 
             onClick={() => handleAction(agent)}
             className={cn(
-              "relative overflow-hidden transition-all duration-300 ease-out group flex flex-col justify-between h-full min-h-[200px] cursor-pointer border shadow-sm p-5 py-8",
+              "bg-card text-card-foreground relative overflow-hidden transition-all duration-300 ease-out group flex flex-col gap-6 justify-between h-full min-h-[200px] cursor-pointer rounded-xl border shadow-sm p-5 py-8 text-right",
               isOwned
                 ? "bg-card border-border/60 hover:border-primary/50 hover:shadow-lg hover:-translate-y-1 hover:shadow-primary/5" 
                 : "bg-muted/15 border-dashed border-muted/30 hover:border-muted opacity-100"
@@ -140,7 +140,7 @@ export function AgentGrid() {
                     )}
                 </div>
             </div>
-          </Card>
+          </button>
         );
       })}
     </div>

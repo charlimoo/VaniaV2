@@ -12,13 +12,14 @@ from users.sms_service import sms_service
 from .models import Notification, TreatmentConnection, PatientInvite
 from .schemas import (
     TherapyRoadmap, RoadmapSession, TherapyPhase, SessionStatus,
-    ThoughtAppendix, CulturalResource, 
+    ThoughtAppendix, CulturalResource,
     RescueNetState, RescueTask, RescueDimension
 )
 from .task_service import TaskService
 from .session_service import SessionService
 from .roadmap_service import RoadmapService
 from .appendix_service import AppendixService
+from .tests_service import ClinicalTestsService
 # Configure Logger for this module
 logger = logging.getLogger(__name__)
 
@@ -28,68 +29,109 @@ logger = logging.getLogger(__name__)
 
 class PatientManagementService:
     """
-    Encapsulates the logic for Doctors adding, inviting, and managing patients.
-    This service handles both creating new users and linking existing ones.
+    Encapsulates the logic for doctors adding, inviting, and managing patients.
     """
-    
+
+    @staticmethod
+    def is_activation_locked(
+        patient: CustomUser,
+        current_doctor: Optional[CustomUser] = None
+    ) -> bool:
+        """
+        Returns True when the patient is ACTIVE with another doctor.
+        """
+        qs = TreatmentConnection.objects.filter(
+            patient=patient,
+            status=TreatmentConnection.Status.ACTIVE
+        )
+        if current_doctor:
+            qs = qs.exclude(doctor=current_doctor)
+        return qs.exists()
+
+    @staticmethod
+    def activate_connection_or_lock(connection: TreatmentConnection) -> tuple[bool, bool]:
+        """
+        Tries to activate a connection while enforcing one-active-doctor rule.
+        Returns (activated, activation_locked).
+        """
+        locked = PatientManagementService.is_activation_locked(
+            patient=connection.patient,
+            current_doctor=connection.doctor
+        )
+        connection.status = (
+            TreatmentConnection.Status.ARCHIVED
+            if locked
+            else TreatmentConnection.Status.ACTIVE
+        )
+        connection.save(update_fields=["status", "updated_at"])
+        return (not locked), locked
+
     @staticmethod
     def invite_patient_by_phone(
-        doctor_user: CustomUser, 
-        phone_number: str, 
+        doctor_user: CustomUser,
+        phone_number: str,
         full_name: str = None
-    ) -> tuple[bool, str, Optional[CustomUser]]:
+    ) -> tuple[bool, str, Optional[CustomUser], Optional[str], bool]:
         """
-        Adds a patient to the doctor's list. If the user does not exist, a new,
-        inactive account is created, and an invite is sent. If they exist, a
-        connection request is created.
-        
-        Returns:
-            A tuple of (success, message, patient_object).
+        Adds or links a patient to doctor list and enforces active uniqueness.
+        Returns (success, message, patient_object, connection_status, activation_locked).
         """
         phone = phone_number.strip()
-        initial_name = full_name.strip() if full_name and full_name.strip() else 'کاربر جدید'
+        initial_name = full_name.strip() if full_name and full_name.strip() else "کاربر جدید"
 
         try:
             with transaction.atomic():
-                # 1. Get or Create the User
                 patient, created = CustomUser.objects.get_or_create(
                     phone_number=phone,
-                    defaults={'full_name': initial_name, 'is_active': True}
+                    defaults={"full_name": initial_name, "is_active": True}
                 )
 
                 if created:
                     patient.set_unusable_password()
                     try:
-                        patient_role = UserRole.objects.get(slug='patient')
+                        patient_role = UserRole.objects.get(slug="patient")
                         patient.role = patient_role
                     except UserRole.DoesNotExist:
                         logger.warning("Default 'patient' role not found during user creation.")
                     patient.save()
 
-                # 2. Create or Reactivate Connection
-                conn, conn_created = TreatmentConnection.objects.update_or_create(
-                    doctor=doctor_user, 
+                if full_name and full_name.strip() and not (patient.full_name or "").strip():
+                    patient.full_name = full_name.strip()
+                    patient.save(update_fields=["full_name"])
+
+                conn, conn_created = TreatmentConnection.objects.get_or_create(
+                    doctor=doctor_user,
                     patient=patient,
-                    defaults={'status': TreatmentConnection.Status.ACTIVE}
+                    defaults={"status": TreatmentConnection.Status.ARCHIVED}
                 )
+                activated, locked = PatientManagementService.activate_connection_or_lock(conn)
 
                 if created:
-                    message = f"حساب کاربری برای «{initial_name}» ایجاد و به لیست شما اضافه شد."
+                    if locked:
+                        message = "حساب ایجاد شد و بیمار به صورت غیرفعال اضافه شد."
+                    else:
+                        message = f"حساب کاربری برای «{initial_name}» ایجاد و به لیست شما اضافه شد."
                 elif conn_created:
-                    message = f"بیمار «{patient.full_name}» به لیست شما اضافه شد."
-                else: # Connection already existed, just ensured it's active.
-                    message = "این بیمار از قبل در لیست شما وجود داشت. وضعیت ارتباط فعال شد."
-                
-                return True, message, patient
+                    if locked:
+                        message = "بیمار به لیست شما اضافه شد اما فعلا غیرفعال است."
+                    else:
+                        message = f"بیمار «{patient.full_name or patient.phone_number}» به لیست شما اضافه شد."
+                else:
+                    if activated:
+                        message = "ارتباط این بیمار با شما فعال شد."
+                    else:
+                        message = "این بیمار در لیست شما موجود است اما فعلا به صورت غیرفعال می‌ماند."
 
+                return True, message, patient, conn.status, locked
         except Exception as e:
             logger.error(f"Error in invite_patient_by_phone for Dr {doctor_user.id} -> {phone}: {e}")
-            return False, "خطای داخلی در سرور هنگام افزودن بیمار.", None
-        
+            return False, "خطای داخلی در سرور هنگام افزودن بیمار.", None, None, False
+
 class ProfileService:
     """ Manages the patient's core profile summary (demographics, story, etc.) """
     CONTEXT_KEY = "clinical_summary"
     DEMOGRAPHICS_KEY = "patient_demographics"
+    FORMS_TESTS_ANALYSIS_KEY = "forms_tests_clinical_analysis"
 
     @staticmethod
     def get_summary(patient: CustomUser) -> str:
@@ -135,4 +177,18 @@ class ProfileService:
             key=ProfileService.DEMOGRAPHICS_KEY,
             data=data,
             source=UserContextEntry.SourceType.USER
+        )
+
+    @staticmethod
+    def get_forms_tests_analysis(patient: CustomUser) -> str:
+        entry = user_context_manager.get_context(patient, ProfileService.FORMS_TESTS_ANALYSIS_KEY)
+        return entry.data.get("analysis_text", "") if entry else ""
+
+    @staticmethod
+    def update_forms_tests_analysis(patient: CustomUser, analysis_text: str):
+        user_context_manager.set_singleton_context(
+            user=patient,
+            key=ProfileService.FORMS_TESTS_ANALYSIS_KEY,
+            data={"analysis_text": analysis_text},
+            source=UserContextEntry.SourceType.AGENT,
         )

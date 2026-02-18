@@ -42,7 +42,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
-import { formatCurrency, fixAvatarUrl } from "@/lib/utils"; // [NEW IMPORT]
+import { fixAvatarUrl } from "@/lib/utils";
 
 interface Location {
     id: number;
@@ -59,6 +59,71 @@ interface Doctor {
   avatar: string | null;
   meeting_price: string;
   accepting_new_patients: boolean; 
+}
+
+const ONES = ["", "یک", "دو", "سه", "چهار", "پنج", "شش", "هفت", "هشت", "نه"];
+const TEENS = ["ده", "یازده", "دوازده", "سیزده", "چهارده", "پانزده", "شانزده", "هفده", "هجده", "نوزده"];
+const TENS = ["", "", "بیست", "سی", "چهل", "پنجاه", "شصت", "هفتاد", "هشتاد", "نود"];
+const HUNDREDS = ["", "صد", "دویست", "سیصد", "چهارصد", "پانصد", "ششصد", "هفتصد", "هشتصد", "نهصد"];
+const EN_NUMBER_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+function tripletToPersianWords(num: number): string {
+  if (num === 0) return "";
+
+  const parts: string[] = [];
+  const hundred = Math.floor(num / 100);
+  const remainder = num % 100;
+
+  if (hundred > 0) {
+    parts.push(HUNDREDS[hundred]);
+  }
+
+  if (remainder >= 10 && remainder <= 19) {
+    parts.push(TEENS[remainder - 10]);
+  } else {
+    const ten = Math.floor(remainder / 10);
+    const one = remainder % 10;
+    if (ten > 0) parts.push(TENS[ten]);
+    if (one > 0) parts.push(ONES[one]);
+  }
+
+  return parts.join(" و ");
+}
+
+function numberToPersianWords(num: number): string {
+  if (num === 0) return "صفر";
+
+  const scales = ["", "هزار", "میلیون", "میلیارد", "تریلیون"];
+  const parts: string[] = [];
+  let remaining = num;
+  let scaleIndex = 0;
+
+  while (remaining > 0 && scaleIndex < scales.length) {
+    const chunk = remaining % 1000;
+    if (chunk > 0) {
+      const words = tripletToPersianWords(chunk);
+      const scale = scales[scaleIndex];
+      parts.unshift(scale ? `${words} ${scale}` : words);
+    }
+
+    remaining = Math.floor(remaining / 1000);
+    scaleIndex += 1;
+  }
+
+  return parts.join(" و ");
+}
+
+function getMeetingPriceDisplay(value: string | number | null | undefined): { full: string; words: string } | null {
+  if (value === null || value === undefined || value === "") return null;
+
+  const parsed = typeof value === "string" ? Number(value) : value;
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+
+  const rounded = Math.round(parsed);
+  return {
+    full: `${EN_NUMBER_FORMATTER.format(rounded)} تومان`,
+    words: `${numberToPersianWords(rounded)} تومان`,
+  };
 }
 
 export default function FindDoctorPage() {
@@ -156,7 +221,7 @@ export default function FindDoctorPage() {
         throw new Error(data.error || "خطا در ارسال درخواست.");
       }
       
-      toast.success(data.message || "درخواست شما با موفقیت ثبت و برای پزشک ارسال شد.");
+      toast.success(data.message || "درخواست شما با موفقیت ثبت و برای متخصص ارسال شد.");
       setSelectedDoctor(null); 
       setFormData({ main_concern: "", history_brief: "", preferred_time: "" }); 
     } catch (e: any) {
@@ -194,7 +259,7 @@ export default function FindDoctorPage() {
         <div className="relative flex-1">
             <Search className="absolute right-3 top-3 h-4 w-4 text-muted-foreground" />
             <Input 
-              placeholder="جستجوی نام پزشک یا تخصص..." 
+              placeholder="جستجوی نام متخصص یا تخصص..." 
               className="pr-9 bg-background"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -322,12 +387,20 @@ export default function FindDoctorPage() {
                             <span className="line-clamp-1">{doc.clinic_address}</span>
                         </div>
                     )}
-                    {parseFloat(doc.meeting_price) > 0 && (
-                        <div className="flex items-center gap-2">
+                    {(() => {
+                      const meetingPrice = getMeetingPriceDisplay(doc.meeting_price);
+                      if (!meetingPrice) return null;
+
+                      return (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
                             <DollarSign className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                            <span>هزینه جلسه: {formatCurrency(doc.meeting_price)}</span>
+                            <span>هزینه جلسه: {meetingPrice.full}</span>
+                          </div>
+                          <p className="text-muted-foreground pr-5">{meetingPrice.words}</p>
                         </div>
-                    )}
+                      );
+                    })()}
                 </div>
               </CardContent>
 
@@ -358,7 +431,7 @@ export default function FindDoctorPage() {
             <DialogHeader className="text-right">
                 <DialogTitle>درخواست مشاوره با {selectedDoctor?.full_name}</DialogTitle>
                 <DialogDescription>
-                    علت مراجعه خود را بنویسید. این اطلاعات برای پزشک ارسال می‌شود تا درخواست شما را بررسی کند.
+                    علت مراجعه خود را بنویسید. این اطلاعات برای متخصص ارسال می‌شود تا درخواست شما را بررسی کند.
                 </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-2">

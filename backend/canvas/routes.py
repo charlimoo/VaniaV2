@@ -209,6 +209,10 @@ async def update_canvas_instance(
                 # B. Permanent Demographics Update
                 if "patient_profile" in delta:
                     await sync_to_async(ProfileService.update_demographics)(patient, delta["patient_profile"])
+
+                # C. Permanent Forms+Tests Clinical Analysis
+                if "forms_tests_analysis" in delta:
+                    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, delta["forms_tests_analysis"])
                     
             except CustomUser.DoesNotExist:
                 pass

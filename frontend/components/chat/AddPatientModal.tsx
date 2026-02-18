@@ -33,7 +33,7 @@ interface Props {
 /**
  * Simplified modal for adding a new patient.
  * Only captures Name and Phone Number to quickly establish a connection.
- * Detailed demographics are now managed in the "Profile" tab of the canvas.
+ * Detailed demographics are now managed in the Base Profile clinical form.
  */
 export function AddPatientModal({ trigger }: Props) {
   const [open, setOpen] = useState(false);
@@ -85,12 +85,12 @@ export function AddPatientModal({ trigger }: Props) {
 
       // Trigger Onboarding workflow in the new thread
       setTimeout(() => {
-        // [UPDATE] Injected instructions now point to the Profile Tab
+        // [UPDATE] Injected instructions now point to the forms workflow
         const contextMsg = `[SYSTEM: NEW_PATIENT_CREATED]
 - Patient Name: ${formData.fullName}
 - Status: Initial Onboarding
 ACTION REQUIRED: You are in Phase 1. Greet the doctor. Explain that you are ready to begin the analysis. 
-Suggest that the doctor should fill out the patient's demographics and story in the "پرونده" (Profile) tab, or provide the details here in chat so you can synthesize them.`;
+Suggest that the doctor should first complete BASE_PROFILE_V1 in the "فرم‌ها" tab, and then provide additional clinical details so you can fill other forms and clinical summary.`;
 
         runtime.thread.append({
           role: "system",
@@ -124,7 +124,7 @@ Suggest that the doctor should fill out the patient's demographics and story in 
         <DialogHeader className="text-right">
           <DialogTitle className="text-lg">تشکیل پرونده بالینی</DialogTitle>
           <DialogDescription className="text-xs">
-            برای شروع، نام و شماره تماس بیمار را وارد کنید. سایر جزئیات را می‌توانید در زبانه «پرونده» تکمیل کنید.
+            برای شروع، نام و شماره تماس بیمار را وارد کنید. سایر جزئیات در زبانه «فرم‌ها» و فرم اطلاعات پایه ثبت می‌شود.
           </DialogDescription>
         </DialogHeader>
         

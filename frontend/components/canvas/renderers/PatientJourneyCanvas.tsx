@@ -19,6 +19,7 @@ interface PatientState {
   timeline: any[];
   library: any[];
   active_goals: string[];
+  forms_tests_analysis?: string;
   // Tracks which tab is currently open (for persistence via backend sync)
   active_tab?: string; 
 }
@@ -70,6 +71,7 @@ export default function PatientJourneyCanvas({ data, onEdit, isLocked }: Props) 
             greeting={data.greeting}
             currentPhase={data.current_phase}
             activeGoals={data.active_goals || []}
+            formsTestsAnalysis={data.forms_tests_analysis || ""}
             onTabChange={handleTabChange}
           />
         )}

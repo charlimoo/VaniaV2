@@ -4,7 +4,7 @@ import json # [FIX] Added import
 from asgiref.sync import sync_to_async
 from users.models import UserContextEntry
 from users.services import user_context_manager
-from .services import RoadmapService, TaskService, AppendixService, SessionService
+from .services import RoadmapService, TaskService, AppendixService, SessionService, ProfileService
 
 logger = logging.getLogger(__name__)
 
@@ -87,5 +87,6 @@ class PatientDataService:
             "timeline": sanitized_timeline,
             "library": library_serialized,
             "active_goals": active_smart_goals,
+            "forms_tests_analysis": ProfileService.get_forms_tests_analysis(patient),
             "my_doctors": []
         }

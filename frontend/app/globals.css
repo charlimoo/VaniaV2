@@ -222,7 +222,6 @@ html, body, span, td, div, p {
 div {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  backface-visibility: hidden;
 }
 
 @layer utilities {

@@ -5,7 +5,7 @@ import { useCanvasStore } from "@/lib/canvas/store";
 import { CanvasRegistry } from "@/components/canvas/CanvasRegistry";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { PanelRightClose, Lock, LockOpen, LayoutTemplate, Sparkles, ChevronRight  } from "lucide-react";
+import { PanelRightClose, Lock, LockOpen, LayoutTemplate, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { DemoConfig } from "@/lib/types"; // [FIX] Import the DemoConfig type
@@ -64,23 +64,23 @@ export function CanvasPanel({ onCollapse, isPreviewMode = false, demoConfig }: C
     <div className="flex h-full flex-col border-r border-border bg-background transition-all duration-300 relative overflow-hidden" dir="rtl">
       
       {/* --- Header / Tab Bar --- */}
-      <div className="flex h-12 items-center justify-between border-b px-2 bg-muted/10 shrink-0">
+      <div className="flex h-12 min-w-0 items-center justify-between border-b px-2 bg-muted/10 shrink-0">
         
         {/* Scrollable Tab List */}
-        <div className="flex-1 overflow-x-auto scrollbar-hide ml-2">
+        <div className="ml-1 min-w-0 flex-1 overflow-x-auto scrollbar-hide sm:ml-2">
           <Tabs 
             value={activeTabId || undefined} 
             onValueChange={setActiveTab}
-            className="w-full"
+            className="w-full min-w-max"
             dir="rtl"
           >
-            <TabsList className="h-8 bg-transparent p-0 gap-1 justify-start">
+            <TabsList className="h-8 min-w-max justify-start gap-1 bg-transparent p-0">
               {tabs.map((tab) => (
                 <TabsTrigger
                   key={tab.id}
                   value={tab.id}
                   className={cn(
-                    "h-7 rounded-md px-3 text-xs border border-transparent select-none",
+                    "h-7 shrink-0 rounded-md border border-transparent px-2.5 text-xs select-none sm:px-3",
                     "data-[state=active]:bg-background data-[state=active]:shadow-sm data-[state=active]:border-border/50",
                     "data-[state=active]:text-foreground text-muted-foreground"
                   )}
@@ -93,7 +93,7 @@ export function CanvasPanel({ onCollapse, isPreviewMode = false, demoConfig }: C
         </div>
 
         {/* Actions Area */}
-        <div className="flex items-center gap-1.5 pr-2 pl-3 border-r">
+        <div className="flex shrink-0 items-center gap-1 pl-2 pr-1.5 border-r sm:gap-1.5 sm:pl-3 sm:pr-2">
           
           {/* Lock / Sync Status Indicator */}
           <div 
@@ -106,7 +106,7 @@ export function CanvasPanel({ onCollapse, isPreviewMode = false, demoConfig }: C
             title={isLocked ? "دستیار در حال بروزرسانی بوم است. ویرایش قفل شده است." : "بوم باز است. می‌توانید ویرایش کنید."}
           >
             {isLocked ? <Lock className="size-3" /> : <LockOpen className="size-3 opacity-50" />}
-            {isLocked && <span className="hidden sm:inline">در حال همگام‌سازی</span>}
+            {isLocked && <span className="hidden md:inline">در حال همگام‌سازی</span>}
           </div>
 
           <Button 
@@ -122,7 +122,7 @@ export function CanvasPanel({ onCollapse, isPreviewMode = false, demoConfig }: C
       </div>
 
       {/* --- Main Content Body --- */}
-      <div className="flex-1 overflow-hidden relative group text-right" dir="rtl">
+      <div className="relative flex-1 min-h-0 min-w-0 overflow-hidden group text-right" dir="rtl">
         {activeInstance ? (
           <CanvasRegistry
             componentKey={activeInstance.component_key}

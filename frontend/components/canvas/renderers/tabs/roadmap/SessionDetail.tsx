@@ -123,7 +123,7 @@ function CompletedSessionView({ report, summary, privateNotes, flashcards }: { r
             <div className="bg-red-950/10 border border-red-900/30 rounded-lg p-3 relative overflow-hidden">
                 <div className="flex items-center gap-2 mb-2 border-b border-red-900/20 pb-2">
                     <ShieldAlert className="w-4 h-4 text-red-500/80" />
-                    <span className="text-xs font-bold text-red-500/90">یادداشت محرمانه پزشک</span>
+                    <span className="text-xs font-bold text-red-500/90">یادداشت محرمانه متخصص</span>
                     <span className="text-[9px] bg-red-950/30 px-2 py-0.5 rounded-full text-red-400/70 border border-red-900/20 mr-auto">غیرقابل نمایش برای بیمار</span>
                 </div>
                 <p className="text-xs text-red-200/80 leading-relaxed whitespace-pre-wrap">

@@ -19,6 +19,21 @@ Font.register({
   ]
 });
 
+// --- Text Normalization Helpers (Persian-safe) ---
+const normalizePersianText = (input: any): string => {
+  const raw = String(input ?? "");
+  return raw
+    .normalize("NFC")
+    // Persian letter unification
+    .replace(/ي/g, "ی")
+    .replace(/ك/g, "ک")
+    .replace(/ة/g, "ه")
+    // Remove directional/hidden formatting noise
+    .replace(/[\u200B\u200D\u200E\u200F\u2066-\u2069\uFEFF]/g, "")
+    .replace(/[ \t]+/g, " ")
+    .trim();
+};
+
 // --- 2. Professional StyleSheet ---
 const styles = StyleSheet.create({
   page: {
@@ -100,7 +115,7 @@ interface Props {
  * in a clinical format, correctly handling RTL text.
  */
 export const SessionPDF = ({ data, patientName, doctorName = "متخصص روان‌درمانی" }: Props) => (
-  <Document title={`گزارش جلسه ${data.session_number} - ${patientName}`}>
+  <Document title={`گزارش جلسه ${normalizePersianText(data.session_number)} - ${normalizePersianText(patientName)}`}>
     <Page size="A4" style={styles.page}>
       
       {/* --- HEADER --- */}
@@ -110,18 +125,18 @@ export const SessionPDF = ({ data, patientName, doctorName = "متخصص روا�
           <Text style={styles.headerMeta}>سیستم هوشمند وانیا (VCOS)</Text>
         </View>
         <View style={{ alignItems: 'flex-end' }}>
-          <Text style={styles.headerMeta}><Text style={styles.label}>مراجع:</Text> {patientName}</Text>
-          <Text style={styles.headerMeta}><Text style={styles.label}>درمانگر:</Text> {doctorName}</Text>
-          <Text style={styles.headerMeta}><Text style={styles.label}>جلسه:</Text> {data.session_number}  |  <Text style={styles.label}>تاریخ:</Text> {data.date}</Text>
+          <Text style={styles.headerMeta}><Text style={styles.label}>مراجع:</Text> {normalizePersianText(patientName)}</Text>
+          <Text style={styles.headerMeta}><Text style={styles.label}>درمانگر:</Text> {normalizePersianText(doctorName)}</Text>
+          <Text style={styles.headerMeta}><Text style={styles.label}>جلسه:</Text> {normalizePersianText(data.session_number)}  |  <Text style={styles.label}>تاریخ:</Text> {normalizePersianText(data.date)}</Text>
         </View>
       </View>
 
       {/* --- OVERVIEW SECTION --- */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>خلاصه جلسه</Text>
-        <Text style={styles.text}><Text style={styles.label}>موضوع اصلی:</Text> {data.topic}</Text>
-        <Text style={styles.text}><Text style={styles.label}>رویکردهای درمانی به کار رفته:</Text> {Array.isArray(data.approaches_used) ? data.approaches_used.join('، ') : data.approaches_used}</Text>
-        <Text style={styles.text}><Text style={styles.label}>تحلیل بالینی:</Text> {data.symptoms_analysis}</Text>
+        <Text style={styles.text}><Text style={styles.label}>موضوع اصلی:</Text> {normalizePersianText(data.topic)}</Text>
+        <Text style={styles.text}><Text style={styles.label}>رویکردهای درمانی به کار رفته:</Text> {normalizePersianText(Array.isArray(data.approaches_used) ? data.approaches_used.join('، ') : data.approaches_used)}</Text>
+        <Text style={styles.text}><Text style={styles.label}>تحلیل بالینی:</Text> {normalizePersianText(data.symptoms_analysis)}</Text>
       </View>
 
       {/* --- SWOT ANALYSIS SECTION --- */}
@@ -130,21 +145,21 @@ export const SessionPDF = ({ data, patientName, doctorName = "متخصص روا�
         <View style={styles.gridRow}>
             <View style={[styles.gridCol, styles.swotS]}>
                 <Text style={[styles.swotTitle, {color: '#166534'}]}>نقاط قوت (Strengths)</Text>
-                {data.swot_analysis?.Strengths?.map((item:string, i:number) => <Text key={i} style={styles.text}>• {item}</Text>)}
+                {data.swot_analysis?.Strengths?.map((item:string, i:number) => <Text key={i} style={styles.text}>• {normalizePersianText(item)}</Text>)}
             </View>
             <View style={[styles.gridCol, styles.swotW]}>
                 <Text style={[styles.swotTitle, {color: '#991b1b'}]}>نقاط ضعف (Weaknesses)</Text>
-                {data.swot_analysis?.Weaknesses?.map((item:string, i:number) => <Text key={i} style={styles.text}>• {item}</Text>)}
+                {data.swot_analysis?.Weaknesses?.map((item:string, i:number) => <Text key={i} style={styles.text}>• {normalizePersianText(item)}</Text>)}
             </View>
         </View>
         <View style={styles.gridRow}>
             <View style={[styles.gridCol, styles.swotO]}>
                 <Text style={[styles.swotTitle, {color: '#1e40af'}]}>فرصت‌ها (Opportunities)</Text>
-                {data.swot_analysis?.Opportunities?.map((item:string, i:number) => <Text key={i} style={styles.text}>• {item}</Text>)}
+                {data.swot_analysis?.Opportunities?.map((item:string, i:number) => <Text key={i} style={styles.text}>• {normalizePersianText(item)}</Text>)}
             </View>
             <View style={[styles.gridCol, styles.swotT]}>
                 <Text style={[styles.swotTitle, {color: '#9a3412'}]}>تهدیدها (Threats)</Text>
-                {data.swot_analysis?.Threats?.map((item:string, i:number) => <Text key={i} style={styles.text}>• {item}</Text>)}
+                {data.swot_analysis?.Threats?.map((item:string, i:number) => <Text key={i} style={styles.text}>• {normalizePersianText(item)}</Text>)}
             </View>
         </View>
       </View>
@@ -153,7 +168,7 @@ export const SessionPDF = ({ data, patientName, doctorName = "متخصص روا�
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>اهداف هوشمند (SMART Goals)</Text>
         {data.smart_goals?.map((goal:string, i:number) => (
-          <Text key={i} style={styles.text}>{i + 1}. {goal}</Text>
+          <Text key={i} style={styles.text}>{i + 1}. {normalizePersianText(goal)}</Text>
         ))}
       </View>
 
@@ -163,8 +178,8 @@ export const SessionPDF = ({ data, patientName, doctorName = "متخصص روا�
         <View style={styles.cardContainer}>
           {data.flashcards?.map((card:any, i:number) => (
             <View key={i} style={styles.flashcard}>
-              <Text style={styles.cardTitle}>{card.title}</Text>
-              <Text style={styles.text}>{card.content}</Text>
+              <Text style={styles.cardTitle}>{normalizePersianText(card.title)}</Text>
+              <Text style={styles.text}>{normalizePersianText(card.content)}</Text>
             </View>
           ))}
         </View>
