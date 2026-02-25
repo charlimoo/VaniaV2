@@ -19,7 +19,8 @@ class SessionService:
         doctor, 
         summary: str, 
         private_notes: str, 
-        mood_rating: int = None
+        mood_rating: int = None,
+        doctor_id: int = None
     ) -> UserContextEntry:
         """
         Saves a session report into the patient's context history as an immutable log entry.
@@ -35,7 +36,7 @@ class SessionService:
             The newly created UserContextEntry object.
         """
         data = {
-            "doctor_id": doctor.id,
+            "doctor_id": doctor_id or doctor.id,
             "doctor_name": doctor.full_name or "Doctor",
             "date": timezone.now().isoformat(),
             "summary": summary,
@@ -53,7 +54,7 @@ class SessionService:
         )
 
     @staticmethod
-    def get_patient_history(patient, viewer_role: str = 'DOCTOR') -> list:
+    def get_patient_history(patient, viewer_role: str = 'DOCTOR', doctor_id: int = None) -> list:
         """
         Retrieves a patient's session history with Role-Based redaction.
 
@@ -75,6 +76,8 @@ class SessionService:
             
             # Make a copy to avoid modifying the object in memory
             payload = entry.data.copy()
+            if doctor_id and int(payload.get("doctor_id") or 0) != int(doctor_id):
+                continue
             
             # [CRITICAL] Inject the DB ID so the frontend can reference this specific log
             payload['id'] = entry.id 

@@ -18,8 +18,34 @@ from vania_core.models import Notification, TreatmentConnection
 from vania_core.patient_service import PatientDataService
 from vania_core.task_service import TaskService
 from vania_core.appendix_service import AppendixService
+from agents.context import selected_doctor_context
 
 logger = logging.getLogger(__name__)
+
+
+async def _resolve_selected_doctor_id(patient: CustomUser) -> Optional[int]:
+    raw = selected_doctor_context.get()
+    if raw:
+        try:
+            selected = int(raw)
+            has_access = await sync_to_async(
+                lambda: TreatmentConnection.objects.filter(
+                    patient=patient,
+                    doctor_id=selected,
+                    status=TreatmentConnection.Status.ACTIVE
+                ).exists()
+            )()
+            if has_access:
+                return selected
+        except (TypeError, ValueError):
+            pass
+    conn = await sync_to_async(
+        lambda: TreatmentConnection.objects.filter(
+            patient=patient,
+            status=TreatmentConnection.Status.ACTIVE
+        ).order_by("-updated_at").first()
+    )()
+    return conn.doctor_id if conn else None
 
 # ==============================================================================
 # == HELPER FUNCTIONS
@@ -34,7 +60,8 @@ async def _refresh_patient_canvas(session_id: str, patient: CustomUser) -> Async
         return
 
     try:
-        data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(patient)
+        doctor_id = await _resolve_selected_doctor_id(patient)
+        data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(patient, doctor_id)
 
         yield CanvasUpdateEvent(value={
             "component_key": "VANIA_PATIENT_JOURNEY",
@@ -42,13 +69,15 @@ async def _refresh_patient_canvas(session_id: str, patient: CustomUser) -> Async
                 "tasks": data["tasks"],
                 "timeline": data["timeline"],
                 "library": data["library"],
-                "active_goals": data["active_goals"]
+                "active_goals": data["active_goals"],
+                "my_doctors": data.get("my_doctors", []),
+                "selected_doctor_id": data.get("selected_doctor_id"),
             }
         })
     except Exception as e:
         logger.error(f"Failed to refresh patient canvas: {e}")
 
-async def _notify_doctor(patient: CustomUser, title: str, message: str):
+async def _notify_doctor(patient: CustomUser, title: str, message: str, doctor_id: Optional[int] = None):
     """
     Sends a system notification to the patient's active doctor.
     Used when tasks are completed or important milestones are reached.
@@ -57,10 +86,14 @@ async def _notify_doctor(patient: CustomUser, title: str, message: str):
         @sync_to_async
         def send():
             # Find the primary active connection
-            conn = TreatmentConnection.objects.filter(
+            qs = TreatmentConnection.objects.filter(
                 patient=patient, 
                 status=TreatmentConnection.Status.ACTIVE
-            ).select_related('doctor').first()
+            ).select_related('doctor')
+            if doctor_id:
+                conn = qs.filter(doctor_id=doctor_id).first()
+            else:
+                conn = qs.first()
             
             if conn and conn.doctor:
                 Notification.objects.create(
@@ -92,6 +125,7 @@ async def load_my_journey(run_context: RunContext) -> AsyncGenerator[Any, None]:
     
     try:
         patient = await CustomUser.objects.aget(pk=user_id)
+        doctor_id = await _resolve_selected_doctor_id(patient)
 
         # 1. Trigger UI Refresh
         if run_context.session_id:
@@ -99,7 +133,7 @@ async def load_my_journey(run_context: RunContext) -> AsyncGenerator[Any, None]:
                 yield evt
 
         # 2. Return Context to LLM
-        data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(patient)
+        data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(patient, doctor_id)
         
         # Summarize to save tokens while providing key info
         context_summary = {
@@ -133,9 +167,10 @@ async def mark_task_complete(
     """
     user_id = run_context.user_id
     patient = await CustomUser.objects.aget(pk=user_id)
+    doctor_id = await _resolve_selected_doctor_id(patient)
 
     # Find the task
-    all_tasks = await sync_to_async(TaskService.get_patient_tasks)(patient)
+    all_tasks = await sync_to_async(TaskService.get_patient_tasks)(patient, doctor_id)
     target_task = next((t for t in all_tasks if t.get('id') == task_text_or_id or task_text_or_id.lower() in t.get('text', '').lower()), None)
             
     if not target_task:
@@ -144,7 +179,7 @@ async def mark_task_complete(
 
     # Update Status
     success = await sync_to_async(TaskService.update_task_status)(
-        patient, target_task['id'], "DONE", reflection
+        patient, target_task['id'], "DONE", reflection, doctor_id
     )
 
     if success:
@@ -157,7 +192,8 @@ async def mark_task_complete(
         await _notify_doctor(
             patient, 
             "تکلیف انجام شد", 
-            f"بیمار {patient.full_name} تکلیف «{target_task['text']}» را انجام داد.\nبازخورد: {reflection or 'ندارد'}"
+            f"مراجعه کننده {patient.full_name} تکلیف «{target_task['text']}» را انجام داد.\nبازخورد: {reflection or 'ندارد'}",
+            doctor_id=doctor_id
         )
 
         yield f"✅ Task '{target_task['text']}' marked as done. I have notified Dr. {target_task.get('doctor_name', 'Doctor')}."
@@ -174,8 +210,9 @@ async def mark_resource_consumed(
     """
     user_id = run_context.user_id
     patient = await CustomUser.objects.aget(pk=user_id)
+    doctor_id = await _resolve_selected_doctor_id(patient)
     
-    library = await sync_to_async(AppendixService.get_library)(patient)
+    library = await sync_to_async(AppendixService.get_library)(patient, doctor_id)
     
     target = next((r for r in library.resources if r.id == resource_title_or_id or resource_title_or_id.lower() in r.title.lower()), None)
     
@@ -184,7 +221,7 @@ async def mark_resource_consumed(
         return
 
     success = await sync_to_async(AppendixService.update_resource_status)(
-        patient, target.id, "CONSUMED"
+        patient, target.id, "CONSUMED", doctor_id
     )
     
     if success:
@@ -205,9 +242,10 @@ async def reflect_on_session(run_context: RunContext) -> AsyncGenerator[Any, Non
     """
     user_id = run_context.user_id
     patient = await CustomUser.objects.aget(pk=user_id)
+    doctor_id = await _resolve_selected_doctor_id(patient)
     
     # Fetch aggregated data
-    data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(patient)
+    data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(patient, doctor_id)
     timeline = data.get("timeline", [])
     
     if not timeline:

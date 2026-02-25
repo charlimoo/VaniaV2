@@ -94,7 +94,7 @@ export default function MyDoctorsPage() {
   );
 
   return (
-    <RoleGuard allowedRoles={['patient']}>
+    <RoleGuard allowedRoles={['visitor']}>
     <div className="mx-auto flex h-full w-full max-w-6xl flex-col space-y-8 pb-10 pt-6" dir="rtl">
       
       {/* Header */}
@@ -110,7 +110,7 @@ export default function MyDoctorsPage() {
         </div>
 
         <Button asChild className="w-full gap-2 shadow-sm sm:w-auto">
-          <Link href="/dashboard/doctors/find">
+          <Link href="/dashboard/experts/find">
             <Plus className="h-4 w-4" /> یافتن متخصص جدید
           </Link>
         </Button>
@@ -143,7 +143,7 @@ export default function MyDoctorsPage() {
             <Stethoscope className="h-12 w-12 mb-4 opacity-20" />
             <p className="font-medium">شما هنوز با هیچ متخصصی در ارتباط نیستید.</p>
             <Button variant="link" asChild className="mt-2 text-primary">
-                <Link href="/dashboard/doctors/find">جستجوی متخصص</Link>
+                <Link href="/dashboard/experts/find">جستجوی متخصص</Link>
             </Button>
         </div>
       ) : (

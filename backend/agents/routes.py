@@ -42,6 +42,24 @@ class SessionType(str, Enum):
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+def _normalize_session_state_aliases(session_state):
+    if not isinstance(session_state, dict):
+        return {}
+
+    out = dict(session_state)
+    visitor_id = out.get("visitor_id") or out.get("patient_id")
+    expert_id = out.get("selected_expert_id") or out.get("selected_doctor_id")
+
+    if visitor_id is not None:
+        out["visitor_id"] = visitor_id
+        out["patient_id"] = visitor_id
+    if expert_id is not None:
+        out["selected_expert_id"] = expert_id
+        out["selected_doctor_id"] = expert_id
+
+    return out
+
 # ==========================================
 # SESSION MANAGEMENT ROUTES
 # ==========================================
@@ -122,15 +140,25 @@ async def get_session_history(
         session = await sync_to_async(get_session_safe)(storage, session_id, str(user.id))
         
         session_name = "New Conversation"
+        session_state = {}
         if session:
             s_data = safe_serialize(session)
             if 'session_data' in s_data:
-                session_name = s_data['session_data'].get('name', "New Conversation")
+                session_data = s_data['session_data'] or {}
+                session_name = session_data.get('name', "New Conversation")
+                session_state = _normalize_session_state_aliases({
+                    "agent_id": session_data.get("agent_id"),
+                    "visitor_id": session_data.get("visitor_id"),
+                    "patient_id": session_data.get("patient_id"),
+                    "selected_expert_id": session_data.get("selected_expert_id"),
+                    "selected_doctor_id": session_data.get("selected_doctor_id"),
+                })
 
         if not session: 
             return JSONResponse(content={
                 "chat_history": [],
-                "session_name": "گفتگوی جدید"
+                "session_name": "گفتگوی جدید",
+                "session_state": {}
             })
 
         history = []
@@ -182,7 +210,8 @@ async def get_session_history(
         
         return JSONResponse(content={
             "chat_history": history,
-            "session_name": session_name
+            "session_name": session_name,
+            "session_state": session_state
         })
         
     except Exception as e:
@@ -209,13 +238,14 @@ async def create_session(
             return JSONResponse(content={"status": "exists"})
 
         now = int(time.time())
+        normalized_session_state = _normalize_session_state_aliases(session_data.session_state)
         new_session = AgentSession(
             session_id=session_data.session_id,
             user_id=str(user.id),
             session_data={
                 "name": session_data.session_name,
-                "agent_id": session_data.session_state.get("agent_id"),
-                **session_data.session_state
+                "agent_id": normalized_session_state.get("agent_id"),
+                **normalized_session_state
             },
             created_at=now,
             updated_at=now
@@ -248,7 +278,10 @@ async def rename_session(
         
         if session:
             if not session.session_data: session.session_data = {}
-            session.session_data["name"] = update_data.session_name
+            if update_data.session_name is not None:
+                session.session_data["name"] = update_data.session_name
+            if update_data.session_state:
+                session.session_data.update(_normalize_session_state_aliases(update_data.session_state))
             
             if hasattr(storage, 'upsert_session'):
                 await sync_to_async(storage.upsert_session)(session=session)

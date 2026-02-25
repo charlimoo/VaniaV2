@@ -68,8 +68,8 @@ export function PatientSelector() {
 
     if (shouldFetch) {
       setLoading(true);
-      fetch(`${API_BASE_URL}/api/vania/my-patients/`, { headers: getAuthHeaders() })
-        .then(res => res.ok ? res.json() : Promise.reject('Failed to fetch patients'))
+      fetch(`${API_BASE_URL}/api/vania/my-visitors/`, { headers: getAuthHeaders() })
+        .then(res => res.ok ? res.json() : Promise.reject('Failed to fetch visitors'))
         .then(data => {
           const validPatients: Patient[] = data
             .filter((p: any) => p.patient_id !== null && p.status === "ACTIVE")
@@ -100,7 +100,7 @@ export function PatientSelector() {
             }
           }
         })
-        .catch(error => console.error("Failed to fetch patient list:", error))
+        .catch(error => console.error("Failed to fetch visitor list:", error))
         .finally(() => setLoading(false));
     }
   }, [popoverOpen, hasLoaded, loading, searchParams, activePatientId, activePatientName, setActivePatient]);
@@ -112,7 +112,7 @@ export function PatientSelector() {
     setPopoverOpen(false);
     
     const newThreadId = `local-${crypto.randomUUID()}`;
-    router.push(`/chat/${agentId}/${newThreadId}?patientId=${patientId}`);
+    router.push(`/chat/${agentId}/${newThreadId}?visitorId=${patientId}`);
   };
 
   const handleClearContext = (e: React.MouseEvent) => {
@@ -127,7 +127,7 @@ export function PatientSelector() {
   const selectedPatient = patients.find(p => p.id === activePatientId);
   
   // Prefer store name if available (instant), fallback to list lookup, fallback to placeholder
-  const displayName = activePatientName || selectedPatient?.full_name || "انتخاب پرونده بیمار";
+  const displayName = activePatientName || selectedPatient?.full_name || "انتخاب پرونده مراجع";
 
   // Check if we are in a loading state for the initial hydration
   const isHydrating = loading && !hasLoaded && searchParams.get('patientId');
@@ -184,17 +184,17 @@ export function PatientSelector() {
         <Command dir="rtl" className="rounded-xl">
           <div className="flex items-center border-b px-3 bg-muted/20">
             <CommandInput 
-                placeholder="جستجوی نام یا شماره تماس بیمار..." 
+                placeholder="جستجوی نام یا شماره تماس مراجع..." 
                 className="h-11 bg-transparent text-sm"
             />
           </div>
           
           <CommandList className="max-h-[300px] overflow-y-auto p-1">
             <CommandEmpty className="py-6 text-center text-sm text-muted-foreground">
-                {loading ? "در حال بارگذاری..." : "بیماری یافت نشد."}
+                {loading ? "در حال بارگذاری..." : "مراجعی یافت نشد."}
             </CommandEmpty>
             
-            <CommandGroup heading="لیست بیماران شما" className="px-1 text-xs text-muted-foreground font-medium">
+            <CommandGroup heading="لیست مراجعین شما" className="px-1 text-xs text-muted-foreground font-medium">
               {patients.map((patient) => {
                 const isSelected = activePatientId === patient.id;
                 return (
@@ -211,7 +211,7 @@ export function PatientSelector() {
                     </Avatar>
 
                     <div className="flex-1 min-w-0">
-                        <span className="text-sm font-medium truncate">{patient.full_name || "بیمار بدون نام"}</span>
+                        <span className="text-sm font-medium truncate">{patient.full_name || "مراجع بدون نام"}</span>
                         <p className="text-[10px] text-muted-foreground font-mono">{patient.phone_number}</p>
                     </div>
 

@@ -15,6 +15,7 @@ from pypdf import PdfReader
 from users.models import UserContextEntry
 from users.services import user_context_manager
 from .tests_catalog import TEST_CATALOG, TEST_CATALOG_BY_ID
+from .context_scope import migrate_legacy_to_scoped_once, build_scoped_key
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +40,16 @@ class ClinicalTestsService:
         return TEST_CATALOG
 
     @staticmethod
-    def _get_state(patient) -> Dict[str, Any]:
-        entry = user_context_manager.get_context(patient, ClinicalTestsService.CONTEXT_KEY)
+    def _get_state(patient, doctor_id=None) -> Dict[str, Any]:
+        if doctor_id:
+            entry = migrate_legacy_to_scoped_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                base_key=ClinicalTestsService.CONTEXT_KEY,
+                default_factory=lambda: {"tests": []},
+            )
+        else:
+            entry = user_context_manager.get_context(patient, ClinicalTestsService.CONTEXT_KEY)
         if entry and isinstance(entry.data, dict):
             tests = entry.data.get("tests", [])
             if isinstance(tests, list):
@@ -48,17 +57,18 @@ class ClinicalTestsService:
         return {"tests": []}
 
     @staticmethod
-    def get_tests(patient) -> List[Dict[str, Any]]:
-        state = ClinicalTestsService._get_state(patient)
+    def get_tests(patient, doctor_id=None) -> List[Dict[str, Any]]:
+        state = ClinicalTestsService._get_state(patient, doctor_id=doctor_id)
         tests = state.get("tests", [])
         tests.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return tests
 
     @staticmethod
-    def save_tests(patient, tests: List[Dict[str, Any]], source=UserContextEntry.SourceType.USER, creator=None):
+    def save_tests(patient, tests: List[Dict[str, Any]], source=UserContextEntry.SourceType.USER, creator=None, doctor_id=None):
+        key = build_scoped_key(ClinicalTestsService.CONTEXT_KEY, doctor_id) if doctor_id else ClinicalTestsService.CONTEXT_KEY
         user_context_manager.set_singleton_context(
             user=patient,
-            key=ClinicalTestsService.CONTEXT_KEY,
+            key=key,
             data={"tests": tests},
             source=source,
             creator=creator,
@@ -72,8 +82,9 @@ class ClinicalTestsService:
         title: Optional[str] = None,
         url: Optional[str] = None,
         result_summary: Optional[str] = None,
+        doctor_id=None,
     ) -> Dict[str, Any]:
-        tests = ClinicalTestsService.get_tests(patient)
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
         now_iso = datetime.now().isoformat()
 
         resolved_title = title or ""
@@ -97,12 +108,12 @@ class ClinicalTestsService:
             "updated_at": now_iso,
         }
         tests.insert(0, new_test)
-        ClinicalTestsService.save_tests(patient, tests, creator=created_by)
+        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id)
         return new_test
 
     @staticmethod
-    def update_test(patient, created_by, test_id: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        tests = ClinicalTestsService.get_tests(patient)
+    def update_test(patient, created_by, test_id: str, payload: Dict[str, Any], doctor_id=None) -> Optional[Dict[str, Any]]:
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
         updated = None
         for test in tests:
             if test.get("id") == test_id:
@@ -123,7 +134,7 @@ class ClinicalTestsService:
         if updated is None:
             return None
 
-        ClinicalTestsService.save_tests(patient, tests, creator=created_by)
+        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id)
         return updated
 
     @staticmethod
@@ -132,8 +143,8 @@ class ClinicalTestsService:
             default_storage.delete(file_path)
 
     @staticmethod
-    def delete_test(patient, created_by, test_id: str) -> bool:
-        tests = ClinicalTestsService.get_tests(patient)
+    def delete_test(patient, created_by, test_id: str, doctor_id=None) -> bool:
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
         filtered = []
         removed = False
         for test in tests:
@@ -146,7 +157,7 @@ class ClinicalTestsService:
         if not removed:
             return False
 
-        ClinicalTestsService.save_tests(patient, filtered, creator=created_by)
+        ClinicalTestsService.save_tests(patient, filtered, creator=created_by, doctor_id=doctor_id)
         return True
 
     @staticmethod
@@ -157,8 +168,9 @@ class ClinicalTestsService:
         uploaded_file,
         doctor_summary: Optional[str] = None,
         auto_summarize: bool = True,
+        doctor_id=None,
     ) -> Optional[Dict[str, Any]]:
-        tests = ClinicalTestsService.get_tests(patient)
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
         target = None
         for test in tests:
             if test.get("id") == test_id:
@@ -193,12 +205,12 @@ class ClinicalTestsService:
         target["result_summary"] = summary_text
         target["updated_at"] = datetime.now().isoformat()
 
-        ClinicalTestsService.save_tests(patient, tests, creator=created_by)
+        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id)
         return target
 
     @staticmethod
-    def remove_test_file(patient, created_by, test_id: str) -> bool:
-        tests = ClinicalTestsService.get_tests(patient)
+    def remove_test_file(patient, created_by, test_id: str, doctor_id=None) -> bool:
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
         changed = False
         for test in tests:
             if test.get("id") == test_id:
@@ -213,12 +225,12 @@ class ClinicalTestsService:
         if not changed:
             return False
 
-        ClinicalTestsService.save_tests(patient, tests, creator=created_by)
+        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id)
         return True
 
     @staticmethod
-    def get_test(patient, test_id: str) -> Optional[Dict[str, Any]]:
-        for test in ClinicalTestsService.get_tests(patient):
+    def get_test(patient, test_id: str, doctor_id=None) -> Optional[Dict[str, Any]]:
+        for test in ClinicalTestsService.get_tests(patient, doctor_id=doctor_id):
             if test.get("id") == test_id:
                 return test
         return None
@@ -391,7 +403,7 @@ class ClinicalTestsService:
                         "role": "user",
                         "content": (
                             f"نام تست: {test_title}\n\n"
-                            "بر اساس متن نتیجه تست زیر، یک خلاصه بالینی کوتاه (حداکثر ۸ خط) بنویس. "
+                            "بر اساس متن نتیجه تست زیر، یک علت مراجع و مشاهدات کوتاه (حداکثر ۸ خط) بنویس. "
                             "خروجی باید شامل: یافته‌های اصلی، تفسیر محتاطانه، و نکات قابل پیگیری در جلسه بعد باشد. "
                             "از ادعاهای قطعی بدون شواهد خودداری کن.\n\n"
                             f"متن تست:\n{test_text}"

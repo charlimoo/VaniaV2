@@ -36,7 +36,7 @@ class VaniaDoctorCapability(BaseCapability):
 
     def get_context_prompt(self, user: Any, resource_id: str) -> str:
         """
-        Dynamically generates phase-aware instructions AND injects available forms.
+        Dynamically generates treatment context and injects available forms.
         [FIX] Now includes HISTORY of previously filled forms.
         """
         if not resource_id:
@@ -44,7 +44,8 @@ class VaniaDoctorCapability(BaseCapability):
 
         try:
             patient = CustomUser.objects.get(pk=resource_id)
-            roadmap = RoadmapService.get_or_create_roadmap(patient)
+            doctor_id = int(user.id)
+            roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=doctor_id)
 
             # We look for the latest Base Profile form submission
             base_profile_entry = UserContextEntry.objects.filter(
@@ -52,6 +53,16 @@ class VaniaDoctorCapability(BaseCapability):
                 definition__key__startswith="clinical_form_base_profile_v1",
                 is_active=True
             ).order_by('-created_at').first()
+            if base_profile_entry and int(base_profile_entry.data.get("submitted_by_doctor_id") or 0) != doctor_id:
+                base_profile_entry = UserContextEntry.objects.filter(
+                    user=patient,
+                    definition__key__startswith="clinical_form_base_profile_v1",
+                    is_active=True,
+                ).order_by('-created_at')
+                base_profile_entry = next(
+                    (entry for entry in base_profile_entry if int(entry.data.get("submitted_by_doctor_id") or 0) == doctor_id),
+                    None
+                )
 
             demographics_context = ""
             if base_profile_entry:
@@ -89,6 +100,11 @@ class VaniaDoctorCapability(BaseCapability):
             if recent_forms.exists():
                 base_msg += "\n### 🗂️ PATIENT CLINICAL HISTORY (Filled Forms)\n"
                 for entry in recent_forms:
+                    if doctor_id and not entry.data.get("submitted_by_doctor_id"):
+                        entry.data["submitted_by_doctor_id"] = doctor_id
+                        entry.save(update_fields=["data"])
+                    if int(entry.data.get("submitted_by_doctor_id") or 0) != doctor_id:
+                        continue
                     # Extract title and date
                     form_title = entry.data.get('form_title', entry.definition.key)
                     date_str = entry.created_at.strftime('%Y-%m-%d')
@@ -103,7 +119,7 @@ class VaniaDoctorCapability(BaseCapability):
                 base_msg += "\n(No clinical forms have been filled for this patient yet.)\n"
 
             # --- 2.5 Inject Test History ---
-            clinical_tests = ClinicalTestsService.get_tests(patient)
+            clinical_tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
             if clinical_tests:
                 base_msg += "\n### 🧪 PATIENT TEST HISTORY\n"
                 for t in clinical_tests[:7]:
@@ -131,11 +147,9 @@ class VaniaDoctorCapability(BaseCapability):
                 tests_context += f"- ID: `{test['id']}` | Title: {test['title']} | URL: {test['url']}\n"
             base_msg += tests_context
 
-            # --- 3. Phase-Specific Instructions ---
-
-            # PHASE 1: Initial Analysis
+            # --- 4. Phase-Aware Guidance (Soft Policy / No Hard Gating) ---
             if roadmap.current_phase == TherapyPhase.PHASE_1_ANALYSIS:
-                return base_msg + """
+                base_msg += """
 ⚠️ **ACTION REQUIRED: PHASE 1 (ANALYSIS)**
 The patient is in the initial analysis phase.
 1.  **ALWAYS fill BASE_PROFILE_V1 first** using `submit_clinical_form`.
@@ -144,12 +158,10 @@ The patient is in the initial analysis phase.
 4.  Write/update `clinical_summary` using `update_clinical_summary`.
 5.  Prescribe 1 to 7 psychology tests via `manage_clinical_tests` (using catalog IDs).
 """
-
-            # PHASE 2 & 3: Strategy and Planning
             elif roadmap.current_phase in [TherapyPhase.PHASE_2_APPROACHES, TherapyPhase.PHASE_3_SELECTION]:
-                return base_msg + """
+                base_msg += """
 ⚠️ **ACTION REQUIRED: PHASE 2/3 (STRATEGY)**
-The profile is complete. You must now propose treatment approaches.
+The profile is complete. You should now propose treatment approaches.
 A.  **Action:** choose 3 strategy from the list below (or suggest one if you think something else suits the case perfectly):
 
 1.بر اساس ویژگی ها
@@ -251,38 +263,35 @@ A.  **Action:** choose 3 strategy from the list below (or suggest one if you thi
 B.  **Output:** Propose a comprehensive list of 17 recommendations (10 Modern, 5 Hybrid, 2 Integrative) with strong clinical rationales based on the patient's specific profile.
 """
             elif roadmap.current_phase == TherapyPhase.PHASE_4_PROTOCOL:
-                return base_msg + """
+                base_msg += """
 ⚠️ **ACTION REQUIRED: PHASE 4 (PROTOCOL DESIGN)**
-The doctor has selected the approaches. You must now design the session protocols.
+The doctor has selected the approaches. You should now design the session protocols.
 1.  **Action:** Generate a detailed, step-by-step execution guide for the upcoming sessions.
 2.  **Tool:** Persist these plans by calling `manage_roadmap` with `action="ADD_SESSION"`.
 """
-
-            # PHASE 5: Active Session Execution
             elif roadmap.current_phase == TherapyPhase.PHASE_5_EXECUTION:
-                active_session = None
-                if roadmap.active_session_number:
-                    active_session = next((s for s in roadmap.sessions if s.session_number == roadmap.active_session_number), None)
-
-                if active_session:
-                    return base_msg + f"""
-⚡ **ACTION REQUIRED: EXECUTE SESSION {active_session.session_number}**
-**Topic:** {active_session.title}
-**Status:** ACTIVE / IN-PROGRESS
-
-**CONFIDENTIAL PROTOCOL FOR DOCTOR:**
-{active_session.doctor_instructions or "No specific protocol was generated. Proceed with standard clinical practice."}
-
-**YOUR ROLE:**
-1.  Guide the doctor through the protocol steps.
-2.  When the doctor provides notes, use `finalize_session_report`.
+                base_msg += """
+✅ **PHASE 5: EXECUTION**
+Therapy plan is active. Guide the doctor through execution and finalize reports with tools when notes are provided.
 """
-                else:
-                    return base_msg + """
-✅ **PHASE 5: EXECUTION (IDLE)**
-Therapy plan is active. You are awaiting the doctor to start a specific session from the Roadmap.
+
+            # If a session is active, include operational details without enforcing phase gates.
+            active_session = None
+            if roadmap.active_session_number:
+                active_session = next((s for s in roadmap.sessions if s.session_number == roadmap.active_session_number), None)
+
+            if active_session:
+                base_msg += f"""
+### 🎯 ACTIVE SESSION
+- Session: {active_session.session_number}
+- Topic: {active_session.title}
+- Status: ACTIVE / IN-PROGRESS
+- Doctor Protocol: {active_session.doctor_instructions or "No specific protocol was generated. Proceed with standard clinical practice."}
+- Your Role:
+  1. Guide the doctor through the protocol steps.
+  2. When the doctor provides notes, use `finalize_session_report`.
 """
-            
+
             return base_msg
 
         except CustomUser.DoesNotExist:
@@ -304,6 +313,7 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
 
         try:
             patient = CustomUser.objects.get(pk=resource_id)
+            doctor_id = int(user.id)
             
             # 1. Get Basic DB Info
             profile_data = {
@@ -321,6 +331,15 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
                 user=patient,
                 definition__key__startswith="clinical_form_base_profile_v1"
             ).order_by('-created_at').first()
+            if base_profile_entry and int(base_profile_entry.data.get("submitted_by_doctor_id") or 0) != doctor_id:
+                base_profile_entry = UserContextEntry.objects.filter(
+                    user=patient,
+                    definition__key__startswith="clinical_form_base_profile_v1"
+                ).order_by('-created_at')
+                base_profile_entry = next(
+                    (entry for entry in base_profile_entry if int(entry.data.get("submitted_by_doctor_id") or 0) == doctor_id),
+                    None
+                )
 
             if base_profile_entry:
                 d = base_profile_entry.data
@@ -332,25 +351,25 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
                 profile_data["marital_status"] = d.get("marital_status")
                 
                 
-            summary_text = ProfileService.get_summary(patient)
-            demographics = ProfileService.get_demographics(patient)
+            summary_text = ProfileService.get_summary(patient, doctor_id=doctor_id)
+            demographics = ProfileService.get_demographics(patient, doctor_id=doctor_id)
             # 1. Roadmap Data
-            roadmap = RoadmapService.get_or_create_roadmap(patient)
+            roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=doctor_id)
             
             # 2. Rescue Net (Tasks) Data
-            tasks = TaskService.get_patient_tasks(patient)
+            tasks = TaskService.get_patient_tasks(patient, doctor_id=doctor_id)
             
             # 3. Thought Appendix Data
-            appendix = AppendixService.get_library(patient)
+            appendix = AppendixService.get_library(patient, doctor_id=doctor_id)
             
             # 4. Session History
-            history = SessionService.get_patient_history(patient, viewer_role='DOCTOR')
+            history = SessionService.get_patient_history(patient, viewer_role='DOCTOR', doctor_id=doctor_id)
             
-            summary_text = ProfileService.get_summary(patient)
+            summary_text = ProfileService.get_summary(patient, doctor_id=doctor_id)
             
             # 5. [FIX] Calculate Active Goals (Logic borrowed from PatientDataService)
             active_smart_goals = []
-            forms_list = self._get_forms_history(patient)
+            forms_list = self._get_forms_history(patient, doctor_id=doctor_id)
             # We iterate through the roadmap sessions to find the latest completed one
             # Note: Roadmap sessions are stored in order (1, 2, 3...)
             # We check in reverse to find the latest.
@@ -387,6 +406,11 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
 
             forms_history = []
             for f in form_entries:
+                if doctor_id and not f.data.get("submitted_by_doctor_id"):
+                    f.data["submitted_by_doctor_id"] = doctor_id
+                    f.save(update_fields=["data"])
+                if int(f.data.get("submitted_by_doctor_id") or 0) != doctor_id:
+                    continue
                 # Ideally, the form key is stored in data. If not, derive from definition key.
                 # e.g. definition key "clinical_form_psychology_v1_123456" -> we want "PSYCHOLOGY_V1" if possible
                 # But usually 'form_key' is saved in data by our handlers.
@@ -403,8 +427,8 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
                     "data": f.data 
                 })
 
-            tests_history = ClinicalTestsService.get_tests(patient)
-            forms_tests_analysis = ProfileService.get_forms_tests_analysis(patient)
+            tests_history = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
+            forms_tests_analysis = ProfileService.get_forms_tests_analysis(patient, doctor_id=doctor_id)
 
             return {
                 "is_active": True,
@@ -429,7 +453,7 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
             logger.error(f"❌ Hydration Failed: {e}")
             return None
 
-    def _get_forms_history(self, patient):
+    def _get_forms_history(self, patient, doctor_id=None):
         # Helper to fetch history
         entries = UserContextEntry.objects.filter(
             user=patient, 
@@ -438,6 +462,11 @@ Therapy plan is active. You are awaiting the doctor to start a specific session 
         
         history = []
         for f in entries:
+            if doctor_id and not f.data.get("submitted_by_doctor_id"):
+                f.data["submitted_by_doctor_id"] = int(doctor_id)
+                f.save(update_fields=["data"])
+            if doctor_id and int(f.data.get("submitted_by_doctor_id") or 0) != int(doctor_id):
+                continue
             history.append({
                 "id": str(f.id),
                 "form_key": f.data.get('form_key'),

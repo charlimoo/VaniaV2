@@ -21,9 +21,12 @@ class VaniaContextMiddleware:
         if request.user.is_authenticated:
             user_token = user_context.set(request.user.id)
 
-        # 3. Extract Patient Context Header
-        # Django headers are usually HTTP_X_TARGET_PATIENT_ID
-        patient_id = request.headers.get('X-Target-Patient-ID')
+        # 3. Extract Visitor/Resource Context Header
+        patient_id = (
+            request.headers.get('X-Target-Resource-ID')
+            or request.headers.get('X-Target-Visitor-ID')
+            or request.headers.get('X-Target-Patient-ID')
+        )
         
         if patient_id:
             try:

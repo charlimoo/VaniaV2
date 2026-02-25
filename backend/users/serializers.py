@@ -1,8 +1,13 @@
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
-from .models import CustomUser, UserProfile, UserRole
+from .models import CustomUser, UserProfile
 from billing.models import UserWallet
+from .roles import (
+    normalize_role_slug,
+    CANONICAL_EXPERT_SLUG,
+    CANONICAL_VISITOR_SLUG,
+)
 
 class PhoneSerializer(serializers.Serializer):
     phone_number = serializers.CharField(max_length=20)
@@ -61,9 +66,11 @@ class UserWalletSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False, style={'input_type': 'password'})
     wallet = UserWalletSerializer(read_only=True)
-    role_label = serializers.CharField(source='role.name', read_only=True)
-    role_slug = serializers.CharField(source='role.slug', read_only=True)
+    role_label = serializers.SerializerMethodField()
+    role_slug = serializers.SerializerMethodField()
     has_password = serializers.SerializerMethodField()
+    expert_profession_slug = serializers.SerializerMethodField()
+    expert_profession_label = serializers.SerializerMethodField()
 
     class Meta:
         model = CustomUser
@@ -71,9 +78,13 @@ class UserSerializer(serializers.ModelSerializer):
             'id', 'phone_number', 'email', 'full_name', 
             'date_joined', 'password', 'wallet',
             'role_label', 'role_slug', 'medical_license', 'is_verified_doctor',
+            'is_expert_verified', 'expert_profession_slug', 'expert_profession_label',
             'has_password'
         )
-        read_only_fields = ('phone_number', 'date_joined', 'id', 'role_label', 'role_slug', 'is_verified_doctor')
+        read_only_fields = (
+            'phone_number', 'date_joined', 'id', 'role_label', 'role_slug',
+            'is_verified_doctor', 'is_expert_verified', 'expert_profession_slug', 'expert_profession_label'
+        )
 
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
@@ -85,6 +96,27 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_has_password(self, obj):
         return bool(getattr(obj, 'password', '')) and obj.has_usable_password()
+
+    def get_role_slug(self, obj):
+        role = getattr(obj, "role", None)
+        return normalize_role_slug(getattr(role, "slug", None))
+
+    def get_role_label(self, obj):
+        normalized = self.get_role_slug(obj)
+        if normalized == CANONICAL_EXPERT_SLUG:
+            return "متخصص"
+        if normalized == CANONICAL_VISITOR_SLUG:
+            return "مراجعه‌کننده"
+        role = getattr(obj, "role", None)
+        return getattr(role, "name", None)
+
+    def get_expert_profession_slug(self, obj):
+        profession = getattr(obj, "expert_profession", None)
+        return getattr(profession, "slug", None)
+
+    def get_expert_profession_label(self, obj):
+        profession = getattr(obj, "expert_profession", None)
+        return getattr(profession, "name", None)
 
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:

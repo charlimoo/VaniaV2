@@ -20,6 +20,7 @@ from .session_service import SessionService
 from .roadmap_service import RoadmapService
 from .appendix_service import AppendixService
 from .tests_service import ClinicalTestsService
+from .context_scope import migrate_legacy_to_scoped_once, build_scoped_key
 # Configure Logger for this module
 logger = logging.getLogger(__name__)
 
@@ -51,20 +52,13 @@ class PatientManagementService:
     @staticmethod
     def activate_connection_or_lock(connection: TreatmentConnection) -> tuple[bool, bool]:
         """
-        Tries to activate a connection while enforcing one-active-doctor rule.
-        Returns (activated, activation_locked).
+        Activates a connection.
+        Returns (activated, activation_locked) for backward compatibility.
         """
-        locked = PatientManagementService.is_activation_locked(
-            patient=connection.patient,
-            current_doctor=connection.doctor
-        )
-        connection.status = (
-            TreatmentConnection.Status.ARCHIVED
-            if locked
-            else TreatmentConnection.Status.ACTIVE
-        )
+        locked = False
+        connection.status = TreatmentConnection.Status.ACTIVE
         connection.save(update_fields=["status", "updated_at"])
-        return (not locked), locked
+        return True, locked
 
     @staticmethod
     def invite_patient_by_phone(
@@ -89,10 +83,10 @@ class PatientManagementService:
                 if created:
                     patient.set_unusable_password()
                     try:
-                        patient_role = UserRole.objects.get(slug="patient")
+                        patient_role = UserRole.objects.get(slug="visitor")
                         patient.role = patient_role
                     except UserRole.DoesNotExist:
-                        logger.warning("Default 'patient' role not found during user creation.")
+                        logger.warning("Default 'visitor' role not found during user creation.")
                     patient.save()
 
                 if full_name and full_name.strip() and not (patient.full_name or "").strip():
@@ -107,25 +101,19 @@ class PatientManagementService:
                 activated, locked = PatientManagementService.activate_connection_or_lock(conn)
 
                 if created:
-                    if locked:
-                        message = "حساب ایجاد شد و بیمار به صورت غیرفعال اضافه شد."
-                    else:
-                        message = f"حساب کاربری برای «{initial_name}» ایجاد و به لیست شما اضافه شد."
+                    message = f"حساب کاربری برای «{initial_name}» ایجاد و به لیست شما اضافه شد."
                 elif conn_created:
-                    if locked:
-                        message = "بیمار به لیست شما اضافه شد اما فعلا غیرفعال است."
-                    else:
-                        message = f"بیمار «{patient.full_name or patient.phone_number}» به لیست شما اضافه شد."
+                    message = f"مراجع «{patient.full_name or patient.phone_number}» به لیست شما اضافه شد."
                 else:
                     if activated:
-                        message = "ارتباط این بیمار با شما فعال شد."
+                        message = "ارتباط این مراجع با شما فعال شد."
                     else:
-                        message = "این بیمار در لیست شما موجود است اما فعلا به صورت غیرفعال می‌ماند."
+                        message = "این مراجع در لیست شما موجود است اما فعلا به صورت غیرفعال می‌ماند."
 
                 return True, message, patient, conn.status, locked
         except Exception as e:
             logger.error(f"Error in invite_patient_by_phone for Dr {doctor_user.id} -> {phone}: {e}")
-            return False, "خطای داخلی در سرور هنگام افزودن بیمار.", None, None, False
+            return False, "خطای داخلی در سرور هنگام افزودن مراجع.", None, None, False
 
 class ProfileService:
     """ Manages the patient's core profile summary (demographics, story, etc.) """
@@ -134,26 +122,50 @@ class ProfileService:
     FORMS_TESTS_ANALYSIS_KEY = "forms_tests_clinical_analysis"
 
     @staticmethod
-    def get_summary(patient: CustomUser) -> str:
+    def get_summary(patient: CustomUser, doctor_id: int | None = None) -> str:
         """ Retrieves the clinical summary text for a patient. """
-        entry = user_context_manager.get_context(patient, ProfileService.CONTEXT_KEY)
+        key = ProfileService.CONTEXT_KEY
+        if doctor_id:
+            entry = migrate_legacy_to_scoped_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                base_key=ProfileService.CONTEXT_KEY,
+                default_factory=lambda: {"summary_text": ""},
+            )
+        else:
+            entry = user_context_manager.get_context(patient, key)
         # Return the text content, or a default placeholder if none exists
         return entry.data.get("summary_text", "") if entry else ""
 
     @staticmethod
-    def update_summary(patient: CustomUser, summary_text: str):
+    def update_summary(patient: CustomUser, summary_text: str, doctor_id: int | None = None):
         """ Updates or creates the clinical summary for a patient. """
+        key = build_scoped_key(ProfileService.CONTEXT_KEY, doctor_id) if doctor_id else ProfileService.CONTEXT_KEY
         user_context_manager.set_singleton_context(
             user=patient,
-            key=ProfileService.CONTEXT_KEY,
+            key=key,
             data={"summary_text": summary_text},
             source=UserContextEntry.SourceType.AGENT  # Can be AGENT or USER
         )
 
     @staticmethod
-    def get_demographics(patient: CustomUser) -> dict:
+    def get_demographics(patient: CustomUser, doctor_id: int | None = None) -> dict:
         """ Returns the permanent demographic profile of the patient. """
-        entry = user_context_manager.get_context(patient, ProfileService.DEMOGRAPHICS_KEY)
+        if doctor_id:
+            entry = migrate_legacy_to_scoped_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                base_key=ProfileService.DEMOGRAPHICS_KEY,
+                default_factory=lambda: {
+                    "name": patient.full_name or "",
+                    "age": "",
+                    "marital_status": "single",
+                    "education": "bachelor",
+                    "job": ""
+                },
+            )
+        else:
+            entry = user_context_manager.get_context(patient, ProfileService.DEMOGRAPHICS_KEY)
         if entry:
             return entry.data
         return {
@@ -165,30 +177,40 @@ class ProfileService:
         }
 
     @staticmethod
-    def update_demographics(patient: CustomUser, data: dict):
+    def update_demographics(patient: CustomUser, data: dict, doctor_id: int | None = None):
         """ Persists demographics to the DB permanently. """
         # We also sync the name to the primary CustomUser model for consistency
         if 'name' in data and data['name']:
             patient.full_name = data['name']
             patient.save(update_fields=['full_name'])
 
+        key = build_scoped_key(ProfileService.DEMOGRAPHICS_KEY, doctor_id) if doctor_id else ProfileService.DEMOGRAPHICS_KEY
         user_context_manager.set_singleton_context(
             user=patient,
-            key=ProfileService.DEMOGRAPHICS_KEY,
+            key=key,
             data=data,
             source=UserContextEntry.SourceType.USER
         )
 
     @staticmethod
-    def get_forms_tests_analysis(patient: CustomUser) -> str:
-        entry = user_context_manager.get_context(patient, ProfileService.FORMS_TESTS_ANALYSIS_KEY)
+    def get_forms_tests_analysis(patient: CustomUser, doctor_id: int | None = None) -> str:
+        if doctor_id:
+            entry = migrate_legacy_to_scoped_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                base_key=ProfileService.FORMS_TESTS_ANALYSIS_KEY,
+                default_factory=lambda: {"analysis_text": ""},
+            )
+        else:
+            entry = user_context_manager.get_context(patient, ProfileService.FORMS_TESTS_ANALYSIS_KEY)
         return entry.data.get("analysis_text", "") if entry else ""
 
     @staticmethod
-    def update_forms_tests_analysis(patient: CustomUser, analysis_text: str):
+    def update_forms_tests_analysis(patient: CustomUser, analysis_text: str, doctor_id: int | None = None):
+        key = build_scoped_key(ProfileService.FORMS_TESTS_ANALYSIS_KEY, doctor_id) if doctor_id else ProfileService.FORMS_TESTS_ANALYSIS_KEY
         user_context_manager.set_singleton_context(
             user=patient,
-            key=ProfileService.FORMS_TESTS_ANALYSIS_KEY,
+            key=key,
             data={"analysis_text": analysis_text},
             source=UserContextEntry.SourceType.AGENT,
         )

@@ -27,7 +27,8 @@ from vania_core.services import (
     ProfileService,
     ClinicalTestsService,
 )
-from vania_core.schemas import TherapyPhase, SessionStatus
+from vania_core.flashcards import normalize_flashcards
+from vania_core.schemas import TherapyPhase
 from services.models_canvas import CanvasInstance # [FIX] Added Import
 
 # --- Form Definitions ---
@@ -76,7 +77,7 @@ async def _get_canvas_id(session_id: str, component_key: str) -> Optional[str]:
         return None
 
 # ==========================================
-# 2. PHASE 1: PROFILE MANAGEMENT TOOL
+# 2. PROFILE MANAGEMENT TOOL
 # ==========================================
 
 @tool
@@ -93,12 +94,13 @@ async def update_clinical_summary(
         summary_text: The full, updated text for the clinical summary.
     """
     patient = await _get_active_patient()
+    doctor_id = int(run_context.user_id)
     if not patient: 
         yield "Error: No patient is selected. A patient must be active to update their profile."
         return
 
     # 1. Persist Data
-    await sync_to_async(ProfileService.update_summary)(patient, summary_text)
+    await sync_to_async(ProfileService.update_summary)(patient, summary_text, doctor_id)
     
     # 2. Explicit UI Sync
     # [FIX] Resolve Canvas ID
@@ -115,7 +117,7 @@ async def update_clinical_summary(
     yield "✅ The patient's clinical summary has been updated in their profile."
 
 # ==========================================
-# 3. PHASE 2/3: KNOWLEDGE & STRATEGY
+# 3. KNOWLEDGE & STRATEGY
 # ==========================================
 
 # NOTE: The 'search_clinical_protocol' tool has been removed.
@@ -123,7 +125,7 @@ async def update_clinical_summary(
 # to propose and define treatment approaches.
 
 # ==========================================
-# 4. PHASE 4 & BEYOND: ROADMAP MANAGEMENT
+# 4. ROADMAP MANAGEMENT
 # ==========================================
 
 @tool
@@ -133,41 +135,39 @@ async def manage_roadmap(
     data: Dict[str, Any] = {} 
 ) -> AsyncGenerator[Any, None]:
     """
-    [PHASE MANAGEMENT] Manages the Therapy Roadmap and current phase.
-    Use this to transition between phases, plan future sessions, or set the treatment strategy.
+    Manages the Therapy Roadmap.
+    Use this to plan sessions, update treatment strategy, or set workflow phase metadata.
+    Note: phase is used as guidance context for the agent, not as a hard execution gate.
     
     Args:
         action: The operation to perform. Must be one of:
-                - "INITIALIZE": Resets the roadmap to Phase 1.
-                - "SET_PHASE": Moves the patient to a specific phase (e.g., data={'phase': 'PHASE_2_APPROACHES'}).
+                - "SET_PHASE": Sets roadmap phase metadata (e.g., data={'phase': 'PHASE_2_APPROACHES'}).
                 - "ADD_SESSION": Plans a future session, saving the AI's private instructions for the doctor (data={'title': '...', 'instructions': '...'}).
                 - "UPDATE_STRATEGY": Saves the list of chosen therapy approaches to the roadmap (data={'approaches': ['CBT', 'ACT']}).
     """
     patient = await _get_active_patient()
+    doctor_id = int(run_context.user_id)
     if not patient: 
         yield "Error: No patient selected."
         return
 
     # --- Action Dispatcher ---
-    if action.upper() == "INITIALIZE":
-        await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
-        yield "✅ Roadmap initialized and set to Phase 1."
-
-    elif action.upper() == "SET_PHASE":
+    if action.upper() == "SET_PHASE":
         phase_str = data.get("phase")
-        if phase_str:
-            try:
-                phase_enum = TherapyPhase(phase_str)
-                await sync_to_async(RoadmapService.update_phase)(patient, phase_enum)
-                yield f"✅ Phase updated to: {phase_str}"
-            except ValueError:
-                yield f"❌ Invalid Phase provided: '{phase_str}'"
-        else:
+        if not phase_str:
             yield "❌ Missing 'phase' in data payload for SET_PHASE action."
+            return
+        try:
+            phase_enum = TherapyPhase(phase_str)
+            await sync_to_async(RoadmapService.update_phase)(patient, phase_enum, doctor_id=doctor_id)
+            yield f"✅ Roadmap phase metadata updated to: {phase_str}"
+        except ValueError:
+            yield f"❌ Invalid phase: '{phase_str}'"
+            return
 
     elif action.upper() == "ADD_SESSION":
         # Smart default for title if Agent forgets
-        roadmap_current = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
+        roadmap_current = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id)
         next_num = len(roadmap_current.sessions) + 1
         
         title = data.get("title")
@@ -178,16 +178,16 @@ async def manage_roadmap(
         instructions = data.get("instructions", "No specific protocol instructions provided.")
         
         scheduled_date = data.get("scheduled_date")
-        await sync_to_async(RoadmapService.add_session)(patient, title, instructions, scheduled_date)
+        await sync_to_async(RoadmapService.add_session)(patient, title, instructions, scheduled_date, doctor_id)
         yield f"✅ Session '{title}' added to the roadmap."
 
     elif action.upper() == "UPDATE_STRATEGY":
         approaches = data.get("approaches", [])
         if approaches and isinstance(approaches, list):
             # We fetch, update locally, and save using the service primitive
-            roadmap_to_update = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
+            roadmap_to_update = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id)
             roadmap_to_update.treatment_approaches = approaches
-            await sync_to_async(RoadmapService.save_roadmap)(patient, roadmap_to_update)
+            await sync_to_async(RoadmapService.save_roadmap)(patient, roadmap_to_update, doctor_id)
             yield f"✅ Treatment strategy saved: {', '.join(approaches)}"
         else:
             yield "❌ Missing or invalid 'approaches' list in data payload."
@@ -197,7 +197,7 @@ async def manage_roadmap(
 
     # --- Explicit UI Sync ---
     # Fetch the authoritative state from DB after modification and push to frontend
-    updated_roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
+    updated_roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id)
     
     # [FIX] Resolve Canvas ID
     canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
@@ -212,7 +212,7 @@ async def manage_roadmap(
 
 
 # ==========================================
-# 5. PHASE 5: EXECUTION & REPORTING
+# 5. EXECUTION & REPORTING
 # ==========================================
 
 @tool
@@ -227,7 +227,7 @@ async def finalize_session_report(
     private_notes: str = ""
 ) -> AsyncGenerator[Any, None]:
     """
-    [PHASE 5] Generates the formal 'Session Support Document' (سند پشتیبان), saves it,
+    Generates the formal 'Session Support Document' (سند پشتیبان), saves it,
     and marks the session as COMPLETED on the roadmap.
     
     Args:
@@ -241,10 +241,22 @@ async def finalize_session_report(
     """
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    doctor_id = int(doctor.id)
     
     if not patient: 
         yield "Error: No patient selected."
         return
+
+    # Normalize potential model output variants (string cards, alt keys, etc.).
+    normalized_flashcards = normalize_flashcards(flashcards)
+    logger.info(
+        "🧪 [finalize_session_report] patient=%s doctor=%s session=%s flashcards_in=%s flashcards_out=%s",
+        patient.id,
+        doctor_id,
+        session_number,
+        len(flashcards or []),
+        len(normalized_flashcards),
+    )
 
     # 1. Structure the payload into a rich JSON object
     rich_payload = {
@@ -256,7 +268,7 @@ async def finalize_session_report(
         "symptoms_analysis": summary, # Using summary as a base for analysis
         "swot_analysis": swot,
         "smart_goals": smart_goals,
-        "flashcards": flashcards,
+        "flashcards": normalized_flashcards,
     }
     
     # 2. Save the structured report to the session history log
@@ -264,20 +276,22 @@ async def finalize_session_report(
         patient=patient,
         doctor=doctor,
         summary=json.dumps(rich_payload, ensure_ascii=False),
-        private_notes=private_notes
+        private_notes=private_notes,
+        doctor_id=doctor_id
     )
     
     # 3. Update the roadmap: Mark session as COMPLETED and link the report ID
     await sync_to_async(RoadmapService.complete_session)(
         patient, 
         session_number, 
-        doc_id=str(log_entry.id)
+        doc_id=str(log_entry.id),
+        doctor_id=doctor_id
     )
     
     # 4. Explicit UI Sync (Multi-Pillar Update)
     # This tool affects both the Roadmap (status change) and the Session History list.
-    updated_roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient)
-    updated_history = await sync_to_async(SessionService.get_patient_history)(patient, viewer_role='DOCTOR')
+    updated_roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id)
+    updated_history = await sync_to_async(SessionService.get_patient_history)(patient, viewer_role='DOCTOR', doctor_id=doctor_id)
 
     # [FIX] Resolve Canvas ID
     canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
@@ -303,7 +317,7 @@ async def add_rescue_task(
     due_date: str = None
 ) -> AsyncGenerator[Any, None]:
     """
-    [PHASE 5] Adds a task to the patient's 'Rescue Net' (Tour-e Nejat).
+    Adds a task to the patient's 'Rescue Net' (Tour-e Nejat).
     
     Args:
         text: The content of the task (e.g., "Practice mindfulness for 10 minutes").
@@ -313,6 +327,7 @@ async def add_rescue_task(
     """
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    doctor_id = int(doctor.id)
     
     if not patient:
         yield "Error: No patient selected."
@@ -324,12 +339,13 @@ async def add_rescue_task(
         doctor=doctor,
         text=text,
         due_date=due_date,
-        dimension=dimension.upper() # Ensure consistency with Enum
+        dimension=dimension.upper(), # Ensure consistency with Enum
+        doctor_id=doctor_id
     )
     
     # 2. Explicit UI Sync
     # We fetch the WHOLE task list because the frontend merges arrays by overwriting.
-    all_tasks = await sync_to_async(TaskService.get_patient_tasks)(patient)
+    all_tasks = await sync_to_async(TaskService.get_patient_tasks)(patient, doctor_id)
     
     # [FIX] Resolve Canvas ID
     canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
@@ -346,7 +362,7 @@ async def add_rescue_task(
 
 
 # ==========================================
-# 6. PHASE 6: THOUGHT APPENDIX
+# 6. THOUGHT APPENDIX
 # ==========================================
 
 @tool
@@ -359,7 +375,7 @@ async def prescribe_resource(
     excerpt: str = ""
 ) -> AsyncGenerator[Any, None]:
     """
-    [PHASE 6] Prescribes a cultural resource to the 'Thought Appendix' (پیوست اندیشه).
+    Prescribes a cultural resource to the 'Thought Appendix' (پیوست اندیشه).
     
     Args:
         type: The type of resource. Must be one of "BOOK", "POEM", "MOVIE".
@@ -370,6 +386,7 @@ async def prescribe_resource(
     """
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    doctor_id = int(doctor.id)
     
     if not patient:
         yield "Error: No patient selected."
@@ -384,10 +401,10 @@ async def prescribe_resource(
     }
     
     # 1. Perform Write
-    await sync_to_async(AppendixService.add_resource)(patient, doctor, resource_data)
+    await sync_to_async(AppendixService.add_resource)(patient, doctor, resource_data, doctor_id)
     
     # 2. Explicit UI Sync
-    updated_library = await sync_to_async(AppendixService.get_library)(patient)
+    updated_library = await sync_to_async(AppendixService.get_library)(patient, doctor_id)
     
     # [FIX] Resolve Canvas ID
     canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
@@ -459,6 +476,7 @@ async def submit_clinical_form(
     """
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    doctor_id = int(doctor.id)
     
     if not patient:
         yield "Error: No patient selected."
@@ -506,10 +524,11 @@ async def submit_clinical_form(
     @sync_to_async
     def get_forms_history_sync(patient_user):
         # Use select_related to pre-fetch the 'definition' object in the same query
-        return list(UserContextEntry.objects.filter(
+        entries = list(UserContextEntry.objects.filter(
             user=patient_user, 
             definition__key__startswith="clinical_form_"
         ).select_related('definition').order_by('-created_at'))
+        return [e for e in entries if int(e.data.get("submitted_by_doctor_id") or 0) == doctor_id]
 
     # Now call the async version of that function
     form_entries = await get_forms_history_sync(patient)
@@ -580,6 +599,7 @@ async def manage_clinical_tests(
     """
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    doctor_id = int(doctor.id)
 
     if not patient:
         yield "Error: No patient selected."
@@ -596,6 +616,7 @@ async def manage_clinical_tests(
             catalog_id=int(catalog_id) if catalog_id else None,
             title=title,
             url=url,
+            doctor_id=doctor_id,
         )
         msg = f"✅ Test added: {created.get('title')}"
     elif action_key == "UPDATE_SUMMARY":
@@ -606,6 +627,7 @@ async def manage_clinical_tests(
             created_by=doctor,
             test_id=test_id,
             payload={"result_summary": result_summary},
+            doctor_id=doctor_id,
         )
         if not updated:
             yield "❌ Test not found."
@@ -617,6 +639,7 @@ async def manage_clinical_tests(
             patient=patient,
             created_by=doctor,
             test_id=test_id,
+            doctor_id=doctor_id,
         )
         if not deleted:
             yield "❌ Test not found."
@@ -626,7 +649,7 @@ async def manage_clinical_tests(
         yield f"❌ Unknown action '{action}'."
         return
 
-    tests_history = await sync_to_async(ClinicalTestsService.get_tests)(patient)
+    tests_history = await sync_to_async(ClinicalTestsService.get_tests)(patient, doctor_id)
     canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
     yield CanvasUpdateEvent(value={
         "canvas_id": canvas_id,
@@ -647,11 +670,12 @@ async def update_forms_tests_analysis(
     Saves 'تحلیل بالینی تست ها و فرم ها' into the patient profile canvas.
     """
     patient = await _get_active_patient()
+    doctor_id = int(run_context.user_id)
     if not patient:
         yield "Error: No patient selected."
         return
 
-    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, analysis_text)
+    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, analysis_text, doctor_id)
     canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
     yield CanvasUpdateEvent(value={
         "canvas_id": canvas_id,
@@ -671,7 +695,7 @@ async def update_forms_tests_analysis(
 class VaniaDoctorToolFactory(BaseCapability):
     """
     Provides the full suite of clinical tools for the Vania Doctor Agent,
-    enabling the complete 6-Phase Protocol.
+    enabling end-to-end treatment workflow management.
     """
     
     def get_tools(self, user, session_id) -> List[Any]:
@@ -679,20 +703,20 @@ class VaniaDoctorToolFactory(BaseCapability):
         Gathers and returns all necessary tools for the Vania Doctor agent.
         """
         return [
-            # Phase 1: Profile & Analysis
+            # Profile & Analysis
             update_clinical_summary,
             
-            # Phase 2/3: Strategy
+            # Strategy
             # NOTE: RAG search tool removed. Agent relies on internal knowledge.
             
-            # Phase 4 & General Management
+            # Roadmap & General Management
             manage_roadmap,
             
-            # Phase 5: Execution
+            # Execution
             finalize_session_report,
             add_rescue_task,
             
-            # Phase 6: Appendix
+            # Appendix
             prescribe_resource,
             
             # General Clinical Utils
@@ -701,3 +725,7 @@ class VaniaDoctorToolFactory(BaseCapability):
             manage_clinical_tests,
             update_forms_tests_analysis,
         ]
+
+
+
+

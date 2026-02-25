@@ -1,6 +1,7 @@
 # start of backend/vania_core/permissions.py
 from rest_framework import permissions
 from .models import TreatmentConnection
+from users.roles import is_expert
 
 class VaniaAccessControl:
     """
@@ -44,7 +45,7 @@ class IsDoctorUser(permissions.BasePermission):
         if not request.user.is_authenticated:
             return False
             
-        return request.user.role is not None and request.user.role.slug == 'doctor'
+        return is_expert(request.user)
 
 class HasActiveConnection(permissions.BasePermission):
     """

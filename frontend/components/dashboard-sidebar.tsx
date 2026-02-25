@@ -22,6 +22,7 @@ import {
 import { UserProfileMenu } from "@/components/user-profile-menu"
 import { useUser } from "@/hooks/use-user"
 import { APP_CONFIG } from "@/lib/config"
+import { normalizeRoleSlug } from "@/lib/roles"
 import { cn } from "@/lib/utils"
 
 export function DashboardSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
@@ -42,7 +43,9 @@ export function DashboardSidebar({ ...props }: React.ComponentProps<typeof Sideb
     if (!allowedRoles || allowedRoles.length === 0) return true;
 
     // If roles defined, check if user has the matching role
-    if (user?.role_slug && allowedRoles.includes(user.role_slug)) {
+    const normalizedUserRole = normalizeRoleSlug(user?.role_slug)
+    const normalizedAllowedRoles = allowedRoles.map((role) => normalizeRoleSlug(role) || role)
+    if (normalizedUserRole && normalizedAllowedRoles.includes(normalizedUserRole)) {
       return true;
     }
 

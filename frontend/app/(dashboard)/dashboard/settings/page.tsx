@@ -13,7 +13,8 @@ import {
   ChevronDown,
   BadgeCheck,
   UserCog, // New icon for profile settings
-  ChevronLeft
+  ChevronLeft,
+  Info
 } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 
@@ -28,12 +29,20 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Separator } from "@/components/ui/separator"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useUser } from "@/hooks/use-user"
-import { API_BASE_URL, getAuthHeaders, verifyDoctorCredentials } from "@/lib/api"
+import {
+  API_BASE_URL,
+  getAuthHeaders,
+  getExpertProfessions,
+  upgradeExpert,
+} from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
+import { isExpertRoleSlug } from "@/lib/roles"
 
 // [NEW] Import the Doctor Profile Modal
 import { DoctorProfileModal } from "@/components/settings/DoctorProfileModal"
@@ -89,7 +98,7 @@ function DoctorPublicProfileSection({ user }: { user: any }) {
 
   // 1. Guard Clause: Only show for doctors
   // We check role_slug (preferred) or role name fallback
-  const isDoctor = user?.role_slug === 'doctor' || user?.role === 'doctor';
+  const isDoctor = isExpertRoleSlug(user?.role_slug) || isExpertRoleSlug(user?.role);
   
   if (!isDoctor) return null;
 
@@ -131,55 +140,177 @@ function DoctorPublicProfileSection({ user }: { user: any }) {
 
 // --- SUB-COMPONENT: DOCTOR UPGRADE (Minimal & Expandable) ---
 
-function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: () => void }) {
+type ExpertProfessionOption = {
+  slug: string;
+  name: string;
+  description?: string;
+  credential_label?: string;
+  credential_placeholder?: string;
+  credential_help?: string;
+  sample_code?: string;
+};
+
+type LawyerLookupResponse = Array<{
+  licenseNumber?: string;
+  name?: string;
+  family?: string;
+}>;
+
+function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: () => Promise<any> }) {
   const [isOpen, setIsOpen] = useState(false)
-  const [license, setLicense] = useState("")
+  const [credentialCode, setCredentialCode] = useState("")
+  const [professions, setProfessions] = useState<ExpertProfessionOption[]>([])
+  const [selectedProfession, setSelectedProfession] = useState<string>("")
   const [loading, setLoading] = useState(false)
   
-  const isDoctor = user?.role_slug === 'doctor' || user?.role === 'doctor';
-  const isVerified = user?.is_verified_doctor;
+  const isDoctor = isExpertRoleSlug(user?.role_slug) || isExpertRoleSlug(user?.role);
+  const isVerified = user?.is_expert_verified;
+  const selectedProfessionOption = professions.find((p) => p.slug === selectedProfession) || null;
+  const credentialLabel = selectedProfessionOption?.credential_label || "کد اعتبارسنجی تخصص";
+  const credentialPlaceholder = selectedProfessionOption?.credential_placeholder || "کد اعتبارسنجی تخصص را وارد کنید";
+  const credentialHelp = selectedProfessionOption?.credential_help || "کد را دقیقاً مطابق مدرک وارد کنید.";
+  const sampleCode = selectedProfessionOption?.sample_code || "";
 
-  // If already verified doctor, hide this section completely (Clean UI)
-  if (isDoctor && isVerified) {
-    return null;
-  }
+  const normalizePersianText = (text: string) =>
+    text
+      .replace(/ي/g, "ی")
+      .replace(/ك/g, "ک")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const normalizeForNameMatch = (text: string) =>
+    normalizePersianText(text).replace(/^(دکتر|سید|سیده|آقای|خانم)\s+/g, "");
+
+  const isLooseNameMatch = (inputName: string, sourceName: string) => {
+    const name1 = normalizeForNameMatch(inputName);
+    const name2 = normalizeForNameMatch(sourceName);
+    if (name1.length < 3 || !name2) return false;
+    if (name1 === name2) return true;
+
+    const inputWords = name1.split(" ").filter((w) => w.length > 1);
+    const sourceWords = name2.split(" ").filter((w) => w.length > 1);
+    if (!inputWords.length || !sourceWords.length) return false;
+
+    let matches = 0;
+    for (const word of inputWords) {
+      if (sourceWords.some((sw) => sw === word || sw.startsWith(word))) {
+        matches += 1;
+      }
+    }
+    return matches / inputWords.length >= 0.7;
+  };
+
+  const normalizeLicenseDigits = (value: string) =>
+    value
+      .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)))
+      .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+      .trim();
+
+  const validateLawyerCredential = async (fullName: string, licenseCode: string) => {
+    const normalizedLicense = normalizeLicenseDigits(licenseCode);
+    const res = await fetch("https://search.icbar.org/App/Handler/Law.ashx?Method=mGetLawyers", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "",
+        family: "",
+        licensenumber: normalizedLicense,
+        mobileNumber: "",
+        EName: "",
+        ELName: "",
+        address: "",
+        gender: "",
+        province: "",
+        workstate: "",
+        proexperience: "",
+      }),
+    });
+
+    if (!res.ok) {
+      throw new Error("عدم پاسخگویی سامانه وکلا");
+    }
+
+    const data = (await res.json()) as LawyerLookupResponse;
+    const first = Array.isArray(data) ? data[0] : null;
+    if (!first) {
+      return {
+        ok: false,
+        message: "پروانه‌ای با این شناسه در سامانه وکلا یافت نشد",
+      };
+    }
+
+    const foundName = `${first.name || ""} ${first.family || ""}`.trim();
+    const matched = isLooseNameMatch(fullName, foundName);
+    if (!matched) {
+      return {
+        ok: false,
+        message: "نام وارد شده با اطلاعات سامانه وکلا مطابقت ندارد",
+      };
+    }
+
+    return { ok: true, message: "اعتبارسنجی وکیل با موفقیت انجام شد" };
+  };
+
+  useEffect(() => {
+    if (!isOpen) return;
+    getExpertProfessions()
+      .then((data) => {
+        setProfessions(data || []);
+        if (!selectedProfession && data?.length) {
+          setSelectedProfession(data[0].slug);
+        }
+      })
+      .catch(() => toast.error("دریافت حوزه‌های تخصصی ناموفق بود"));
+  }, [isOpen, selectedProfession]);
 
   const handleVerify = async () => {
-    if (!license || license.length < 3) {
+    if (!selectedProfession) {
+      toast.error("حوزه تخصصی را انتخاب کنید");
+      return;
+    }
+    if (!credentialCode || credentialCode.length < 3) {
         toast.error("کد معتبر نیست");
         return;
     }
 
     setLoading(true)
     try {
-       const res = await verifyDoctorCredentials(user.full_name, license)
-       
-       if (res.verified) {
-          const headers = getAuthHeaders();
-          const patchRes = await fetch(`${API_BASE_URL}/api/auth/profile/`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json", ...headers },
-            body: JSON.stringify({ 
-                medical_license: license,
-                role_upgrade_request: 'doctor' 
-            })
-          })
+      if (selectedProfession === "lawyer") {
+        const lawyerCheck = await validateLawyerCredential(user?.full_name || "", credentialCode);
+        if (!lawyerCheck.ok) {
+          toast.error(lawyerCheck.message);
+          return;
+        }
+      }
 
-          if (patchRes.ok) {
-              toast.success(`تبریک! حساب شما به عنوان ${res.found_name} تایید شد.`)
-              await refreshUser(); 
-              setIsOpen(false);
-          } else {
-              toast.error("خطا در بروزرسانی پروفایل");
-          }
-       } else {
-          toast.error(res.message || "اطلاعات با سامانه مطابقت ندارد")
-       }
+      const res = await upgradeExpert(user?.full_name || "", selectedProfession, credentialCode)
+      toast.success(res.message || "حساب متخصص فعال شد.")
+      await refreshUser()
+      setIsOpen(false)
+      setCredentialCode("")
     } catch(e) {
-       toast.error("خطا در برقراری ارتباط")
+      toast.error("اعتبارسنجی ناموفق بود")
     } finally {
-       setLoading(false)
+      setLoading(false)
     }
+  }
+
+  if (isDoctor && isVerified) {
+    return (
+      <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <BadgeCheck className="w-5 h-5 text-emerald-600" />
+          <div className="flex flex-col">
+            <span className="text-sm font-medium">حساب متخصص شما فعال است</span>
+            <span className="text-xs text-muted-foreground">
+              حوزه تایید شده: {user?.expert_profession_label || "نامشخص"}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -196,7 +327,7 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
           <div className="flex flex-col gap-0.5">
             <span className="text-sm font-medium">ارتقا به حساب متخصص</span>
             <span className="text-xs text-muted-foreground">
-              آیا متخصص یا روانشناس هستید؟ برای دسترسی به امکانات مطب، حساب خود را فعال کنید.
+              حوزه تخصصی خود را تایید کنید تا دسترسی متخصص برای شما فعال شود.
             </span>
           </div>
         </div>
@@ -214,21 +345,66 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
           >
             <div className="px-4 pb-4 pt-0 border-t border-dashed bg-muted/10">
               <p className="text-xs text-muted-foreground py-3 leading-relaxed">
-                لطفاً شماره عضویت نظام روانشناسی و روانپزشکی خود را وارد کنید. سیستم به صورت خودکار نام شما را با سامانه تطبیق می‌دهد.
+                حوزه تخصصی را انتخاب کنید و اطلاعات اعتبارسنجی همان حوزه را وارد کنید.
               </p>
-              
-              <div className="flex gap-2 max-w-sm">
-                <Input 
-                    placeholder="شماره عضویت نظام روانشناسی و روانپزشکی"
-                    value={license} 
-                    onChange={(e) => setLicense(e.target.value)} 
-                    className="bg-background text-center font-mono h-9 text-sm"
+
+              <div className="grid gap-3 w-full">
+                {!!professions.length && (
+                  <Tabs value={selectedProfession} onValueChange={setSelectedProfession} className="w-full">
+                    <TabsList className="w-full h-auto p-1 grid grid-cols-2 md:grid-cols-3 gap-1 rounded-xl bg-muted/70">
+                      {professions.map((profession) => (
+                        <TabsTrigger
+                          key={profession.slug}
+                          value={profession.slug}
+                          className="h-9 rounded-lg text-xs md:text-sm"
+                        >
+                          {profession.name}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                )}
+                {selectedProfessionOption && (
+                  <div className="rounded-lg border bg-background p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-sm font-medium">{selectedProfessionOption.name}</div>
+                      <Badge variant="secondary" className="text-xs">
+                        {selectedProfessionOption.slug}
+                      </Badge>
+                    </div>
+                    {selectedProfessionOption.description && (
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {selectedProfessionOption.description}
+                      </p>
+                    )}
+                  </div>
+                )}
+                <div className="space-y-1.5">
+                  <Label htmlFor="expert-credential-input" className="text-xs text-muted-foreground">
+                    {credentialLabel}
+                  </Label>
+                <Input
+                  id="expert-credential-input"
+                  placeholder={credentialPlaceholder}
+                  value={credentialCode}
+                  onChange={(e) => setCredentialCode(e.target.value)}
+                  className="bg-background text-center font-mono h-9 text-sm"
                 />
+                  <div className="flex items-start gap-1.5 text-[11px] leading-5 text-muted-foreground">
+                    <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span>{credentialHelp}</span>
+                  </div>
+                  {sampleCode && (
+                    <div className="text-[11px] text-muted-foreground">
+                      نمونه: <span className="font-mono">{sampleCode}</span>
+                    </div>
+                  )}
+                </div>
                 <Button 
                   onClick={handleVerify} 
                   disabled={loading} 
                   size="sm"
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-4"
+                  className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-5 w-full md:w-auto md:self-end md:min-w-44"
                 >
                     {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "بررسی و فعال‌سازی"}
                 </Button>

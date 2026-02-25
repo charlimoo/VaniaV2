@@ -46,6 +46,7 @@ class ServiceSerializer(serializers.ModelSerializer):
             'id', 'name', 'slug', 'description',
             # Marketplace
             'is_free', 'is_owned', 'license_expires_at', 'access_status',
+            'audience', 'eligible_expert_professions', 'requires_visitor_selector',
             # UI/Meta
             'cost_multiplier', 'is_public', 'is_active', 'tags', 'suggestions', 'model_id', 'user_guide',
             # Logic

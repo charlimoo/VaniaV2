@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -9,10 +8,6 @@ import {
   User, 
   Mail, 
   Lock, 
-  Stethoscope, 
-  CheckCircle2, 
-  AlertTriangle,
-  Check,
   Edit2,
   KeyRound,
   ArrowLeft
@@ -20,12 +15,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
-import { cn } from "@/lib/utils"
-import { verifyDoctorCredentials } from "@/lib/api"
-import { toast } from "sonner"
-import { motion, AnimatePresence } from "framer-motion"
 
 // --- Schemas ---
 const phoneSchema = z.object({
@@ -44,7 +34,6 @@ const registrationSchema = z.object({
   fullName: z.string().min(3, "نام کامل الزامی است"),
   email: z.string().email("ایمیل معتبر نیست").optional().or(z.literal("")),
   password: z.string().min(6, "رمز عبور باید حداقل ۶ کاراکتر باشد"),
-  licenseCode: z.string().optional(), 
 })
 
 // --- Step 1: Phone ---
@@ -92,47 +81,13 @@ export function StepRegistration({
   onSubmit: (data: any) => void; 
   isLoading: boolean;
 }) {
-  const [role, setRole] = useState<"patient" | "doctor">("patient")
-  const [verificationStatus, setVerificationStatus] = useState<"idle" | "verifying" | "verified" | "failed">("idle")
-  const [bypassVerification, setBypassVerification] = useState(false)
-  const [verifiedName, setVerifiedName] = useState("")
-
   const form = useForm({
     resolver: zodResolver(registrationSchema),
-    defaultValues: { fullName: "", email: "", password: "", licenseCode: "" }
+    defaultValues: { fullName: "", email: "", password: "" }
   })
 
-  const handleVerify = async () => {
-    const { fullName, licenseCode } = form.getValues()
-    if (!licenseCode || licenseCode.length < 3) return toast.error("شماره عضویت نامعتبر است");
-    if (!fullName || fullName.length < 3) return toast.error("نام و نام خانوادگی الزامی است");
-
-    setVerificationStatus("verifying")
-    try {
-      const res = await verifyDoctorCredentials(fullName, licenseCode)
-      if (res.verified) {
-        setVerificationStatus("verified")
-        setVerifiedName(res.found_name || fullName)
-        toast.success("هویت تایید شد")
-      } else {
-        setVerificationStatus("failed")
-        toast.error(res.message || "اطلاعات مطابقت ندارد")
-      }
-    } catch (e) {
-      setVerificationStatus("failed")
-      toast.error("خطا در اتصال")
-    }
-  }
-
   const onFormSubmit = (data: any) => {
-    if (role === 'doctor') {
-        if (!data.licenseCode) return form.setError("licenseCode", { message: "شماره عضویت الزامی است" })
-        if (verificationStatus !== 'verified' && !bypassVerification) {
-            if (verificationStatus === 'idle') return toast.warning("لطفاً دکمه استعلام را بزنید");
-            return 
-        }
-    }
-    onSubmit({ ...data, role, isVerified: verificationStatus === 'verified' })
+    onSubmit({ ...data, role: "visitor" })
   }
 
   return (
@@ -141,17 +96,6 @@ export function StepRegistration({
         <h2 className="text-lg font-bold text-white">تکمیل اطلاعات</h2>
         <p className="text-[10px] text-zinc-500 font-mono tracking-wider">{phoneNumber}</p>
       </div>
-
-      <Tabs value={role} onValueChange={(v: any) => setRole(v)} className="w-full">
-        <TabsList className="grid w-full grid-cols-2 p-1 bg-white/5 border border-white/5 rounded-xl h-10">
-          <TabsTrigger value="patient" className="h-8 rounded-lg text-xs gap-2 data-[state=active]:bg-white data-[state=active]:text-black transition-all">
-            <User className="w-3.5 h-3.5" /> مراجع
-          </TabsTrigger>
-          <TabsTrigger value="doctor" className="h-8 rounded-lg text-xs gap-2 data-[state=active]:bg-white data-[state=active]:text-black transition-all">
-            <Stethoscope className="w-3.5 h-3.5" /> متخصص
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
 
       <form onSubmit={form.handleSubmit(onFormSubmit)} className="flex flex-col gap-3">
         
@@ -184,61 +128,6 @@ export function StepRegistration({
             />
           </div>
         </div>
-
-        <AnimatePresence>
-          {role === "doctor" && (
-            <motion.div 
-              initial={{ opacity: 0, height: 0 }} 
-              animate={{ opacity: 1, height: "auto" }} 
-              exit={{ opacity: 0, height: 0 }}
-              className="overflow-hidden"
-            >
-              <div className={cn(
-                "mt-1 p-1 pl-1.5 rounded-lg border transition-all flex items-center gap-2",
-                verificationStatus === 'verified' ? "bg-emerald-500/10 border-emerald-500/30" : 
-                verificationStatus === 'failed' ? "bg-red-500/10 border-red-500/30" : "bg-white/5 border-white/10"
-              )}>
-                <Input 
-                  {...form.register("licenseCode")} 
-                  placeholder="شماره عضویت نظام روانشناسی و روانپزشکی" 
-                  className="h-8 border-0 bg-transparent focus-visible:ring-0 text-center font-mono text-sm placeholder:text-zinc-600 w-full"
-                  disabled={verificationStatus === 'verified'}
-                />
-                
-                <Button 
-                  type="button" 
-                  size="sm"
-                  onClick={handleVerify}
-                  disabled={verificationStatus === 'verifying' || verificationStatus === 'verified'}
-                  className={cn(
-                    "h-8 px-3 rounded-md text-xs font-medium min-w-[80px]",
-                    verificationStatus === 'verified' ? "bg-emerald-500 text-white" : 
-                    verificationStatus === 'failed' ? "bg-red-500 text-white hover:bg-red-600" :
-                    "bg-white text-black hover:bg-zinc-200"
-                  )}
-                >
-                  {verificationStatus === 'verifying' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 
-                   verificationStatus === 'verified' ? <Check className="w-4 h-4" /> : 
-                   verificationStatus === 'failed' ? "مجدد" : "استعلام"}
-                </Button>
-              </div>
-
-              {verificationStatus === 'verified' && (
-                 <div className="text-[10px] text-emerald-400 text-center mt-1.5">
-                    تایید شد: {verifiedName}
-                 </div>
-              )}
-              {verificationStatus === 'failed' && !bypassVerification && (
-                 <div className="flex justify-between items-center mt-1.5 px-1">
-                    <span className="text-[10px] text-red-400">عدم تطابق اطلاعات</span>
-                    <button type="button" onClick={() => setBypassVerification(true)} className="text-[10px] text-zinc-400 underline hover:text-zinc-200">
-                        ادامه بدون تایید
-                    </button>
-                 </div>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
 
         <Button type="submit" className="w-full h-11 mt-2 rounded-xl bg-white text-black hover:bg-zinc-200 font-bold shadow-lg shadow-white/5" disabled={isLoading}>
           {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "دریافت کد تایید"}

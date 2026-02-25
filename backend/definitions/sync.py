@@ -11,9 +11,10 @@ from billing.models import BillingProduct, DiscountCode, SubscriptionPlan, Billi
 from services.models import AgentService, ServiceSuggestion
 from services.models_canvas import CanvasType, AgentCanvasConfig
 from vania_core.models import Location
+from users.models import ExpertProfession
 # --- Registries ---
 from .billing import ALL_PRODUCTS, DISCOUNTS, PLANS
-from .agents.vania import AGENTS 
+from .agents import AGENTS
 
 from billing.models import BillingConfig, FAQ # [NEW] Import FAQ
 from .support import SUPPORT_INFO, FAQS       # [NEW] Import Definitions
@@ -83,6 +84,9 @@ class DefinitionSync:
                     "is_public": a.is_public,
                     "is_active": a.is_active,
                     "is_free": a.is_free,
+                    "audience": a.audience,
+                    "eligible_expert_professions": a.eligible_expert_professions,
+                    "requires_visitor_selector": a.requires_visitor_selector,
                     "cost_multiplier": a.cost_multiplier,
                     "enable_reasoning": a.enable_reasoning,
                     "reasoning_effort": a.reasoning_effort,
@@ -133,6 +137,8 @@ class DefinitionSync:
                     "price": Decimal(p_def.price),
                     "duration_days": p_def.duration_days,
                     "included_credits": Decimal(p_def.monthly_credits),
+                    "audience": p_def.audience,
+                    "eligible_expert_professions": p_def.eligible_expert_professions,
                     "is_active": p_def.is_active
                 }
             )
@@ -240,6 +246,62 @@ class DefinitionSync:
             Location.objects.update_or_create(
                 name=loc_name,
             )
+
+    @staticmethod
+    def sync_expert_professions():
+        logger.info("🔄 [Sync] Expert Professions")
+        professions = [
+            {
+                "slug": "psychologist",
+                "name": "روان شناس",
+                "description": "متخصص روان شناسی",
+                "validation_kind": "mock_psychologist",
+                "validation_config": {
+                    "required_prefix": "PSY-",
+                    "credential_label": "کد نظام روان‌شناسی",
+                    "credential_placeholder": "مثال: PSY-12345",
+                    "credential_help": "کدی که از سازمان نظام روان‌شناسی دریافت کرده‌اید را وارد کنید.",
+                    "sample_code": "PSY-12345",
+                },
+            },
+            {
+                "slug": "psychiatrist",
+                "name": "روان پزشک",
+                "description": "متخصص روان پزشکی",
+                "validation_kind": "mock_psychiatrist",
+                "validation_config": {
+                    "required_prefix": "PSYCH-",
+                    "credential_label": "کد نظام پزشکی",
+                    "credential_placeholder": "مثال: PSYCH-98765",
+                    "credential_help": "کد نظام پزشکی خود را برای تایید تخصص وارد کنید.",
+                    "sample_code": "PSYCH-98765",
+                },
+            },
+            {
+                "slug": "lawyer",
+                "name": "وکیل",
+                "description": "متخصص حقوق",
+                "validation_kind": "mock_lawyer",
+                "validation_config": {
+                    "required_prefix": "LAW-",
+                    "credential_label": "شناسه پروانه وکالت",
+                    "credential_placeholder": "مثال: LAW-44556",
+                    "credential_help": "شماره پروانه معتبر وکالت را وارد کنید.",
+                    "sample_code": "LAW-44556",
+                },
+            },
+        ]
+        for item in professions:
+            ExpertProfession.objects.update_or_create(
+                slug=item["slug"],
+                defaults={
+                    "name": item["name"],
+                    "description": item["description"],
+                    "is_active": True,
+                    "validation_kind": item["validation_kind"],
+                    "validation_config": item["validation_config"],
+                },
+            )
                     
     @classmethod
     def sync_all(cls):
@@ -253,6 +315,7 @@ class DefinitionSync:
             cls.sync_faqs()
             cls.sync_agents() 
             cls.sync_locations()
+            cls.sync_expert_professions()
             cls.sync_plans_and_products()
             cls.sync_discounts()
         logger.info("--- Synchronization Complete ---")

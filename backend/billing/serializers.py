@@ -48,7 +48,8 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
         model = SubscriptionPlan
         fields = (
             'id', 'slug', 'name', 'description', 'price', 
-            'duration_days', 'included_credits', 'included_agents', 'included_agent_slugs'
+            'duration_days', 'included_credits', 'included_agents', 'included_agent_slugs',
+            'audience', 'eligible_expert_professions'
         )
 
 # --- Updated Product Serializer ---

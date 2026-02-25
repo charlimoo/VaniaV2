@@ -3,6 +3,8 @@
 
 import { useState } from "react";
 import { 
+  ArrowDown,
+  ArrowUp,
   Eye,
   FileText,
   Lock,
@@ -85,6 +87,26 @@ export function RoadmapTab({ roadmap, activeGoals, patientId, patientName, allSe
     });
   };
 
+  const handleMoveSession = (index: number, direction: "up" | "down") => {
+    const sessions = roadmap.sessions || [];
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+
+    if (targetIndex < 0 || targetIndex >= sessions.length) {
+      return;
+    }
+
+    const updatedSessions = [...sessions];
+    const [movedSession] = updatedSessions.splice(index, 1);
+    updatedSessions.splice(targetIndex, 0, movedSession);
+
+    onEdit({
+      roadmap_data: {
+        ...roadmap,
+        sessions: updatedSessions,
+      },
+    });
+  };
+
 
 if (selectedSession) {
     return (
@@ -127,15 +149,15 @@ if (selectedSession) {
 
       {/* [NEW] Active Goals Section */}
       {activeGoals && activeGoals.length > 0 && (
-        <div className="bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 rounded-xl p-4 shadow-sm">
+        <div className="bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-900 rounded-xl p-4 shadow-sm">
             <h3 className="text-sm font-bold text-emerald-800 dark:text-emerald-400 flex items-center gap-2 mb-3">
                 <Target className="w-4 h-4"/>
                 اهداف درمانی فعال (SMART Goals)
             </h3>
             <div className="grid gap-2">
                 {activeGoals.map((goal, idx) => (
-                    <div key={idx} className="flex items-start gap-2 bg-background p-2 rounded-lg border border-emerald-100/50 text-xs">
-                        <span className="bg-emerald-100 text-emerald-700 w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-bold shrink-0 mt-0.5">
+                    <div key={idx} className="flex items-start gap-2 bg-background p-2 rounded-lg border border-emerald-900/50 text-xs">
+                        <span className="bg-emerald-900 text-emerald-200 w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-bold shrink-0 mt-0.5">
                             {idx + 1}
                         </span>
                         <span className="text-foreground/90 leading-relaxed">{goal}</span>
@@ -214,6 +236,35 @@ if (selectedSession) {
                   </div>
                   
                   <div className="flex shrink-0 items-center gap-1">
+                    <div className="flex items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMoveSession(index, "up");
+                        }}
+                        disabled={index === 0}
+                        aria-label="انتقال جلسه به بالا"
+                      >
+                        <ArrowUp className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleMoveSession(index, "down");
+                        }}
+                        disabled={index === roadmap.sessions.length - 1}
+                        aria-label="انتقال جلسه به پایین"
+                      >
+                        <ArrowDown className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+
                     {/* View/Details Button */}
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => setSelectedSession(session)}>
                       <Eye className="w-3.5 h-3.5" />

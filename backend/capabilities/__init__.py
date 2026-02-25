@@ -30,3 +30,14 @@ import capabilities.vania_doctor.tools
 import capabilities.vania_patient.capability
 import capabilities.vania_patient.canvas
 import capabilities.vania_patient.tools
+
+# -- Vania Expert Capability (General expert workflow) --
+import capabilities.vania_expert.capability
+import capabilities.vania_expert.canvas
+import capabilities.vania_expert.forms
+import capabilities.vania_expert.tools
+
+# -- Vania Visitor Capability (General visitor workflow) --
+import capabilities.vania_visitor.capability
+import capabilities.vania_visitor.canvas
+import capabilities.vania_visitor.tools

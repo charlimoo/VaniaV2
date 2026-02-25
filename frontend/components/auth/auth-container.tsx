@@ -107,12 +107,7 @@ export function AuthContainer() {
 
       await refreshUser()
 
-      // Customized Toasts
-      if (signupData?.role === 'doctor' && !signupData.isVerified) {
-          toast.warning("ثبت‌نام انجام شد. برای فعال‌سازی پنل متخصص، لطفاً بعداً مدارک خود را تایید کنید.")
-      } else {
-          toast.success("ورود موفقیت‌آمیز")
-      }
+      toast.success("ورود موفقیت‌آمیز")
       
       router.push("/dashboard")
 

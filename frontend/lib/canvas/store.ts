@@ -25,6 +25,7 @@ interface CanvasState {
   
   // [FIX] New State to track the active patient context for API calls
   contextResourceId: string | null;
+  contextDoctorId: string | null;
 
   // ... (Existing Actions)
   setInstances: (canvases: CanvasData[]) => void;
@@ -43,6 +44,7 @@ interface CanvasState {
   
   // [FIX] New Action
   setContextResourceId: (id: string | null) => void;
+  setContextDoctorId: (id: string | null) => void;
 }
 
 // --- Utility: Deep Merge ---
@@ -85,8 +87,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   
   // [FIX] Initialize as null
   contextResourceId: null,
+  contextDoctorId: null,
 
   setContextResourceId: (id) => set({ contextResourceId: id }),
+  setContextDoctorId: (id) => set({ contextDoctorId: id }),
 
   setInstances: (canvases) => {
     console.log(`[CanvasStore] 🌊 Hydrating ${canvases?.length || 0} instances from backend.`);
@@ -206,6 +210,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       
       // Get the resource ID from store state
       const resourceId = get().contextResourceId;
+      const doctorId = get().contextDoctorId;
 
       if (token) {
         const headers: Record<string, string> = {
@@ -216,6 +221,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         // Inject the header if we have a patient context
         if (resourceId) {
             headers["X-Target-Resource-ID"] = resourceId;
+        }
+        if (doctorId) {
+            headers["X-Target-Expert-ID"] = doctorId;
+            headers["X-Target-Doctor-ID"] = doctorId;
         }
 
         fetch(`${API_BASE}/agent/canvas/instance/${id}`, {
@@ -254,7 +263,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         activeTabId: null,
         isPanelOpen: false,
         isLocked: false,
-        contextResourceId: null
+        contextResourceId: null,
+        contextDoctorId: null
     });
   },
   

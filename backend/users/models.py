@@ -10,13 +10,33 @@ from django.core.exceptions import ValidationError
 # --- 1. Minimal Role Model (Identity) ---
 class UserRole(models.Model):
     """
-    A simple tag to define user capability groups (e.g. 'doctor', 'patient').
+    A simple tag to define user capability groups (e.g. 'expert', 'visitor').
     Used by the Frontend to toggle between 'Clinical View' and 'Personal View'.
     """
     name = models.CharField(max_length=50)
-    slug = models.SlugField(unique=True) # e.g. 'doctor', 'patient'
+    slug = models.SlugField(unique=True) # e.g. 'expert', 'visitor'
     
     def __str__(self): return self.name
+
+
+class ExpertProfession(models.Model):
+    """
+    Canonical expert profession definitions used for verification and access control.
+    """
+    slug = models.SlugField(unique=True)  # e.g. psychologist, psychiatrist, lawyer
+    name = models.CharField(max_length=100)
+    description = models.TextField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    validation_kind = models.CharField(max_length=100, default="mock")
+    validation_config = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
 
 # --- 2. Custom User Model ---
 class CustomUserManager(BaseUserManager):
@@ -58,12 +78,22 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
         null=True, 
         blank=True,
         related_name='users',
-        help_text="Designates the user's primary persona (e.g. Doctor or Patient)."
+        help_text="Designates the user's primary persona (e.g. Expert or Visitor)."
     )
 
     # --- [NEW] Doctor Verification Fields ---
     medical_license = models.CharField(max_length=50, blank=True, null=True)
     is_verified_doctor = models.BooleanField(default=False)
+    expert_profession = models.ForeignKey(
+        ExpertProfession,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="users",
+    )
+    is_expert_verified = models.BooleanField(default=False)
+    expert_verified_at = models.DateTimeField(null=True, blank=True)
+    expert_verification_meta = models.JSONField(default=dict, blank=True)
 
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)

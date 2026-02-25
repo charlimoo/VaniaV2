@@ -88,6 +88,7 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
   const [testSaving, setTestSaving] = useState(false);
   const [testUploading, setTestUploading] = useState(false);
   const [testDraft, setTestDraft] = useState<TestDraft>({ title: "", url: "", result_summary: "", catalog_id: null });
+  const [testCatalogQuery, setTestCatalogQuery] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const catalogMap = useMemo(() => {
@@ -95,6 +96,14 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
     (testsCatalog || []).forEach((item) => m.set(item.id, item));
     return m;
   }, [testsCatalog]);
+
+  const filteredTestsCatalog = useMemo(() => {
+    const q = testCatalogQuery.trim().toLowerCase();
+    if (!q) return testsCatalog || [];
+    return (testsCatalog || []).filter((item) =>
+      `${item.id} ${item.title} ${item.url}`.toLowerCase().includes(q)
+    );
+  }, [testsCatalog, testCatalogQuery]);
 
   const getFieldLabel = (entry: any, fieldKey: string) => {
     if (entry.form_key) {
@@ -153,12 +162,14 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
 
   const openNewTestModal = () => {
     setSelectedFile(null);
+    setTestCatalogQuery("");
     setTestDraft({ title: "", url: "", result_summary: "", catalog_id: null });
     setTestModalOpen(true);
   };
 
   const openEditTestModal = (test: ClinicalTestEntry) => {
     setSelectedFile(null);
+    setTestCatalogQuery("");
     setTestDraft({
       id: test.id,
       catalog_id: test.catalog_id || null,
@@ -343,11 +354,23 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-            {tests.map((test) => (
+            {tests.map((test) => {
+              const missingSummary = !test.result_summary?.trim();
+              const missingFile = !test.file_name;
+              const isTodo = missingSummary || missingFile;
+
+              return (
               <div key={test.id} className="rounded-xl border bg-card p-3 shadow-sm space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 space-y-1">
-                    <div className="truncate text-xs font-bold">{test.title}</div>
+                    <div className="truncate text-xs font-bold flex items-center gap-2">
+                      <span className="truncate">{test.title}</span>
+                      {isTodo && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          در انتظار تکمیل
+                        </Badge>
+                      )}
+                    </div>
                     <div className="text-[10px] text-muted-foreground">{toJalali(test.created_at || "")}</div>
                   </div>
                   <div className="flex items-center gap-1">
@@ -388,7 +411,8 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
@@ -537,7 +561,7 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
           <DialogHeader className="text-right">
             <DialogTitle>{testDraft.id ? "ویرایش تست" : "افزودن تست"}</DialogTitle>
             <DialogDescription>
-              برای هر تست می توانید لینک، خلاصه نتیجه و فایل PDF نتیجه را ثبت کنید.
+              می توانید تست را فقط با عنوان ثبت کنید و بعدا خلاصه نتیجه یا فایل PDF را اضافه کنید.
             </DialogDescription>
           </DialogHeader>
 
@@ -552,11 +576,22 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
                   <SelectValue placeholder="یک تست انتخاب کنید" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(testsCatalog || []).map((item) => (
+                  <div className="sticky top-0 z-10 bg-popover p-2 border-b">
+                    <Input
+                      value={testCatalogQuery}
+                      onChange={(e) => setTestCatalogQuery(e.target.value)}
+                      onKeyDownCapture={(e) => e.stopPropagation()}
+                      placeholder="جستجو..."
+                    />
+                  </div>
+                  {filteredTestsCatalog.map((item) => (
                     <SelectItem key={item.id} value={String(item.id)}>
                       {item.id}. {item.title}
                     </SelectItem>
                   ))}
+                  {filteredTestsCatalog.length === 0 && (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">موردی پیدا نشد.</div>
+                  )}
                 </SelectContent>
               </Select>
             </div>

@@ -8,6 +8,7 @@ import {
   StyleSheet, 
   Font 
 } from '@react-pdf/renderer';
+import { normalizeFlashcards } from '@/lib/flashcards';
 
 // --- 1. Font Registration (CRITICAL for Persian) ---
 // This requires the font files to be present in the `public/fonts/` directory.
@@ -176,7 +177,7 @@ export const SessionPDF = ({ data, patientName, doctorName = "متخصص روا�
       <View style={{ marginTop: 10 }}>
         <Text style={styles.sectionTitle}>فلش‌کارت‌های مراجع (یادآوری تکنیک)</Text>
         <View style={styles.cardContainer}>
-          {data.flashcards?.map((card:any, i:number) => (
+          {normalizeFlashcards(data.flashcards).map((card:any, i:number) => (
             <View key={i} style={styles.flashcard}>
               <Text style={styles.cardTitle}>{normalizePersianText(card.title)}</Text>
               <Text style={styles.text}>{normalizePersianText(card.content)}</Text>

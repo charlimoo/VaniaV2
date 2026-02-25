@@ -13,7 +13,7 @@ import {
 export const APP_CONFIG = {
   // --- CORE IDENTITY ---
   BRANDING: {
-    APP_NAME: "وانیا",
+    APP_NAME: "وانیا اپ",
     APP_TAGLINE: "همراه هوشمند شما",
     COMPANY_NAME: "وانیا",
   },
@@ -96,23 +96,23 @@ export const APP_CONFIG = {
         icon: MessageSquare,
         visible: true
       },
-      // [NEW] Doctor Specific View
+      // Expert Specific View
       {
-        key: "patients",
-        title: "مدیریت مطب",
-        url: "/dashboard/patients",
+        key: "visitors",
+        title: "مدیریت مراجعین",
+        url: "/dashboard/visitors",
         icon: Users,
         visible: true, // You can toggle this based on role in the Sidebar component later
-        allowedRoles: ['doctor'] // <--- ADD THIS
+        allowedRoles: ['expert']
       },
-      // [NEW] Patient Specific View
+      // Visitor Specific View
       {
-        key: "doctors",
+        key: "experts",
         title: "متخصصان من",
-        url: "/dashboard/doctors",
+        url: "/dashboard/experts",
         icon: Stethoscope,
         visible: true,
-        allowedRoles: ['patient'] // <--- ADD THIS
+        allowedRoles: ['visitor']
       },
       {
         key: "billing",

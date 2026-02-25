@@ -4,6 +4,7 @@ from datetime import timedelta
 from django.core.cache import cache
 from django.utils import timezone
 from users.models import CustomUser
+from users.eligibility import is_user_eligible_for_agent
 from .models import AgentService
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,10 @@ class AccessControlService:
         # Rule 1: Maintenance Mode
         if not agent.is_active:
             return False, "Service is currently disabled."
+
+        # Rule 1.5: Role/Profession Eligibility
+        if not is_user_eligible_for_agent(user, agent):
+            return False, "You are not eligible for this agent."
 
         # Rule 2: Free Agents
         # Free agents are accessible to everyone, regardless of plan status.

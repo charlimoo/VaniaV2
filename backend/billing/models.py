@@ -81,6 +81,11 @@ class FAQ(models.Model):
         return self.question
     
 class SubscriptionPlan(models.Model):
+    class Audience(models.TextChoices):
+        ALL = 'ALL', 'All'
+        VISITOR = 'VISITOR', 'Visitor'
+        EXPERT = 'EXPERT', 'Expert'
+
     """
     Defines a subscription tier (e.g. Pro, Enterprise).
     Buying this grants 'included_credits' and unlocks linked Agents.
@@ -96,6 +101,16 @@ class SubscriptionPlan(models.Model):
         max_digits=19, decimal_places=10, 
         default=Decimal('0.0'),
         help_text="Credits credited to 'Plan Balance' upon purchase."
+    )
+    audience = models.CharField(
+        max_length=20,
+        choices=Audience.choices,
+        default=Audience.ALL,
+    )
+    eligible_expert_professions = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of eligible expert profession slugs for EXPERT audience plans.",
     )
     
     is_active = models.BooleanField(default=True)

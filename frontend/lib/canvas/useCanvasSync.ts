@@ -12,6 +12,7 @@ interface UseCanvasSyncProps {
   token: string | null;
   onRename?: (title: string) => void;
   patientId?: number | null;
+  doctorId?: number | null;
   isDraft?: boolean;
 }
 
@@ -22,6 +23,7 @@ export function useCanvasSync({
   token, 
   onRename, 
   patientId,
+  doctorId,
   isDraft = false,
 }: UseCanvasSyncProps) {
   
@@ -31,6 +33,7 @@ export function useCanvasSync({
   
   // [FIX] Import the new setter
   const setContextResourceId = useCanvasStore((s) => s.setContextResourceId);
+  const setContextDoctorId = useCanvasStore((s) => s.setContextDoctorId);
   
   const hydratedRef = useRef<string | null>(null);
 
@@ -43,6 +46,14 @@ export function useCanvasSync({
     }
   }, [patientId, setContextResourceId]);
 
+  useEffect(() => {
+    if (doctorId) {
+      setContextDoctorId(doctorId.toString());
+    } else {
+      setContextDoctorId(null);
+    }
+  }, [doctorId, setContextDoctorId]);
+
   // --- Hydration Function ---
   const hydrate = async () => {
     if (!token || !threadId) {
@@ -53,7 +64,10 @@ export function useCanvasSync({
       let queryParams = agentId ? `?agent_id=${agentId}` : '?';
       
       if (patientId) {
-          queryParams += `&patient_id=${patientId}`;
+          queryParams += `&visitor_id=${patientId}&patient_id=${patientId}`;
+      }
+      if (doctorId) {
+          queryParams += `&expert_id=${doctorId}&doctor_id=${doctorId}`;
       }
 
       const url = `${API_BASE_URL}/agent/canvas/state/${threadId}${queryParams}`;
@@ -61,6 +75,10 @@ export function useCanvasSync({
       
       if (patientId) {
           headers["X-Target-Resource-ID"] = patientId.toString();
+      }
+      if (doctorId) {
+          headers["X-Target-Expert-ID"] = doctorId.toString();
+          headers["X-Target-Doctor-ID"] = doctorId.toString();
       }
 
       const res = await fetch(url, { headers });
@@ -85,11 +103,11 @@ export function useCanvasSync({
     
     if (hydratedRef.current !== threadId) {
         hydrate();
-    } else if (patientId && hydratedRef.current === threadId) {
+    } else if ((patientId || doctorId) && hydratedRef.current === threadId) {
         hydrate();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, token, agentId, patientId]);
+  }, [threadId, token, agentId, patientId, doctorId]);
 
   // --- Real-time Subscription Effect ---
   useEffect(() => {

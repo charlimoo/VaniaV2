@@ -9,6 +9,7 @@ import { RoadmapSession } from "@/lib/types/vania";
 import { DownloadButton } from "./DownloadButton";
 import { ManualReportDialog } from "./ManualReportDialog";
 import { cn } from "@/lib/utils";
+import { normalizeFlashcards } from "@/lib/flashcards";
 
 interface Props {
   session: RoadmapSession;
@@ -42,13 +43,15 @@ export function SessionDetail({ session, allSessionsHistory, patientName, patien
               if (!privateNotes && structuredReport.private_notes) {
                   privateNotes = structuredReport.private_notes;
               }
-              flashcards = structuredReport.flashcards || [];
+              flashcards = normalizeFlashcards(structuredReport.flashcards || reportLog.flashcards || []);
           } else {
               summaryText = reportLog.summary || "";
               structuredReport = { is_simple: true };
+              flashcards = normalizeFlashcards(reportLog.flashcards || []);
           }
       } catch (e) {
           summaryText = reportLog.summary || "";
+          flashcards = normalizeFlashcards(reportLog.flashcards || []);
       }
   }
 
@@ -56,10 +59,7 @@ export function SessionDetail({ session, allSessionsHistory, patientName, patien
   const initialFormState = {
     summary: summaryText,
     private_notes: privateNotes,
-    flashcards: flashcards.map((fc: any) => ({
-        title: fc.title || fc.front || "",
-        content: fc.content || fc.back || ""
-    }))
+    flashcards
   };
 
   return (
@@ -124,7 +124,7 @@ function CompletedSessionView({ report, summary, privateNotes, flashcards }: { r
                 <div className="flex items-center gap-2 mb-2 border-b border-red-900/20 pb-2">
                     <ShieldAlert className="w-4 h-4 text-red-500/80" />
                     <span className="text-xs font-bold text-red-500/90">یادداشت محرمانه متخصص</span>
-                    <span className="text-[9px] bg-red-950/30 px-2 py-0.5 rounded-full text-red-400/70 border border-red-900/20 mr-auto">غیرقابل نمایش برای بیمار</span>
+                    <span className="text-[9px] bg-red-950/30 px-2 py-0.5 rounded-full text-red-400/70 border border-red-900/20 mr-auto">غیرقابل نمایش برای مراجعه کننده</span>
                 </div>
                 <p className="text-xs text-red-200/80 leading-relaxed whitespace-pre-wrap">
                     {privateNotes}

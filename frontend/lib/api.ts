@@ -95,21 +95,70 @@ export async function checkUserExistence(phone: string) {
   });
 }
 
-export async function lookupPatientForDoctor(phone: string) {
+export async function lookupVisitorForExpert(phone: string) {
   return fetcher<{
     exists: boolean;
     patient?: { id: number; full_name: string; phone_number: string };
     existing_connection_status?: string | null;
-    activation_locked?: boolean;
-  }>('/api/vania/patients/lookup/', {
+  }>('/api/vania/visitors/lookup/', {
     method: 'POST',
     body: JSON.stringify({ phone_number: phone })
   });
 }
 
+export async function lookupPatientForDoctor(phone: string) {
+  return lookupVisitorForExpert(phone);
+}
+
 export async function verifyDoctorCredentials(fullName: string, code: string) {
-  return fetcher<{ verified: boolean; message: string; found_name?: string }>('/api/auth/verify-doctor/', {
+  return fetcher<{ verified: boolean; message: string; found_name?: string }>('/api/auth/verify-expert/', {
     method: 'POST',
     body: JSON.stringify({ full_name: fullName, license_code: code })
+  });
+}
+
+export async function verifyExpertCredentials(fullName: string, professionSlug: string, credentialCode: string) {
+  return fetcher<{
+    verified: boolean;
+    message: string;
+    found_name?: string;
+    profession_slug?: string;
+    profession_label?: string;
+  }>('/api/auth/verify-expert/', {
+    method: 'POST',
+    body: JSON.stringify({
+      full_name: fullName,
+      profession_slug: professionSlug,
+      credential_code: credentialCode,
+    }),
+  });
+}
+
+export async function getExpertProfessions() {
+  return fetcher<Array<{
+    slug: string;
+    name: string;
+    description?: string;
+    validation_kind?: string;
+    credential_label?: string;
+    credential_placeholder?: string;
+    credential_help?: string;
+    sample_code?: string;
+  }>>('/api/auth/expert-professions/');
+}
+
+export async function upgradeExpert(fullName: string, professionSlug: string, credentialCode: string) {
+  return fetcher<{
+    verified: boolean;
+    message: string;
+    profession_slug?: string;
+    profession_label?: string;
+  }>('/api/auth/upgrade-expert/', {
+    method: 'POST',
+    body: JSON.stringify({
+      full_name: fullName,
+      profession_slug: professionSlug,
+      credential_code: credentialCode,
+    }),
   });
 }

@@ -9,6 +9,7 @@ from django.core.cache import cache
 from .utils import calculate_credit_cost 
 from .models import UserWallet, Transaction, BillingConfig, BillingProduct, Invoice, SubscriptionPlan
 from users.tasks import send_generic_sms 
+from users.eligibility import is_user_eligible_for_plan
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,13 @@ class FulfillmentService:
         # 1. Handle Plan Activation
         if product.linked_plan:
             new_plan = product.linked_plan
+            if not is_user_eligible_for_plan(user, new_plan):
+                logger.warning(
+                    "Skipping ineligible plan fulfillment: user=%s plan=%s",
+                    user.id,
+                    new_plan.slug,
+                )
+                return
             
             # CHECK: Is this a Renewal? (Same Plan + Not Expired)
             is_renewal = (

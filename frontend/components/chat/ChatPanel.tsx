@@ -16,7 +16,6 @@ interface ChatPanelProps {
   
   isPreviewMode?: boolean;
   currentUsage?: number;
-  capabilities?: string[]; // Optional prop if passed explicitly, though we can read from service
 }
 
 export function ChatPanel({ 
@@ -40,9 +39,6 @@ export function ChatPanel({
     );
   }
 
-  // Ensure we have a valid array
-  const activeCapabilities = service.capabilities || [];
-
   return (
     <div className="flex flex-col h-full w-full bg-background border-l border-border transition-all duration-300">
       
@@ -60,7 +56,7 @@ export function ChatPanel({
             isPreviewMode={isPreviewMode}
             demoConfig={service.demo_config}
             currentUsage={currentUsage}
-            capabilities={activeCapabilities} // [FIX] Pass capabilities down to Thread
+            requiresVisitorSelector={service.requires_visitor_selector ?? false}
         />
       </div>
       

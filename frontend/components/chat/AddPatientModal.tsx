@@ -57,7 +57,7 @@ export function AddPatientModal({ trigger }: Props) {
 
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/vania/patients/invite/`, {
+      const res = await fetch(`${API_BASE_URL}/api/vania/visitors/invite/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
@@ -68,7 +68,7 @@ export function AddPatientModal({ trigger }: Props) {
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "خطا در ایجاد پرونده بیمار.");
+        throw new Error(err.error || "خطا در ایجاد پرونده مراجعه کننده.");
       }
       
       const data = await res.json();
@@ -81,7 +81,7 @@ export function AddPatientModal({ trigger }: Props) {
 
       // Navigate to a new dedicated thread
       const newThreadId = `local-${crypto.randomUUID()}`;
-      router.push(`/chat/${agentId}/${newThreadId}?patientId=${patientId}`);
+      router.push(`/chat/${agentId}/${newThreadId}?visitorId=${patientId}`);
 
       // Trigger Onboarding workflow in the new thread
       setTimeout(() => {
@@ -124,7 +124,7 @@ Suggest that the doctor should first complete BASE_PROFILE_V1 in the "فرم‌�
         <DialogHeader className="text-right">
           <DialogTitle className="text-lg">تشکیل پرونده بالینی</DialogTitle>
           <DialogDescription className="text-xs">
-            برای شروع، نام و شماره تماس بیمار را وارد کنید. سایر جزئیات در زبانه «فرم‌ها» و فرم اطلاعات پایه ثبت می‌شود.
+            برای شروع، نام و شماره تماس مراجعه کننده را وارد کنید. سایر جزئیات در زبانه «فرم‌ها» و فرم اطلاعات پایه ثبت می‌شود.
           </DialogDescription>
         </DialogHeader>
         

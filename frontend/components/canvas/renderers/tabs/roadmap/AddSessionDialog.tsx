@@ -87,7 +87,7 @@ export function AddSessionDialog({ patientId, onSuccess, trigger }: Props) {
         <DialogHeader className="text-right">
           <DialogTitle>برنامه‌ریزی جلسه جدید</DialogTitle>
           <DialogDescription>
-            یک جلسه جدید به نقشه راه درمان بیمار اضافه کنید.
+            یک جلسه جدید به نقشه راه درمان مراجعه کننده اضافه کنید.
           </DialogDescription>
         </DialogHeader>
         

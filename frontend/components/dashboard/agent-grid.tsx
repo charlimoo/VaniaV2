@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { 
   Bot, Lock, Zap, ArrowLeft, Clock
@@ -17,6 +17,7 @@ export function AgentGrid() {
   const router = useRouter();
   const [services, setServices] = useState<AgentService[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
   useEffect(() => {
     const fetchServices = async () => {
@@ -41,11 +42,74 @@ export function AgentGrid() {
     router.push(`/chat/${agent.slug}/${draftId}`);
   };
 
+  const allTags = useMemo(() => {
+    const tagsSet = new Set<string>();
+    services.forEach((service) => {
+      service.tags?.forEach((tag) => tagsSet.add(tag));
+    });
+    return [...tagsSet].sort((a, b) => a.localeCompare(b, "fa"));
+  }, [services]);
+
+  const toggleTag = (tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((item) => item !== tag) : [...prev, tag]
+    );
+  };
+
+  const filteredAndSortedServices = useMemo(() => {
+    const filtered = selectedTags.length
+      ? services.filter((service) =>
+          service.tags?.some((tag) => selectedTags.includes(tag))
+        )
+      : services;
+
+    return [...filtered].sort((a, b) => {
+      const aActive = a.access_status === "OWNED" || a.access_status === "FREE" ? 1 : 0;
+      const bActive = b.access_status === "OWNED" || b.access_status === "FREE" ? 1 : 0;
+
+      if (aActive !== bActive) return bActive - aActive;
+      return a.name.localeCompare(b.name, "fa");
+    });
+  }, [services, selectedTags]);
+
   if (loading) return <AgentsListSkeleton />;
 
   return (
-    <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 animate-in fade-in slide-in-from-bottom-4">
-      {services.map((agent) => {
+    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-4">
+      {allTags.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {allTags.map((tag) => {
+            const isActive = selectedTags.includes(tag);
+            return (
+              <button
+                key={tag}
+                type="button"
+                onClick={() => toggleTag(tag)}
+                className={cn(
+                  "px-2.5 py-1 text-[11px] rounded-full border transition-colors",
+                  isActive
+                    ? "bg-primary/15 text-primary border-primary/40"
+                    : "bg-secondary/60 text-muted-foreground border-border/60 hover:bg-secondary"
+                )}
+              >
+                {tag}
+              </button>
+            );
+          })}
+          {selectedTags.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setSelectedTags([])}
+              className="px-2.5 py-1 text-[11px] rounded-full border border-border/60 text-muted-foreground hover:bg-secondary/60 transition-colors"
+            >
+              حذف فیلتر
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3">
+      {filteredAndSortedServices.map((agent) => {
         const status = agent.access_status;
         const isOwned = status === 'OWNED' || status === 'FREE';
         const isLocked = !isOwned;
@@ -143,6 +207,7 @@ export function AgentGrid() {
           </button>
         );
       })}
+      </div>
     </div>
   );
 }

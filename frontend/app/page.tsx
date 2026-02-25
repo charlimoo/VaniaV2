@@ -36,28 +36,31 @@ export default function LandingPage() {
           
           {/* Logo */}
           <div className="flex items-center gap-3 mb-4 animate-in fade-in slide-in-from-top-4 duration-1000">
-            <div className="h-10 w-10 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center backdrop-blur-md">
-                {APP_CONFIG.IMAGES.LOGO_ICON ? (
-                  <img src={APP_CONFIG.IMAGES.LOGO_ICON} alt="Logo" className="h-6 w-6 object-contain" />
-                ) : (
-                  <Bot className="h-6 w-6 text-zinc-300" />
-                )}
-            </div>
-            <span className="font-bold text-lg tracking-tight text-zinc-200">
-              {APP_CONFIG.BRANDING.COMPANY_NAME}
-            </span>
+
+
           </div>
 
           {/* Hero Text */}
           <div className="space-y-4">
             <div className="text-4xl lg:text-6xl font-black text-white leading-tight tracking-tighter">
+
+            <span className="flex items-center gap-6 mb-4 animate-in fade-in slide-in-from-top-4 duration-1000">
+              <div className="h-16 w-16 mb-5 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center backdrop-blur-md">
+                  {APP_CONFIG.IMAGES.LOGO_ICON ? (
+                    <img src={APP_CONFIG.IMAGES.LOGO_ICON} alt="Logo" className="h-12 w-12 object-contain" />
+                  ) : (
+                    <Bot className="h-6 w-6 text-zinc-300" />
+                  )}
+              </div>
                 <BlurText
-                  text="وانـــــیا"
+                  text={APP_CONFIG.BRANDING.COMPANY_NAME}
                   delay={150}
                   animateBy="words"
                   direction="top"
                   className="block text-zinc-500 mb-2"
                 />
+            </span>
+
                 <BlurText
                   text="همراه هوشمند شما"
                   delay={300}
@@ -66,17 +69,9 @@ export default function LandingPage() {
                   className="block text-white"
                 />
             </div>
-            
-            <p className="text-zinc-400 text-sm lg:text-base max-w-md leading-relaxed animate-in fade-in slide-in-from-bottom-4 duration-1000 delay-500">
-برای روان شناسان و روان پزشکان و مراجعین آنها
-            </p>
+
           </div>
 
-          {/* Trust Badge / Footer Note */}
-          <div className="hidden lg:flex items-center gap-2 text-xs text-zinc-600 animate-in fade-in duration-1000 delay-700">
-            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span>ثبت نام رایگان</span>
-          </div>
         </div>
 
         {/* LEFT COLUMN (RTL END): Auth Container */}

@@ -1,29 +1,16 @@
 "use client";
 
-import { Activity, Target, CalendarDays, ArrowLeft, CheckCircle2 } from "lucide-react";
+import { Target } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
 
 interface Props {
   greeting: string;
-  currentPhase: string;
   activeGoals: string[];
   formsTestsAnalysis: string;
-  onTabChange: (tab: string) => void;
 }
 
-// Mapping backend Enums to user-friendly Persian labels
-const PHASE_LABELS: Record<string, string> = {
-  "PHASE_1_ANALYSIS": "فاز ۱: تحلیل و ارزیابی جامع",
-  "PHASE_2_APPROACHES": "فاز ۲: طراحی مسیر درمان",
-  "PHASE_3_SELECTION": "فاز ۳: انتخاب استراتژی",
-  "PHASE_4_PROTOCOL": "فاز ۴: برنامه‌ریزی جلسات",
-  "PHASE_5_EXECUTION": "فاز ۵: اجرا و تمرین (فعال)",
-  "PHASE_6_APPENDIX": "فاز ۶: تثبیت و پیوست اندیشه"
-};
-
-export function PatientHomeTab({ greeting, currentPhase, activeGoals, formsTestsAnalysis, onTabChange }: Props) {
+export function PatientHomeTab({ greeting, activeGoals, formsTestsAnalysis }: Props) {
   
   return (
     <div className="space-y-6 pb-10 animate-in fade-in slide-in-from-right-2 duration-300 font-sans">
@@ -37,13 +24,6 @@ export function PatientHomeTab({ greeting, currentPhase, activeGoals, formsTests
           <p className="text-sm text-muted-foreground max-w-xs leading-relaxed">
             به پنل همراه خوش آمدید. من اینجا هستم تا در مسیر رشد و سلامت کنار شما باشم.
           </p>
-          
-          <div className="mt-5 inline-flex items-center gap-2 bg-background/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-primary/10 shadow-sm">
-            <Activity className="w-4 h-4 text-primary animate-pulse" />
-            <span className="text-xs font-medium text-foreground">
-              {PHASE_LABELS[currentPhase] || "در حال بررسی وضعیت..."}
-            </span>
-          </div>
         </div>
         
         {/* Abstract Background Decor */}

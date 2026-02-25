@@ -32,6 +32,8 @@ export interface SubscriptionPlan {
   included_credits: string;
   included_agents: string[]; // List of agent names/slugs unlocked
   included_agent_slugs?: string[];
+  audience?: 'ALL' | 'VISITOR' | 'EXPERT';
+  eligible_expert_professions?: string[];
   is_active: boolean;
 }
 
@@ -56,8 +58,11 @@ export interface UserData {
   full_name?: string;
   email?: string;
   date_joined: string;
-  role_slug?: string;  // e.g., 'doctor' | 'patient'
-  role_label?: string; // e.g., 'پزشک' | 'بیمار'
+  role_slug?: string;  // e.g., 'expert' | 'visitor' (legacy aliases may still appear)
+  role_label?: string; // e.g., 'متخصص' | 'مراجعه‌کننده'
+  is_expert_verified?: boolean;
+  expert_profession_slug?: string | null;
+  expert_profession_label?: string | null;
   // Single Wallet Object (No more roles list or primary_wallet_info)
   wallet?: WalletInfo;
 }
@@ -101,6 +106,9 @@ export interface AgentService {
   supported_canvases: string[]; 
   ui_config: AgentUIConfig; 
   is_free: boolean;
+  audience?: 'ALL' | 'VISITOR' | 'EXPERT';
+  eligible_expert_professions?: string[];
+  requires_visitor_selector?: boolean;
   is_public: boolean;
   is_active: boolean;
   is_accessible: boolean;

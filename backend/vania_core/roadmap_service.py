@@ -3,6 +3,7 @@ from datetime import date, timedelta
 from users.services import user_context_manager
 from users.models import UserContextEntry
 from .schemas import TherapyRoadmap, TherapyPhase, RoadmapSession
+from .context_scope import migrate_legacy_to_scoped_once, build_scoped_key
 
 logger = logging.getLogger(__name__)
 
@@ -10,11 +11,19 @@ class RoadmapService:
     CONTEXT_KEY = "therapy_roadmap"
 
     @staticmethod
-    def get_or_create_roadmap(patient) -> TherapyRoadmap:
+    def get_or_create_roadmap(patient, doctor_id=None) -> TherapyRoadmap:
         """
         Retrieves the roadmap from the DB and returns it as a Pydantic model.
         """
-        entry = user_context_manager.get_context(patient, RoadmapService.CONTEXT_KEY)
+        if doctor_id:
+            entry = migrate_legacy_to_scoped_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                base_key=RoadmapService.CONTEXT_KEY,
+                default_factory=lambda: TherapyRoadmap().model_dump(),
+            )
+        else:
+            entry = user_context_manager.get_context(patient, RoadmapService.CONTEXT_KEY)
         
         # Default empty state
         default_roadmap = TherapyRoadmap()
@@ -23,7 +32,7 @@ class RoadmapService:
             # Create new in DB
             user_context_manager.set_singleton_context(
                 user=patient,
-                key=RoadmapService.CONTEXT_KEY,
+                key=build_scoped_key(RoadmapService.CONTEXT_KEY, doctor_id) if doctor_id else RoadmapService.CONTEXT_KEY,
                 data=default_roadmap.model_dump(),
                 source=UserContextEntry.SourceType.SYSTEM
             )
@@ -37,24 +46,25 @@ class RoadmapService:
             return default_roadmap
 
     @staticmethod
-    def save_roadmap(patient, roadmap_model: TherapyRoadmap):
+    def save_roadmap(patient, roadmap_model: TherapyRoadmap, doctor_id=None):
         """
         Saves the Pydantic model back to the DB.
         """
-        entry = user_context_manager.get_context(patient, RoadmapService.CONTEXT_KEY)
+        key = build_scoped_key(RoadmapService.CONTEXT_KEY, doctor_id) if doctor_id else RoadmapService.CONTEXT_KEY
+        entry = user_context_manager.get_context(patient, key)
         if entry:
             entry.data = roadmap_model.model_dump()
             entry.save()
 
     @staticmethod
-    def update_phase(patient, phase: TherapyPhase):
-        roadmap = RoadmapService.get_or_create_roadmap(patient)
+    def update_phase(patient, phase: TherapyPhase, doctor_id=None):
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=doctor_id)
         roadmap.current_phase = phase
-        RoadmapService.save_roadmap(patient, roadmap)
+        RoadmapService.save_roadmap(patient, roadmap, doctor_id=doctor_id)
 
     @staticmethod
-    def add_session(patient, title: str, instructions: str, scheduled_date: str = None):
-        roadmap = RoadmapService.get_or_create_roadmap(patient)
+    def add_session(patient, title: str, instructions: str, scheduled_date: str = None, doctor_id=None):
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=doctor_id)
         
         next_num = len(roadmap.sessions) + 1
 
@@ -84,13 +94,13 @@ class RoadmapService:
         )
         roadmap.sessions.append(new_session)
         
-        RoadmapService.save_roadmap(patient, roadmap)
+        RoadmapService.save_roadmap(patient, roadmap, doctor_id=doctor_id)
         
         return new_session # [FIX] Return the object!
 
     @staticmethod
-    def set_active_session(patient, session_number: int):
-        roadmap = RoadmapService.get_or_create_roadmap(patient)
+    def set_active_session(patient, session_number: int, doctor_id=None):
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=doctor_id)
         target_found = False
 
         for sess in roadmap.sessions:
@@ -106,11 +116,11 @@ class RoadmapService:
 
         roadmap.active_session_number = session_number
         roadmap.current_phase = TherapyPhase.PHASE_5_EXECUTION
-        RoadmapService.save_roadmap(patient, roadmap)
+        RoadmapService.save_roadmap(patient, roadmap, doctor_id=doctor_id)
 
     @staticmethod
-    def complete_session(patient, session_number: int, doc_id: str):
-        roadmap = RoadmapService.get_or_create_roadmap(patient)
+    def complete_session(patient, session_number: int, doc_id: str, doctor_id=None):
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=doctor_id)
         
         for sess in roadmap.sessions:
             if sess.session_number == session_number:
@@ -121,4 +131,4 @@ class RoadmapService:
         if roadmap.active_session_number == session_number:
             roadmap.active_session_number = None
             
-        RoadmapService.save_roadmap(patient, roadmap)
+        RoadmapService.save_roadmap(patient, roadmap, doctor_id=doctor_id)

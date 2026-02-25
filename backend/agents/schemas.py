@@ -14,4 +14,5 @@ class SessionUpdate(BaseModel):
     """
     Schema for updating session metadata (renaming).
     """
-    session_name: str = Field(..., description="New display name for the session")
+    session_name: Optional[str] = Field(None, description="New display name for the session")
+    session_state: Optional[Dict[str, Any]] = Field(default=None, description="Partial session state patch")

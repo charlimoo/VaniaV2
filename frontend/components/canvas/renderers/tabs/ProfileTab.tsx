@@ -76,7 +76,7 @@ export function ProfileTab({
       }),
       {
         loading: "در حال ذخیره تغییرات...",
-        success: "پرونده بیمار با موفقیت به روزرسانی شد.",
+        success: "پرونده مراجع با موفقیت به روزرسانی شد.",
         error: "خطا در ذخیره سازی.",
         finally: () => setIsSaving(false),
       }
@@ -126,7 +126,7 @@ export function ProfileTab({
       const prompt = [
         "[SYSTEM: GENERATE_FORMS_TESTS_ANALYSIS]",
         `Patient: ${patientProfile.name} (${patientProfile.id})`,
-        "از تمام اطلاعات بیمار، فرم های تکمیل شده، و خلاصه نتایج تست ها استفاده کن.",
+        "از تمام اطلاعات مراجع، فرم های تکمیل شده، و خلاصه نتایج تست ها استفاده کن.",
         "فایل PDF را مستقیما تحلیل نکن و فقط بر اساس متن/خلاصه های موجود تحلیل تولید کن.",
         "لطفا با توجه به فرم های تکمیل شده و خلاصه نتایج تست ها، یک تحلیل بالینی یکپارچه تولید کن.",
         "خروجی باید فارسی و حرفه ای باشد و شامل: الگوهای اصلی، فرضیه های بالینی محتاطانه، ریسک ها/حمایت ها، و پیشنهاد مسیر درمانی کوتاه باشد.",
@@ -159,7 +159,7 @@ export function ProfileTab({
       <section>
         <div className="grid gap-2">
           <Label htmlFor="clinical-summary" className="text-xs font-bold text-muted-foreground flex items-center gap-2">
-            <FileText className="w-4 h-4" /> خلاصه بالینی و مشاهدات
+            <FileText className="w-4 h-4" /> علت مراجع و مشاهدات
           </Label>
 
           <Textarea

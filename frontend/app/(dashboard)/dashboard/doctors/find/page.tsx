@@ -40,8 +40,9 @@ import {
   CommandList 
 } from "@/components/ui/command";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
+import { API_BASE_URL, getAuthHeaders, getExpertProfessions } from "@/lib/api";
 import { fixAvatarUrl } from "@/lib/utils";
 
 interface Location {
@@ -58,7 +59,14 @@ interface Doctor {
   clinic_address: string;
   avatar: string | null;
   meeting_price: string;
-  accepting_new_patients: boolean; 
+  accepting_new_patients: boolean;
+  expert_profession_slug?: string | null;
+  expert_profession_label?: string | null;
+}
+
+interface ProfessionOption {
+  slug: string;
+  name: string;
 }
 
 const ONES = ["", "یک", "دو", "سه", "چهار", "پنج", "شش", "هفت", "هشت", "نه"];
@@ -135,6 +143,8 @@ export default function FindDoctorPage() {
   const [search, setSearch] = useState("");
   const [locations, setLocations] = useState<Location[]>([]);
   const [selectedLocationIds, setSelectedLocationIds] = useState<number[]>([]);
+  const [selectedProfession, setSelectedProfession] = useState<string>("ALL");
+  const [professionOptions, setProfessionOptions] = useState<ProfessionOption[]>([]);
   
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
   const [isRequesting, setIsRequesting] = useState(false);
@@ -162,6 +172,12 @@ export default function FindDoctorPage() {
         });
   }, []);
 
+  useEffect(() => {
+    getExpertProfessions()
+      .then((items) => setProfessionOptions(items || []))
+      .catch(() => setProfessionOptions([]));
+  }, []);
+
   // Fetch Doctors
   const fetchDoctors = async () => {
     setLoading(true);
@@ -172,8 +188,11 @@ export default function FindDoctorPage() {
       selectedLocationIds.forEach(id => {
           params.append("locations", String(id));
       });
+      if (selectedProfession && selectedProfession !== "ALL") {
+        params.append("profession", selectedProfession);
+      }
 
-      const res = await fetch(`${API_BASE_URL}/api/vania/doctors/?${params.toString()}`, {
+      const res = await fetch(`${API_BASE_URL}/api/vania/experts/?${params.toString()}`, {
         headers: getAuthHeaders()
       });
       if (!res.ok) throw new Error("Failed to fetch doctors list.");
@@ -192,7 +211,7 @@ export default function FindDoctorPage() {
   useEffect(() => {
     const timer = setTimeout(fetchDoctors, 300);
     return () => clearTimeout(timer);
-  }, [search, selectedLocationIds]);
+  }, [search, selectedLocationIds, selectedProfession]);
 
   const toggleLocation = (id: number) => {
     setSelectedLocationIds(prev => 
@@ -209,7 +228,7 @@ export default function FindDoctorPage() {
 
     setIsRequesting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/vania/doctors/${selectedDoctor.id}/request/`, {
+      const res = await fetch(`${API_BASE_URL}/api/vania/experts/${selectedDoctor.id}/request/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify(formData)
@@ -238,7 +257,7 @@ export default function FindDoctorPage() {
       <div className="flex flex-col gap-4">
         <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" asChild className="px-0 hover:bg-transparent">
-                <Link href="/dashboard/doctors" className="flex items-center gap-1 text-muted-foreground hover:text-primary">
+                <Link href="/dashboard/experts" className="flex items-center gap-1 text-muted-foreground hover:text-primary">
                     <ArrowRight className="h-4 w-4" /> بازگشت
                 </Link>
             </Button>
@@ -265,6 +284,20 @@ export default function FindDoctorPage() {
               onChange={(e) => setSearch(e.target.value)}
             />
         </div>
+
+        <Select value={selectedProfession} onValueChange={setSelectedProfession}>
+          <SelectTrigger className="w-full md:w-[220px]">
+            <SelectValue placeholder="حوزه تخصصی" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">همه حوزه‌ها</SelectItem>
+            {professionOptions.map((option) => (
+              <SelectItem key={option.slug} value={option.slug}>
+                {option.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
         <Popover>
             <PopoverTrigger asChild>
@@ -366,6 +399,11 @@ export default function FindDoctorPage() {
                   <CardTitle className="text-base truncate">{doc.full_name || "دکتر ناشناس"}</CardTitle>
                   <div className="flex flex-col gap-1 items-start">
                     <Badge variant="secondary" className="font-normal text-xs">{doc.specialty}</Badge>
+                    {doc.expert_profession_label && (
+                      <Badge variant="outline" className="font-normal text-xs">
+                        {doc.expert_profession_label}
+                      </Badge>
+                    )}
                     {doc.location_name && (
                          <span className="text-[10px] text-muted-foreground flex items-center gap-1">
                              <MapPin className="h-3 w-3" /> {doc.location_name}
@@ -416,7 +454,7 @@ export default function FindDoctorPage() {
                             <CalendarPlus className="h-4 w-4" /> درخواست نوبت
                         </>
                     ) : (
-                        "عدم پذیرش بیمار جدید"
+                        "عدم پذیرش مراجع جدید"
                     )}
                 </Button>
               </CardFooter>
@@ -449,7 +487,7 @@ export default function FindDoctorPage() {
                     <Label htmlFor="history" className="text-right">سابقه مختصر (اختیاری)</Label>
                     <Input 
                         id="history" 
-                        placeholder="سابقه بیماری یا مصرف دارو..."
+                        placeholder="سابقه گذشته..."
                         value={formData.history_brief}
                         onChange={(e) => setFormData({...formData, history_brief: e.target.value})}
                     />

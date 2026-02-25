@@ -56,9 +56,11 @@ export default function ChatPage() {
   const agentId = params.agentId as string;
   const threadId = params.threadId as string;
   
-  // [FIX] Extract patientId from URL query
-  const patientIdParam = searchParams.get('patientId');
+  // Resolve canonical + legacy query params.
+  const patientIdParam = searchParams.get('visitorId') || searchParams.get('patientId');
   const patientId = patientIdParam ? parseInt(patientIdParam) : null;
+  const doctorIdParam = searchParams.get('expertId') || searchParams.get('doctorId');
+  const doctorId = doctorIdParam ? parseInt(doctorIdParam) : null;
 
   const { setActivePatient } = useVaniaStore();
 
@@ -69,6 +71,7 @@ export default function ChatPage() {
   const { isChatCollapsed, isCanvasCollapsed, toggleChat, toggleCanvas } = useWorkspaceStore();
   
   const clearCanvas = useCanvasStore((s) => s.clear);
+  const canvasInstances = useCanvasStore((s) => s.instances);
   const resetTradeFilters = useTradeStore((s) => s.resetFilters);
 
   // --- LOCAL STATE ---
@@ -90,11 +93,14 @@ export default function ChatPage() {
 
   const isDraft = threadId.startsWith("local-") && !isCreatedOnBackend;
 
+  const getDoctorLocalKey = (pid: number) => `vania:last_selected_doctor_by_patient:${pid}`;
+  const getExpertLocalKey = (pid: number) => `vania:last_selected_expert_by_visitor:${pid}`;
+
   // [FIX] 3. Restore Context from History
   // If we open a saved thread (not local) AND there is no patientId in the URL,
   // we check the backend to see if this thread belongs to a patient.
   useEffect(() => {
-    if (threadId.startsWith("local-") || patientId) return;
+    if (threadId.startsWith("local-") || (patientId && doctorId)) return;
 
     const restoreContext = async () => {
         try {
@@ -108,30 +114,15 @@ export default function ChatPage() {
             if (res.ok) {
                 const data = await res.json();
                 
-                // Inspect session_state (saved by threadManager.createThreadOnBackend)
-                // OR check the raw chat history for context markers if needed.
-                // Assuming backend stores it in session_data or session_state map.
-                // Note: The /sessions/{id} endpoint returns { chat_history, session_name }
-                // We might need to inspect the 'session_data' if your backend endpoint exposes it.
-                // If it doesn't, we can infer it from the first few messages or add it to the endpoint.
-                
-                // *Assumption*: Backend 'get_session_history' serializer (routes.py) 
-                // currently returns { chat_history, session_name }.
-                // To fix this robustly, ensure backend returns `session_data` or `patient_id`.
-                //
-                // For now, let's assume we can fetch the full object via a direct call if needed, 
-                // OR we rely on the `useCanvasSync` hydration which loads the canvas.
-                
-                // BETTER APPROACH:
-                // Actually, the `useCanvasSync` hook calls `/agent/canvas/state/...`. 
-                // If that returns patient data, we know which patient it is.
-                // But `useCanvasSync` is reactive. 
-                // Let's force a metadata check here using the raw storage API if available, 
-                // or just rely on the fact that if we load a thread, we should try to set the URL.
-                
-                // Let's check `session_data` which contains `patient_id`
-                // *Requires backend update to return session_data in GET /sessions/{id}*
-                // If backend update isn't possible right now, we can check the canvas state:
+                const sessionState = data.session_state || {};
+                let resolvedPatientId = patientId || sessionState.visitor_id || sessionState.patient_id || null;
+                let resolvedDoctorId = doctorId || sessionState.selected_expert_id || sessionState.selected_doctor_id || null;
+                if (!resolvedDoctorId && resolvedPatientId) {
+                  const localExpert = localStorage.getItem(getExpertLocalKey(Number(resolvedPatientId)));
+                  const localDoctor = localStorage.getItem(getDoctorLocalKey(Number(resolvedPatientId)));
+                  if (localExpert) resolvedDoctorId = Number(localExpert);
+                  else if (localDoctor) resolvedDoctorId = Number(localDoctor);
+                }
                 
                 const canvasRes = await fetch(`${API_BASE_URL}/agent/canvas/state/${threadId}`, {
                     headers: { "Authorization": `Bearer ${token}` }
@@ -141,13 +132,16 @@ export default function ChatPage() {
                     const canvasData = await canvasRes.json();
                     const pmCanvas = canvasData.canvases?.find((c: any) => c.component_key === "VANIA_PATIENT_MANAGER");
                     
-                    if (pmCanvas && pmCanvas.current_state?.patient_profile?.id) {
-                        const pid = pmCanvas.current_state.patient_profile.id;
+                    if (!resolvedPatientId && pmCanvas && pmCanvas.current_state?.patient_profile?.id) {
+                        resolvedPatientId = pmCanvas.current_state.patient_profile.id;
                         const pname = pmCanvas.current_state.patient_profile.name;
-                        
-                        console.log(`[Restore] Found Patient ${pid} in canvas state. Restoring URL.`);
-                        setActivePatient(pid, pname);
-                        router.replace(`/chat/${agentId}/${threadId}?patientId=${pid}`);
+                        setActivePatient(resolvedPatientId, pname);
+                    }
+                    const query = new URLSearchParams();
+                    if (resolvedPatientId) query.set("visitorId", String(resolvedPatientId));
+                    if (resolvedDoctorId) query.set("expertId", String(resolvedDoctorId));
+                    if (query.toString()) {
+                      router.replace(`/chat/${agentId}/${threadId}?${query.toString()}`);
                     }
                 }
             }
@@ -157,7 +151,21 @@ export default function ChatPage() {
     };
 
     restoreContext();
-  }, [threadId, patientId, agentId, router, setActivePatient]);
+  }, [threadId, patientId, doctorId, agentId, router, setActivePatient]);
+
+  useEffect(() => {
+    if (!threadId.startsWith("local-")) return;
+    if (!patientId || doctorId) return;
+    const localDoctor = localStorage.getItem(getExpertLocalKey(patientId)) || localStorage.getItem(getDoctorLocalKey(patientId));
+    if (!localDoctor) return;
+    router.replace(`/chat/${agentId}/${threadId}?visitorId=${patientId}&expertId=${localDoctor}`);
+  }, [threadId, patientId, doctorId, agentId, router]);
+
+  useEffect(() => {
+    if (!patientId || !doctorId) return;
+    localStorage.setItem(getDoctorLocalKey(patientId), String(doctorId));
+    localStorage.setItem(getExpertLocalKey(patientId), String(doctorId));
+  }, [patientId, doctorId]);
 
   // 1. Reset State on Thread Change
   useEffect(() => {
@@ -265,12 +273,16 @@ export default function ChatPage() {
     if (patientId) {
         extraHeaders["X-Target-Resource-ID"] = patientId.toString();
     }
+    if (doctorId) {
+        extraHeaders["X-Target-Expert-ID"] = doctorId.toString();
+        extraHeaders["X-Target-Doctor-ID"] = doctorId.toString();
+    }
 
     return new HttpAgent({
       url: `${API_BASE_URL}/agent/agui?agent_id=${agentId}`,
       headers: { ...headers, ...extraHeaders } as Record<string, string>
     });
-  }, [agentId, agentSettings, isPreviewMode, patientId]); // Add patientId dependency
+  }, [agentId, agentSettings, isPreviewMode, patientId, doctorId]); // Add patientId dependency
 
   // 6. Subscription & Smart Title Polling
   useEffect(() => {
@@ -352,12 +364,12 @@ export default function ChatPage() {
 
     if (threadId.startsWith("local-") && token) {
         // [FIX] Pass patientId when creating the thread on backend
-        await threadManager.createThreadOnBackend(threadId, tempTitle, agentId, token, patientId);
+        await threadManager.createThreadOnBackend(threadId, tempTitle, agentId, token, patientId, doctorId);
         setIsCreatedOnBackend(true);
         setThreadTitle(tempTitle);
         refreshThreads();
     }
-  }, [threadId, agentId, refreshThreads, patientId]); // Add patientId dependency
+  }, [threadId, agentId, refreshThreads, patientId, doctorId]); // Add patientId dependency
 
   const runtime = useAgUiRuntime({
     agent,
@@ -376,8 +388,33 @@ export default function ChatPage() {
     token: typeof window !== "undefined" ? localStorage.getItem("accessToken") : null,
     isDraft,
     onRename: (title) => { setThreadTitle(title); refreshThreads(); },
-    patientId: patientId // [FIX] Pass patientId to hydration hook
+    patientId: patientId, // [FIX] Pass patientId to hydration hook
+    doctorId: doctorId
   });
+
+  useEffect(() => {
+    if (threadId.startsWith("local-")) return;
+    const headers = getAuthHeaders();
+    if (!headers.Authorization) return;
+    const session_state: Record<string, any> = {};
+    if (patientId) {
+      session_state.visitor_id = patientId;
+      session_state.patient_id = patientId;
+    }
+    if (doctorId) {
+      session_state.selected_expert_id = doctorId;
+      session_state.selected_doctor_id = doctorId;
+    }
+    if (Object.keys(session_state).length === 0) return;
+    fetch(`${API_BASE_URL}/agent/sessions/${threadId}`, {
+      method: "PATCH",
+      headers: {
+        ...headers,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ session_state }),
+    }).catch(() => {});
+  }, [threadId, patientId, doctorId]);
 
   // 9. Mobile Gestures
   const handleMobileToggle = () => setMobileView(prev => prev === 'chat' ? 'canvas' : 'chat');
@@ -400,10 +437,17 @@ export default function ChatPage() {
     show_voice_input: true 
   };
   
-  let hasCanvasCapability = uiConfig.has_canvas;
+  const hasVisibleCanvas = useMemo(
+    () => Object.values(canvasInstances).some((canvas) => canvas.is_visible),
+    [canvasInstances]
+  );
+  const hasSupportedCanvas = (service?.supported_canvases?.length || 0) > 0;
+
+  let hasCanvasCapability = uiConfig.has_canvas && hasSupportedCanvas;
   if (isPreviewMode && service?.demo_config?.canvas_mode === 'HIDDEN') {
       hasCanvasCapability = false;
   }
+  const showCanvasSection = hasCanvasCapability && hasVisibleCanvas;
 
   const realtimeUsage = (service?.current_usage || 0) + sessionUsageDelta;
 
@@ -447,7 +491,7 @@ export default function ChatPage() {
         
         <GlobalHeader variant="chat" title={threadTitle}>
           <DebugInspector service={service} />
-          {isMobile && hasCanvasCapability && (
+          {isMobile && showCanvasSection && (
             <Button
                 variant={mobileView === 'canvas' ? "secondary" : "ghost"}
                 onClick={handleMobileToggle}
@@ -461,45 +505,56 @@ export default function ChatPage() {
 
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {isMobile ? (
-            <div 
-                className="relative h-full w-full overflow-hidden"
-                onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
-            >
+            <>
+              {showCanvasSection ? (
                 <div 
-                    className={cn(
-                        "flex h-full w-[200%] min-w-0 overflow-hidden transition-transform duration-300 ease-in-out will-change-transform",
-                        mobileView === 'canvas' ? "translate-x-1/2" : "translate-x-0"
-                    )}
+                    className="relative h-full w-full overflow-hidden"
+                    onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}
                 >
-                    <div className="h-full w-1/2 min-w-0 overflow-hidden">
-                        <ChatPanel 
-                            service={service}
-                            threadId={threadId}
-                            isCollapsed={false}
-                            onCollapse={() => {}} onExpand={() => {}}
-                            allowCollapse={false}
-                            isPreviewMode={isPreviewMode}
-                            currentUsage={realtimeUsage}
-                        />
-                    </div>
-                    <div className="h-full w-1/2 min-w-0 overflow-hidden border-l">
-                        {hasCanvasCapability ? (
+                    <div 
+                        className={cn(
+                            "flex h-full w-[200%] min-w-0 overflow-hidden transition-transform duration-300 ease-in-out will-change-transform",
+                            mobileView === 'canvas' ? "translate-x-1/2" : "translate-x-0"
+                        )}
+                    >
+                        <div className="h-full w-1/2 min-w-0 overflow-hidden">
+                            <ChatPanel 
+                                service={service}
+                                threadId={threadId}
+                                isCollapsed={false}
+                                onCollapse={() => {}} onExpand={() => {}}
+                                allowCollapse={false}
+                                isPreviewMode={isPreviewMode}
+                                currentUsage={realtimeUsage}
+                            />
+                        </div>
+                        <div className="h-full w-1/2 min-w-0 overflow-hidden border-l">
                             <CanvasPanel 
                                 onCollapse={handleMobileToggle} 
                                 isPreviewMode={isPreviewMode}
                                 demoConfig={service.demo_config}
                             />
-                        ) : (
-                            <div className="flex items-center justify-center h-full text-muted-foreground">
-                                ابزار بصری در دسترس نیست
-                            </div>
-                        )}
+                        </div>
                     </div>
                 </div>
-            </div>
+              ) : (
+                <div className="h-full w-full">
+                  <ChatPanel 
+                    service={service}
+                    threadId={threadId}
+                    isCollapsed={false}
+                    onCollapse={() => {}} 
+                    onExpand={() => {}}
+                    allowCollapse={false}
+                    isPreviewMode={isPreviewMode}
+                    currentUsage={realtimeUsage}
+                  />
+                </div>
+              )}
+            </>
           ) : (
             <>
-              {hasCanvasCapability ? (
+              {showCanvasSection ? (
                 <ResizablePanelGroup direction="horizontal" className="h-full min-w-0">
                   <ResizablePanel 
                     ref={chatPanelRef}
@@ -551,19 +606,17 @@ export default function ChatPage() {
                   </ResizablePanel>
                 </ResizablePanelGroup>
               ) : (
-                <div className="h-full w-full flex justify-center bg-background">
-                   <div className="w-full border-x border-border/50 h-full shadow-sm max-w-5xl">
-                       <ChatPanel 
-                          service={service} 
-                          threadId={threadId}
-                          onCollapse={() => {}} 
-                          isCollapsed={false}
-                          onExpand={() => {}}
-                          allowCollapse={false} 
-                          isPreviewMode={isPreviewMode}
-                          currentUsage={realtimeUsage}
-                       />
-                   </div>
+                <div className="h-full w-full bg-background">
+                  <ChatPanel 
+                    service={service} 
+                    threadId={threadId}
+                    onCollapse={() => {}} 
+                    isCollapsed={false}
+                    onExpand={() => {}}
+                    allowCollapse={false} 
+                    isPreviewMode={isPreviewMode}
+                    currentUsage={realtimeUsage}
+                  />
                 </div>
               )}
             </>

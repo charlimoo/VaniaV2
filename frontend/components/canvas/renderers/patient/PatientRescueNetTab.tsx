@@ -14,10 +14,12 @@ interface Task {
   dimension: string;
   status: "PENDING" | "DONE";
   due_date?: string;
+  doctor_id?: number;
 }
 
 interface Props {
   tasks: Task[];
+  selectedDoctorId?: number | null;
   onEdit: (delta: any) => void;
 }
 
@@ -34,7 +36,7 @@ const DIMENSIONS: Record<string, { label: string; color: string }> = {
   "SOLITUDE": { label: "مدیریت تنهایی", color: "text-orange-400 bg-muted-50 border-muted-100" },
 };
 
-export function PatientRescueNetTab({ tasks, onEdit }: Props) {
+export function PatientRescueNetTab({ tasks, selectedDoctorId, onEdit }: Props) {
   // Track loading state for individual task IDs to prevent double-clicks
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
 
@@ -57,7 +59,10 @@ export function PatientRescueNetTab({ tasks, onEdit }: Props) {
         headers: {
           "Content-Type": "application/json",
           ...getAuthHeaders()
-        }
+        },
+        body: JSON.stringify({
+          doctor_id: selectedDoctorId || task.doctor_id || null
+        })
       });
 
       if (!res.ok) throw new Error("Failed to update task");

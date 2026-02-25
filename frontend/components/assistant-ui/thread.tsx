@@ -60,7 +60,7 @@ interface ThreadProps {
   isPreviewMode?: boolean;
   demoConfig?: DemoConfig;
   currentUsage?: number;
-  capabilities?: string[]; // [NEW] Added capabilities prop
+  requiresVisitorSelector?: boolean;
 }
 
 // ============================================================================
@@ -193,7 +193,7 @@ export const Thread: FC<ThreadProps> = ({
   isPreviewMode = false,
   demoConfig,
   currentUsage,
-  capabilities = [] // [NEW] Accept capabilities
+  requiresVisitorSelector = false
 }) => {
   return (
     <LazyMotion features={domAnimation}>
@@ -224,10 +224,10 @@ export const Thread: FC<ThreadProps> = ({
             <Composer 
               showVoiceInput={showVoiceInput} 
               isPreviewMode={isPreviewMode}
-              demoConfig={demoConfig}
-              currentUsage={currentUsage}
-              capabilities={capabilities} // [NEW] Pass capabilities
-            />
+            demoConfig={demoConfig}
+            currentUsage={currentUsage}
+            requiresVisitorSelector={requiresVisitorSelector}
+        />
           </ThreadPrimitive.Viewport>
         </ThreadPrimitive.Root>
       </MotionConfig>
@@ -323,8 +323,8 @@ const Composer: FC<{
   isPreviewMode: boolean; 
   demoConfig?: DemoConfig;
   currentUsage?: number;
-  capabilities: string[];
-}> = ({ showVoiceInput, isPreviewMode, demoConfig, currentUsage = 0, capabilities }) => {
+  requiresVisitorSelector: boolean;
+}> = ({ showVoiceInput, isPreviewMode, demoConfig, currentUsage = 0, requiresVisitorSelector }) => {
   const messages = useThread((t) => t.messages);
   const userMsgCount = React.useMemo(() => messages.filter(m => m.role === 'user').length, [messages]);
   
@@ -365,12 +365,12 @@ const Composer: FC<{
           aria-label="ورودی پیام"
         />
         
-        <ComposerAction 
-          showVoiceInput={showVoiceInput} 
-          isPreviewMode={isPreviewMode} 
-          isLocked={isLocked}
-          capabilities={capabilities} // [NEW]
-        />
+      <ComposerAction 
+        showVoiceInput={showVoiceInput} 
+        isPreviewMode={isPreviewMode} 
+        isLocked={isLocked}
+        requiresVisitorSelector={requiresVisitorSelector}
+      />
       </ComposerPrimitive.Root>
     </div>
   );
@@ -383,11 +383,8 @@ const ComposerAction: FC<{
   showVoiceInput: boolean; 
   isPreviewMode: boolean; 
   isLocked: boolean; 
-  capabilities: string[];
-}> = ({ showVoiceInput, isPreviewMode, isLocked, capabilities }) => {
-  
-  // [NEW] Check for Doctor capability
-  const showPatientSelector = capabilities.includes("vania_doctor");
+  requiresVisitorSelector: boolean;
+}> = ({ showVoiceInput, isPreviewMode, isLocked, requiresVisitorSelector }) => {
 
   return (
     <div className="aui-composer-action-wrapper relative mx-1 mt-2 mb-2 flex items-center justify-between gap-2">
@@ -398,7 +395,7 @@ const ComposerAction: FC<{
         </div>
 
         {/* [NEW] Conditionally Render Patient Selector */}
-        {showPatientSelector && (
+        {requiresVisitorSelector && (
            <div className={cn("transition-opacity", isPreviewMode && "opacity-30 pointer-events-none")}>
               <PatientSelector />
            </div>

@@ -42,6 +42,11 @@ class AvailableTool(models.Model):
 
 # --- Agent Service ---
 class AgentService(models.Model):
+    class Audience(models.TextChoices):
+        ALL = 'ALL', 'All'
+        VISITOR = 'VISITOR', 'Visitor'
+        EXPERT = 'EXPERT', 'Expert'
+
     class StaticToolChoices(models.TextChoices):
         DUCKDUCKGO = 'duckduckgo', 'DuckDuckGo Search'
         YFINANCE = 'yfinance', 'Yahoo Finance'
@@ -76,6 +81,20 @@ class AgentService(models.Model):
     is_free = models.BooleanField(
         default=False, 
         help_text="If True, all users can access this agent regardless of their plan."
+    )
+    audience = models.CharField(
+        max_length=20,
+        choices=Audience.choices,
+        default=Audience.ALL,
+    )
+    eligible_expert_professions = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of eligible expert profession slugs for EXPERT audience agents.",
+    )
+    requires_visitor_selector = models.BooleanField(
+        default=False,
+        help_text="If True, frontend should require visitor/case selector before use.",
     )
     
     plans = models.ManyToManyField(

@@ -36,6 +36,8 @@ import {
 
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { isExpertRoleSlug } from "@/lib/roles";
+import { resolveExpertCaseAgentSlug } from "@/lib/expert-agent";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { MessageBubble, MessageData } from "@/components/messages/MessageBubble";
 import { AudioPlayer } from "@/components/messages/AudioPlayer";
@@ -81,7 +83,7 @@ function MessagesContent() {
   
   // [FIX] Get current user to check role
   const { user: currentUser } = useUser();
-  const isDoctor = currentUser?.role_slug === 'doctor';
+  const isDoctor = isExpertRoleSlug(currentUser?.role_slug);
 
   // --- STATE ---
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -306,13 +308,11 @@ function MessagesContent() {
     window.location.href = `tel:${activeUser.phone_number}`;
   };
 
-  const handleViewProfile = () => {
+  const handleViewProfile = async () => {
     if (!activeUser) return;
-    // Doctor Agent Slug
-    const doctorAgentSlug = "vania-doctor-assistant";
+    const expertAgentSlug = await resolveExpertCaseAgentSlug();
     const newThreadId = `local-${crypto.randomUUID()}`;
-    // Navigate to Chat with Patient Context
-    router.push(`/chat/${doctorAgentSlug}/${newThreadId}?patientId=${activeUser.user_id}`);
+    router.push(`/chat/${expertAgentSlug}/${newThreadId}?visitorId=${activeUser.user_id}`);
   };
 
   return (

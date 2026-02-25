@@ -1,19 +1,25 @@
 import logging
 from django.db import transaction, IntegrityError
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import CustomUser, UserProfile, OTPRequest, UserRole
+from .models import CustomUser, UserProfile, OTPRequest, UserRole, ExpertProfession
 from billing.models import UserWallet
 from .serializers import (
     PhoneSerializer, VerifyOTPSerializer, UserSerializer, PasswordLoginSerializer,
     UserProfileSerializer, ChangePasswordSerializer, UserWalletSerializer
 )
 from .otp_service import otp_service
-from .utils import verify_doctor_license
+from .roles import (
+    normalize_role_slug,
+    CANONICAL_EXPERT_SLUG,
+    CANONICAL_VISITOR_SLUG,
+)
+from .expert_validation import validate_profession_credential
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +39,60 @@ class VerifyDoctorView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        full_name = request.data.get('full_name')
-        license_code = request.data.get('license_code')
-        
-        is_valid, msg, found_name = verify_doctor_license(full_name, license_code)
-        
+        full_name = (request.data.get('full_name') or "").strip()
+        credential_code = (
+            request.data.get('credential_code')
+            or request.data.get('license_code')
+            or ""
+        )
+        profession_slug = (request.data.get('profession_slug') or "psychologist").strip()
+
+        profession = ExpertProfession.objects.filter(slug=profession_slug, is_active=True).first()
+        if not profession:
+            return Response(
+                {"verified": False, "message": "حوزه تخصصی نامعتبر است", "found_name": None},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        result = validate_profession_credential(
+            profession=profession,
+            full_name=full_name,
+            credential_code=str(credential_code).strip(),
+        )
+
         return Response({
-            "verified": is_valid,
-            "message": msg,
-            "found_name": found_name
+            "verified": result.verified,
+            "message": result.message,
+            "found_name": result.normalized_name,
+            "profession_slug": profession.slug,
+            "profession_label": profession.name,
+            "meta": result.meta,
         })
+
+
+class ExpertProfessionListView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        professions = ExpertProfession.objects.filter(is_active=True).order_by("name")
+        def get_ui_text(p, key, fallback=""):
+            cfg = p.validation_config or {}
+            value = cfg.get(key)
+            return value if isinstance(value, str) else fallback
+
+        return Response([
+            {
+                "slug": p.slug,
+                "name": p.name,
+                "description": p.description,
+                "validation_kind": p.validation_kind,
+                "credential_label": get_ui_text(p, "credential_label", "کد اعتبارسنجی تخصص"),
+                "credential_placeholder": get_ui_text(p, "credential_placeholder", "کد اعتبارسنجی تخصص را وارد کنید"),
+                "credential_help": get_ui_text(p, "credential_help", ""),
+                "sample_code": get_ui_text(p, "sample_code", ""),
+            }
+            for p in professions
+        ])
 
 # --- AUTH FLOW STEP 3: REQUEST OTP ---
 class RequestOTPView(APIView):
@@ -101,23 +151,9 @@ class VerifyOTPView(APIView):
                         email=signup_data.get('email', '') or None
                     )
                     
-                    role_slug = signup_data.get('role', 'patient')
-                    license_code = signup_data.get('licenseCode', '')
-                    is_verified = signup_data.get('isVerified', False)
-
-                    if license_code:
-                        user.medical_license = license_code
-                    
-                    final_role_slug = 'patient'
-                    
-                    # Logic: Only grant Doctor role if verified
-                    if role_slug == 'doctor' and is_verified:
-                        final_role_slug = 'doctor'
-                        user.is_verified_doctor = True
-                    
                     role_obj, _ = UserRole.objects.get_or_create(
-                        slug=final_role_slug, 
-                        defaults={'name': 'پزشک' if final_role_slug == 'doctor' else 'بیمار'}
+                        slug=CANONICAL_VISITOR_SLUG,
+                        defaults={'name': 'مراجعه‌کننده'}
                     )
                     user.role = role_obj
                     user.save()
@@ -135,7 +171,7 @@ class VerifyOTPView(APIView):
             'refresh': str(refresh),
             'access': str(refresh.access_token),
             'user_created': user_created,
-            'role': user.role.slug if user.role else 'patient'
+            'role': normalize_role_slug(user.role.slug) if user.role else CANONICAL_VISITOR_SLUG
         })
 
 class PasswordLoginView(APIView):
@@ -157,35 +193,76 @@ class UserProfileView(APIView):
         return Response(serializer.data)
     
     def patch(self, request):
-        # 1. Standard Update (e.g. License Code)
         serializer = UserSerializer(request.user, data=request.data, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=400)
-        
-        serializer.save() # Updates medical_license in DB
-        
-        # 2. Upgrade Logic
-        if request.data.get('role_upgrade_request') == 'doctor' and request.user.medical_license:
-            # Check credentials again to be safe
-            valid, _, _ = verify_doctor_license(request.user.full_name, request.user.medical_license)
-            
-            if valid:
-                doc_role, _ = UserRole.objects.get_or_create(slug='doctor', defaults={'name': 'پزشک'})
-                
-                # Update attributes
-                request.user.role = doc_role
-                request.user.is_verified_doctor = True
-                
-                # Explicitly save
-                request.user.save()
-                
-                # Reload user to ensure serializer gets fresh data
-                request.user.refresh_from_db()
-                
-                # Re-serialize with updated flags
-                serializer = UserSerializer(request.user)
-
+        serializer.save()
         return Response(serializer.data)
+
+
+class UpgradeExpertView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        full_name = (request.data.get("full_name") or request.user.full_name or "").strip()
+        profession_slug = (request.data.get("profession_slug") or "").strip()
+        credential_code = (
+            request.data.get("credential_code")
+            or request.data.get("license_code")
+            or ""
+        )
+
+        if not profession_slug:
+            return Response({"detail": "profession_slug is required."}, status=400)
+
+        profession = ExpertProfession.objects.filter(slug=profession_slug, is_active=True).first()
+        if not profession:
+            return Response({"detail": "Invalid profession_slug."}, status=400)
+
+        result = validate_profession_credential(
+            profession=profession,
+            full_name=full_name,
+            credential_code=str(credential_code).strip(),
+        )
+        if not result.verified:
+            return Response(
+                {
+                    "verified": False,
+                    "message": result.message,
+                    "found_name": result.normalized_name,
+                },
+                status=400,
+            )
+
+        with transaction.atomic():
+            expert_role, _ = UserRole.objects.get_or_create(
+                slug=CANONICAL_EXPERT_SLUG,
+                defaults={"name": "متخصص"},
+            )
+            user = request.user
+            user.role = expert_role
+            user.expert_profession = profession
+            user.is_expert_verified = True
+            user.expert_verified_at = timezone.now()
+            user.expert_verification_meta = result.meta or {}
+            # keep legacy fields in sync for temporary compatibility
+            user.is_verified_doctor = True
+            user.medical_license = str(credential_code).strip() or user.medical_license
+            if result.normalized_name and not user.full_name:
+                user.full_name = result.normalized_name
+            user.save()
+
+        user.refresh_from_db()
+        return Response(
+            {
+                "verified": True,
+                "message": result.message,
+                "profession_slug": profession.slug,
+                "profession_label": profession.name,
+                "user": UserSerializer(user).data,
+            },
+            status=200,
+        )
 
 class UserProfileDetailView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]

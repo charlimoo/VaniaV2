@@ -14,6 +14,9 @@ role_context = ContextVar("role_id", default=None)
 # In a Trading App, it might hold a Portfolio ID.
 resource_context = ContextVar("resource_id", default=None)
 
+# Tracks the selected doctor context for scoped patient-facing data.
+selected_doctor_context = ContextVar("selected_doctor_id", default=None)
+
 # [LEGACY ALIAS] Alias for Vania compatibility.
 # Existing Vania tools that import 'target_patient_context' will actually read 'resource_context'.
 target_patient_context = resource_context

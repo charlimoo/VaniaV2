@@ -21,6 +21,7 @@ from .serializers import (
 )
 from .services import FulfillmentService
 from .gateways.zarinpal import ZarinPalGateway
+from users.eligibility import is_user_eligible_for_plan
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,19 @@ class ProductListView(generics.ListAPIView):
     """
     permission_classes = [IsAuthenticated]
     serializer_class = BillingProductSerializer
-    queryset = BillingProduct.objects.filter(is_active=True).order_by('price')
+    queryset = BillingProduct.objects.none()
+
+    def get_queryset(self):
+        products = BillingProduct.objects.filter(is_active=True).select_related("linked_plan").order_by("price")
+        user = self.request.user
+        visible_ids = []
+        for product in products:
+            if not product.linked_plan:
+                visible_ids.append(product.id)
+                continue
+            if is_user_eligible_for_plan(user, product.linked_plan):
+                visible_ids.append(product.id)
+        return BillingProduct.objects.filter(id__in=visible_ids).select_related("linked_plan").order_by("price")
 
 class TransactionHistoryView(generics.ListAPIView):
     """
@@ -84,6 +97,9 @@ class PurchaseDirectView(APIView):
             product = BillingProduct.objects.get(pk=item_id, is_active=True)
         except BillingProduct.DoesNotExist:
             return Response({"error": "Product not found or inactive"}, status=status.HTTP_404_NOT_FOUND)
+
+        if product.linked_plan and not is_user_eligible_for_plan(request.user, product.linked_plan):
+            return Response({"error": "You are not eligible to purchase this plan."}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             with transaction.atomic():

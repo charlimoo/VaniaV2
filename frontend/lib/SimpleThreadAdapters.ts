@@ -302,16 +302,18 @@ export const threadManager = {
       initialTitle: string | undefined, 
       agentId: string, 
       token: string, 
-      patientId?: number | null // [NEW] Added optional patientId
+      patientId?: number | null, // [NEW] Added optional patientId
+      doctorId?: number | null
   ) => {
     try {
       const payload = {
           session_id: threadId, 
           session_name: initialTitle || "New Conversation",
-          session_state: { 
-              agent_id: agentId,
-              // [FIX] Save patient_id to session metadata for persistence
-              ...(patientId ? { patient_id: patientId } : {})
+              session_state: { 
+                  agent_id: agentId,
+                  // [FIX] Save patient_id to session metadata for persistence
+              ...(patientId ? { visitor_id: patientId, patient_id: patientId } : {}),
+              ...(doctorId ? { selected_expert_id: doctorId, selected_doctor_id: doctorId } : {})
           }
       };
 
@@ -323,6 +325,10 @@ export const threadManager = {
       // [FIX] Send Header as well
       if (patientId) {
           headers["X-Target-Resource-ID"] = patientId.toString();
+      }
+      if (doctorId) {
+          headers["X-Target-Expert-ID"] = doctorId.toString();
+          headers["X-Target-Doctor-ID"] = doctorId.toString();
       }
 
       const res = await fetch(`${API_BASE_URL}/agent/sessions`, {

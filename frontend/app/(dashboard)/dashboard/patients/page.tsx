@@ -49,7 +49,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
-import { API_BASE_URL, getAuthHeaders, lookupPatientForDoctor } from "@/lib/api";
+import { API_BASE_URL, getAuthHeaders, lookupVisitorForExpert } from "@/lib/api";
+import { resolveExpertCaseAgentSlug } from "@/lib/expert-agent";
 import { useVaniaStore } from "@/lib/vania/store";
 import { cn } from "@/lib/utils";
 
@@ -77,7 +78,6 @@ interface ExistingPatientPreview {
   full_name: string;
   phone_number: string;
   existing_connection_status: string | null;
-  activation_locked: boolean;
 }
 
 function PatientsContent() {
@@ -118,11 +118,11 @@ function PatientsContent() {
     if (!isRefresh) setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/vania/my-patients/`, {
+      const res = await fetch(`${API_BASE_URL}/api/vania/my-visitors/`, {
         headers: getAuthHeaders()
       });
       if (!res.ok) {
-        throw new Error("بارگذاری لیست بیماران ناموفق بود.");
+        throw new Error("بارگذاری لیست مراجعان ناموفق بود.");
       }
       const data: PatientRow[] = await res.json();
       setPatients(data);
@@ -139,7 +139,7 @@ function PatientsContent() {
 
     } catch (error: any) {
       console.error("Failed to load patients", error);
-      toast.error("خطا در بارگذاری لیست بیماران");
+      toast.error("خطا در بارگذاری لیست مراجعان");
       setError(error.message);
     } finally {
       if (!isRefresh) setLoading(false);
@@ -179,14 +179,13 @@ function PatientsContent() {
 
     setIsChecking(true);
     try {
-      const lookup = await lookupPatientForDoctor(invitePhone);
+      const lookup = await lookupVisitorForExpert(invitePhone);
       if (lookup.exists && lookup.patient) {
         setExistingPatient({
           id: lookup.patient.id,
           full_name: lookup.patient.full_name,
           phone_number: lookup.patient.phone_number,
           existing_connection_status: lookup.existing_connection_status ?? null,
-          activation_locked: !!lookup.activation_locked,
         });
         setIsInviteOpen(false);
         setIsExistingPatientModalOpen(true);
@@ -215,7 +214,7 @@ function PatientsContent() {
     };
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/vania/patients/invite/`, {
+      const res = await fetch(`${API_BASE_URL}/api/vania/visitors/invite/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify(payload)
@@ -223,11 +222,7 @@ function PatientsContent() {
       const data = await res.json();
 
       if (res.ok) {
-        if (data.activation_locked || data.status === "ARCHIVED") {
-          toast.success("بیمار به لیست اضافه شد اما فعلا غیرفعال است.");
-        } else {
-          toast.success(data.message || "عملیات با موفقیت انجام شد.");
-        }
+        toast.success(data.message || "عملیات با موفقیت انجام شد.");
 
         setIsInviteOpen(false);
         setIsProfileModalOpen(false);
@@ -237,7 +232,7 @@ function PatientsContent() {
         setProfileData({ fullName: "", password: "", email: "" });
         fetchPatients(true);
       } else {
-        toast.error(data.error || "خطا در افزودن بیمار");
+        toast.error(data.error || "خطا در افزودن مراجع");
       }
     } catch (e) {
       toast.error("خطای شبکه.");
@@ -251,13 +246,13 @@ function PatientsContent() {
   const handleRespond = async (id: number, action: 'ACCEPT' | 'REJECT') => {
     setRequestStates(prev => ({ ...prev, [id]: action === 'ACCEPT' ? 'ACCEPTING' : 'REJECTING' }));
     try {
-        const res = await fetch(`${API_BASE_URL}/api/vania/my-patients/requests/${id}/respond/`, {
+        const res = await fetch(`${API_BASE_URL}/api/vania/my-visitors/requests/${id}/respond/`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...getAuthHeaders() },
             body: JSON.stringify({ action })
         });
         if (res.ok) {
-            toast.success(action === 'ACCEPT' ? "بیمار به لیست شما اضافه شد." : "درخواست رد شد.");
+            toast.success(action === 'ACCEPT' ? "مراجع به لیست شما اضافه شد." : "درخواست رد شد.");
             setRequestStates(prev => ({ ...prev, [id]: action === 'ACCEPT' ? 'ACCEPTED' : 'REJECTED' }));
             setTimeout(() => fetchPatients(true), 2000); // Refresh list in background
         } else {
@@ -271,18 +266,19 @@ function PatientsContent() {
     }
   };
 
-  const handleOpenClinicalChat = (patient: PatientRow) => {
+  const handleOpenClinicalChat = async (patient: PatientRow) => {
     if (!patient.patient_id) {
-      toast.info("این بیمار هنوز ثبت‌نام نکرده است و پرونده‌ای ندارد.");
+      toast.info("این مراجع هنوز ثبت‌نام نکرده است و پرونده‌ای ندارد.");
       return;
     }
     if (patient.status !== "ACTIVE") {
-      toast.info("پرونده بالینی فقط برای بیماران فعال در دسترس است.");
+      toast.info("پرونده فقط برای مراجعان فعال در دسترس است.");
       return;
     }
     setActivePatient(patient.patient_id, patient.name);
     const threadId = `local-${crypto.randomUUID()}`;
-    router.push(`/chat/vania-doctor-assistant/${threadId}?patientId=${patient.patient_id}`);
+    const expertAgentSlug = await resolveExpertCaseAgentSlug();
+    router.push(`/chat/${expertAgentSlug}/${threadId}?visitorId=${patient.patient_id}`);
   };
 
   const handleMessage = (patientId: number | null) => {
@@ -294,7 +290,7 @@ function PatientsContent() {
     if (patient.type !== "CONNECTION") return;
     setStatusUpdating((prev) => ({ ...prev, [patient.db_id]: true }));
     try {
-      const res = await fetch(`${API_BASE_URL}/api/vania/my-patients/${patient.db_id}/status/`, {
+      const res = await fetch(`${API_BASE_URL}/api/vania/my-visitors/${patient.db_id}/status/`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({ action })
@@ -302,16 +298,12 @@ function PatientsContent() {
       const data = await res.json();
 
       if (res.ok) {
-        toast.success(data.message || "وضعیت بیمار به‌روز شد.");
+        toast.success(data.message || "وضعیت مراجع به‌روز شد.");
         fetchPatients(true);
         return;
       }
 
-      if (res.status === 409) {
-        toast.error("این بیمار در حال حاضر نزد پزشک دیگری فعال است و فعلا قابل فعال‌سازی نیست.");
-      } else {
-        toast.error(data.error || data.message || "خطا در تغییر وضعیت بیمار.");
-      }
+      toast.error(data.error || data.message || "خطا در تغییر وضعیت مراجع.");
     } catch {
       toast.error("خطا در برقراری ارتباط با سرور.");
     } finally {
@@ -347,7 +339,7 @@ function PatientsContent() {
         <div className="space-y-1">
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
                <Users className="h-6 w-6 text-primary"  />
-            مدیریت مطب
+            مدیریت مراجعین
           </h1>
           <p className="text-muted-foreground">
             مشاهده پرونده‌ها، پیگیری درخواست‌های نوبت و مدیریت مراجعین.
@@ -358,14 +350,14 @@ function PatientsContent() {
         <Dialog open={isInviteOpen} onOpenChange={setIsInviteOpen}>
           <DialogTrigger asChild>
             <Button size="lg" className="gap-2 shadow-md hover:shadow-lg transition-all">
-              <Plus className="h-5 w-5" /> افزودن بیمار جدید
+              <Plus className="h-5 w-5" /> افزودن مراجع جدید
             </Button>
           </DialogTrigger>
           <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] sm:max-w-lg">
             <DialogHeader className="text-right">
-              <DialogTitle>افزودن بیمار جدید</DialogTitle>
+              <DialogTitle>افزودن مراجع جدید</DialogTitle>
               <DialogDescription>
-                شماره موبایل بیمار را وارد کنید تا وضعیت عضویت او بررسی شود.
+                شماره موبایل مراجع را وارد کنید تا وضعیت عضویت او بررسی شود.
               </DialogDescription>
             </DialogHeader>
             <div className="py-6 space-y-3">
@@ -393,7 +385,7 @@ function PatientsContent() {
         <Dialog open={isProfileModalOpen} onOpenChange={setIsProfileModalOpen}>
             <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-md">
                 <DialogHeader className="text-right">
-                    <DialogTitle>تکمیل پروفایل بیمار</DialogTitle>
+                    <DialogTitle>تکمیل پروفایل مراجع</DialogTitle>
                     <DialogDescription>
                         این کاربر جدید است. می‌توانید اطلاعات اولیه او را تکمیل کنید تا حساب کاربری برایش ایجاد شود.
                     </DialogDescription>
@@ -460,7 +452,7 @@ function PatientsContent() {
             <DialogHeader className="text-right">
               <DialogTitle>کاربر موجود در پلتفرم</DialogTitle>
               <DialogDescription>
-                این شماره قبلا در سیستم ثبت شده است. برای افزودن به لیست بیماران تایید کنید.
+                این شماره قبلا در سیستم ثبت شده است. برای افزودن به لیست مراجعان تایید کنید.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 py-2">
@@ -468,8 +460,8 @@ function PatientsContent() {
                 <p className="text-sm font-semibold">{existingPatient?.full_name || "کاربر بدون نام"}</p>
                 <p className="text-xs text-muted-foreground font-mono mt-1" dir="ltr">{existingPatient?.phone_number}</p>
               </div>
-              <Badge variant={existingPatient?.activation_locked ? "outline" : "secondary"} className="font-normal">
-                {existingPatient?.activation_locked ? "در صورت افزودن، غیرفعال ثبت می‌شود" : "پس از افزودن، فعال خواهد بود"}
+              <Badge variant="secondary" className="font-normal">
+                پس از افزودن، فعال خواهد بود
               </Badge>
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
@@ -481,7 +473,7 @@ function PatientsContent() {
                 انصراف
               </Button>
               <Button onClick={() => executeInvite(true)} disabled={isInviting}>
-                {isInviting ? <Loader2 className="w-4 h-4 animate-spin" /> : "افزودن به لیست بیماران"}
+                {isInviting ? <Loader2 className="w-4 h-4 animate-spin" /> : "افزودن به لیست مراجعان"}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -504,7 +496,7 @@ function PatientsContent() {
         <div className="flex min-w-0 flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <TabsList className="bg-muted/50 p-1 rounded-xl h-auto self-start">
                 <TabsTrigger value="ACTIVE" className="rounded-lg px-4 py-2 data-[state=active]:shadow-sm">
-                    لیست بیماران
+                    لیست مراجعان
                 </TabsTrigger>
                 <TabsTrigger value="REQUESTS" className="rounded-lg px-4 py-2 gap-2 data-[state=active]:shadow-sm">
                     درخواست‌های نوبت
@@ -532,19 +524,19 @@ function PatientsContent() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
               <Card>
                 <CardContent className="p-4">
-                  <p className="text-xs text-muted-foreground text-right">کل بیماران</p>
+                  <p className="text-xs text-muted-foreground text-right">کل مراجعان</p>
                   <p className="text-2xl font-bold mt-1 text-right">{kpiTotal}</p>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="p-4">
-                  <p className="text-xs text-muted-foreground text-right">بیماران فعال</p>
+                  <p className="text-xs text-muted-foreground text-right">مراجعان فعال</p>
                   <p className="text-2xl font-bold mt-1 text-emerald-600 text-right">{kpiActive}</p>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="p-4">
-                  <p className="text-xs text-muted-foreground text-right">بیماران غیرفعال</p>
+                  <p className="text-xs text-muted-foreground text-right">مراجعان غیرفعال</p>
                   <p className="text-2xl font-bold mt-1 text-amber-600 text-right">{kpiDeactive}</p>
                 </CardContent>
               </Card>
@@ -560,7 +552,7 @@ function PatientsContent() {
                 <Table dir="rtl">
 <TableHeader className="bg-muted/40">
   <TableRow className="hover:bg-transparent">
-    <TableHead className="w-[300px] text-right font-semibold h-12 pr-6">نام بیمار</TableHead>
+    <TableHead className="w-[300px] text-right font-semibold h-12 pr-6">نام مراجع</TableHead>
     <TableHead className="text-right font-semibold">شماره تماس</TableHead>
     <TableHead className="text-center font-semibold w-[220px]">وضعیت</TableHead>
     <TableHead className="text-right font-semibold hidden md:table-cell">تاریخ عضویت</TableHead>
@@ -582,7 +574,7 @@ function PatientsContent() {
                         <TableCell colSpan={5} className="h-64 text-center">
                             <div className="flex flex-col items-center justify-center gap-2 text-muted-foreground opacity-60">
                                 <Users className="h-10 w-10" />
-                                <p>هیچ بیماری در لیست شما یافت نشد.</p>
+                                <p>هیچ مراجعی در لیست شما یافت نشد.</p>
                             </div>
                         </TableCell>
                         </TableRow>
@@ -668,7 +660,7 @@ function PatientsContent() {
                                         {!useCompactRowActions ? (
                                           <div className="flex gap-2">
                                               <Button size="sm" variant="default" className="h-8 gap-1.5 shadow-sm text-xs font-medium" onClick={() => handleOpenClinicalChat(patient)}>
-                                                  <ClipboardList className="h-3.5 w-3.5" /> پرونده بالینی
+                                                  <ClipboardList className="h-3.5 w-3.5" /> پرونده
                                               </Button>
                                               <Button size="sm" variant="ghost" className="h-8 gap-1.5 text-muted-foreground hover:text-primary" onClick={() => handleMessage(patient.patient_id)}>
                                                   <MessageSquare className="h-4 w-4" />
@@ -681,7 +673,7 @@ function PatientsContent() {
                                               variant="outline"
                                               className="h-8 px-2"
                                               onClick={() => handleOpenClinicalChat(patient)}
-                                              title="پرونده بالینی"
+                                              title="پرونده"
                                             >
                                               <ClipboardList className="h-4 w-4" />
                                             </Button>
@@ -701,7 +693,7 @@ function PatientsContent() {
                                 {patient.status === 'ARCHIVED' && (
                                   <div className="flex items-center gap-1 text-xs text-muted-foreground">
                                     <Lock className="h-3.5 w-3.5" />
-                                    <span>برای پرونده بالینی و چت باید فعال شود</span>
+                                    <span>برای پرونده و چت باید فعال شود</span>
                                   </div>
                                 )}
                             </TableCell>
@@ -721,7 +713,7 @@ function PatientsContent() {
                     <Table dir="rtl">
                         <TableHeader className="bg-muted/40 h-10">
                             <TableRow>
-                                <TableHead className="w-[220px] text-right font-medium text-xs pr-4">بیمار</TableHead>
+                                <TableHead className="w-[220px] text-right font-medium text-xs pr-4">مراجع</TableHead>
                                 <TableHead className="text-right font-medium text-xs">شرح مشکل</TableHead>
                                 <TableHead className="text-center font-medium text-xs w-[140px]">زمان ترجیحی</TableHead>
                                 <TableHead className="text-left font-medium text-xs pl-4 w-[180px]">اقدامات</TableHead>
@@ -858,7 +850,7 @@ function PatientsContent() {
 export default function PatientsPage() {
   return (
     // Only allow 'doctor' to see this
-    <RoleGuard allowedRoles={['doctor']}>
+    <RoleGuard allowedRoles={['expert']}>
       <Suspense fallback={<div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-muted-foreground" /></div>}>
           <PatientsContent />
       </Suspense>

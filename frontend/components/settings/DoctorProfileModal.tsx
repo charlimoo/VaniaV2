@@ -357,7 +357,7 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
 
                 <div className="flex items-center justify-between p-3 border rounded-lg bg-muted/20">
                     <div className="space-y-0.5">
-                        <Label htmlFor="accepting_new_patients">پذیرش بیمار جدید</Label>
+                        <Label htmlFor="accepting_new_patients">پذیرش مراجعه‌کننده جدید</Label>
                     </div>
                     <Switch 
                         id="accepting_new_patients" 

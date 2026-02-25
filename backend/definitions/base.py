@@ -59,6 +59,8 @@ class PlanDef:
     monthly_credits: int # Credits granted upon activation
     # List of Agent slugs that this plan unlocks
     included_agent_slugs: List[str] = field(default_factory=list) 
+    audience: str = "ALL"  # ALL | VISITOR | EXPERT
+    eligible_expert_professions: List[str] = field(default_factory=list)
     is_active: bool = True
 
 @dataclass
@@ -108,6 +110,9 @@ class AgentDef:
     
     # --- Marketplace & Access ---
     is_free: bool = True
+    audience: str = "ALL"  # ALL | VISITOR | EXPERT
+    eligible_expert_professions: List[str] = field(default_factory=list)
+    requires_visitor_selector: bool = False
     demo_config: DemoConfigDef = field(default_factory=DemoConfigDef)
     # Note: Paid agents are unlocked via Plans defined in billing.py
     

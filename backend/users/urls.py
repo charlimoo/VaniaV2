@@ -9,7 +9,9 @@ from .views import (
     ChangePasswordView,
     UserWalletDetailView,
     CheckUserExistenceView, 
-    VerifyDoctorView, 
+    VerifyDoctorView,
+    ExpertProfessionListView,
+    UpgradeExpertView,
 )
 
 urlpatterns = [
@@ -28,4 +30,7 @@ urlpatterns = [
     
     path('check-exists/', CheckUserExistenceView.as_view(), name='check-user-exists'),
     path('verify-doctor/', VerifyDoctorView.as_view(), name='verify-doctor'),
+    path('verify-expert/', VerifyDoctorView.as_view(), name='verify-expert'),
+    path('expert-professions/', ExpertProfessionListView.as_view(), name='expert-professions'),
+    path('upgrade-expert/', UpgradeExpertView.as_view(), name='upgrade-expert'),
 ]

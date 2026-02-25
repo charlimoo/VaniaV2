@@ -15,6 +15,7 @@ from .models import (
     SecureMessage
 )
 from users.models import UserRole
+from users.roles import is_expert
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ def process_role_approval(sender, instance, created, **kwargs):
                     logger.info(f"   -> Role set to '{role.slug}' for User {user.id}")
 
                 # 2. Create Profile (if the role is 'doctor')
-                if role.slug == 'doctor':
+                if is_expert(user):
                     specialty = instance.data.get('specialty', 'General Practice')
                     profile, created_profile = DoctorProfile.objects.get_or_create(
                         user=user,
@@ -52,7 +53,7 @@ def process_role_approval(sender, instance, created, **kwargs):
                     recipient=user,
                     type=Notification.Type.SYSTEM,
                     title="درخواست شما تایید شد", # "Your request was approved"
-                    message=f"درخواست شما برای نقش '{role.display_name}' توسط ادمین تایید شد."
+                    message=f"درخواست شما برای نقش '{role.name}' توسط ادمین تایید شد."
                 )
 
         except Exception as e:

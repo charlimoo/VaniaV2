@@ -49,13 +49,15 @@ class PublicDoctorSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source='user.full_name', read_only=True)
     avatar = serializers.SerializerMethodField()
     location_name = serializers.CharField(source='location.name', read_only=True, allow_null=True)
+    expert_profession_slug = serializers.CharField(source='user.expert_profession.slug', read_only=True, allow_null=True)
+    expert_profession_label = serializers.CharField(source='user.expert_profession.name', read_only=True, allow_null=True)
     
     class Meta:
         model = DoctorProfile
         fields = [
             'id', 'full_name', 'specialty', 'bio', 
             'clinic_address', 'location_name', 'avatar', 'meeting_price',
-            'accepting_new_patients'
+            'accepting_new_patients', 'expert_profession_slug', 'expert_profession_label'
         ]
 
     def get_avatar(self, obj):

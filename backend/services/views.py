@@ -10,6 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from .models import AgentService
 from .serializers import ServiceSerializer
 from capabilities.registry import CapabilityRegistry
+from users.eligibility import is_user_eligible_for_agent
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class ServiceListView(APIView):
         user = request.user
         
         # 1. Fetch Agent Services with optimizations
-        visible_services = AgentService.objects.filter(
+        visible_services_qs = AgentService.objects.filter(
             is_active=True,
             is_public=True
         ).prefetch_related(
@@ -34,6 +35,10 @@ class ServiceListView(APIView):
             # [FIX] Removed 'interaction_forms' as it no longer exists on the AgentService model.
             'canvas_configs__canvas' 
         ).distinct()
+        visible_services = [
+            service for service in visible_services_qs
+            if is_user_eligible_for_agent(user, service)
+        ]
         
         # 2. Extract User's Active Plan Context for Serializer logic
         active_plan_id = None

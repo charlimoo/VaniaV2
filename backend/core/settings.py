@@ -221,8 +221,8 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle'
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'anon': '20/min',
-        'user': '100/min'
+        'anon': os.getenv('DRF_THROTTLE_ANON', '60/min'),
+        'user': os.getenv('DRF_THROTTLE_USER', '300/min')
     }
 }
 
@@ -490,3 +490,4 @@ NAJVA_SENDER_ID = os.getenv("NAJVA_SENDER_ID")
 SMS_SERVICE_MODE = os.getenv("SMS_SERVICE_MODE", "CONSOLE")
 
 APP_NAME = "Vania"
+

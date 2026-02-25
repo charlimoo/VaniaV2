@@ -1,6 +1,7 @@
 # backend/vania_core/views.py
 import logging
 import mimetypes
+from botocore.exceptions import BotoCoreError, ClientError
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.http import FileResponse
@@ -8,7 +9,7 @@ from django.core.files.storage import default_storage
 from rest_framework import generics, status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 import json
 from django.utils import timezone
 # --- Vania Core Imports ---
@@ -21,6 +22,7 @@ from .services import (
     ProfileService,
 )
 from .tests_service import ClinicalTestsService
+from .flashcards import normalize_flashcards
 from .models import (
     TreatmentConnection, 
     PatientInvite, 
@@ -45,6 +47,7 @@ from .serializers import (
 
 # --- User Imports ---
 from users.models import CustomUser, UserContextEntry
+from users.roles import is_expert
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
@@ -73,7 +76,7 @@ class DoctorInvitePatientView(APIView):
             
             if success and patient:
                 # Initialize the therapy roadmap for the new patient
-                RoadmapService.get_or_create_roadmap(patient)
+                RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id)
                 
                 return Response({
                     "message": message, 
@@ -147,10 +150,7 @@ class DoctorPatientLookupView(APIView):
                 "phone_number": patient.phone_number,
             },
             "existing_connection_status": existing_conn.status if existing_conn else None,
-            "activation_locked": PatientManagementService.is_activation_locked(
-                patient=patient,
-                current_doctor=request.user
-            ),
+            "activation_locked": False,
         })
 
 class PublicDoctorListView(generics.ListAPIView):
@@ -162,6 +162,7 @@ class PublicDoctorListView(generics.ListAPIView):
         queryset = DoctorProfile.objects.filter(is_public=True).select_related('user', 'location')
         
         specialty = self.request.query_params.get('specialty')
+        profession = self.request.query_params.get('profession') or self.request.query_params.get('expert_profession')
         search = self.request.query_params.get('search')
         locations = self.request.query_params.getlist('locations')
 
@@ -172,6 +173,8 @@ class PublicDoctorListView(generics.ListAPIView):
             queryset = queryset.filter(location__id__in=locations)
         if specialty and specialty != 'ALL': 
             queryset = queryset.filter(specialty__icontains=specialty)
+        if profession and profession != 'ALL':
+            queryset = queryset.filter(user__expert_profession__slug=profession)
         if search: 
             queryset = queryset.filter(user__full_name__icontains=search)
             
@@ -228,7 +231,7 @@ class RequestAppointmentView(APIView):
 
         Notification.objects.create(
             recipient=doctor_user, sender=request.user, type=Notification.Type.CONNECTION_REQUEST,
-            title="درخواست نوبت جدید", message=f"بیمار {request.user.full_name} درخواست مشاوره ارسال کرده است.",
+            title="درخواست نوبت جدید", message=f"مراجع {request.user.full_name} درخواست مشاوره ارسال کرده است.",
             payload={"url": "/dashboard/patients?tab=REQUESTS", "data": form_data}
         )
 
@@ -253,13 +256,7 @@ class RespondToConnectionView(APIView):
         if serializer.is_valid():
             action = serializer.validated_data['action']
             if action == 'ACCEPT':
-                _, locked = PatientManagementService.activate_connection_or_lock(connection)
-                if locked:
-                    return Response({
-                        "message": "Connection accepted but currently archived due to another active doctor.",
-                        "status": connection.status,
-                        "activation_locked": True
-                    })
+                PatientManagementService.activate_connection_or_lock(connection)
             else:
                 connection.status = TreatmentConnection.Status.REJECTED
                 connection.save(update_fields=['status', 'updated_at'])
@@ -276,13 +273,7 @@ class DoctorRespondToRequestView(APIView):
         if serializer.is_valid():
             action = serializer.validated_data['action']
             if action == 'ACCEPT':
-                _, locked = PatientManagementService.activate_connection_or_lock(connection)
-                if locked:
-                    return Response({
-                        "message": "Request accepted but patient remains inactive due to another active doctor.",
-                        "status": connection.status,
-                        "activation_locked": True
-                    })
+                PatientManagementService.activate_connection_or_lock(connection)
             else:
                 connection.status = TreatmentConnection.Status.REJECTED
                 connection.save(update_fields=['status', 'updated_at'])
@@ -308,21 +299,15 @@ class DoctorUpdatePatientStatusView(APIView):
             return Response({
                 "status": connection.status,
                 "activation_locked": False,
-                "message": "وضعیت بیمار غیرفعال شد."
+                "message": "وضعیت مراجع غیرفعال شد."
             })
 
-        activated, locked = PatientManagementService.activate_connection_or_lock(connection)
-        if not activated:
-            return Response({
-                "status": connection.status,
-                "activation_locked": locked,
-                "message": "این بیمار هم‌اکنون در پنل پزشک دیگری فعال است و فعلا قابل فعال‌سازی نیست."
-            }, status=status.HTTP_409_CONFLICT)
+        _, locked = PatientManagementService.activate_connection_or_lock(connection)
 
         return Response({
             "status": connection.status,
             "activation_locked": locked,
-            "message": "وضعیت بیمار فعال شد."
+            "message": "وضعیت مراجع فعال شد."
         })
 
 # ==============================================================================
@@ -362,7 +347,7 @@ class ConversationListView(APIView):
         results = []
         for conn in connections:
             other = conn.patient if conn.doctor == user else conn.doctor
-            role_label = "بیمار" if conn.doctor == user else "پزشک"
+            role_label = "مراجعه‌کننده" if conn.doctor == user else "متخصص"
             
             try:
                 profile = other.doctor_profile
@@ -408,7 +393,7 @@ class RoadmapView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
 
     def get(self, request):
-        patient_id = request.query_params.get('patient_id')
+        patient_id = request.query_params.get('visitor_id') or request.query_params.get('patient_id')
         if not patient_id:
             return Response({"error": "'patient_id' query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -416,12 +401,12 @@ class RoadmapView(APIView):
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
             return Response({"error": "Access denied to this patient's records."}, status=status.HTTP_403_FORBIDDEN)
 
-        roadmap = RoadmapService.get_or_create_roadmap(patient)
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id)
         serializer = TherapyRoadmapSerializer(roadmap)
         return Response(serializer.data)
 
     def post(self, request):
-        patient_id = request.data.get('patient_id')
+        patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         patient = get_object_or_404(CustomUser, pk=patient_id)
         
         serializer = AddSessionSerializer(data=request.data)
@@ -431,17 +416,65 @@ class RoadmapView(APIView):
                 title=serializer.validated_data['title'],
                 instructions=serializer.validated_data.get('instructions', ""),
                 scheduled_date=serializer.validated_data.get('scheduled_date'),
+                doctor_id=request.user.id,
             )
             return Response(new_session.model_dump(), status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ClinicalTestsView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
-    parser_classes = [MultiPartParser, FormParser]
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+
+    def _is_doctor(self, user):
+        return is_expert(user)
+
+    def _require_doctor(self, request):
+        if self._is_doctor(request.user):
+            return None
+        return Response({"error": "Only experts can modify tests."}, status=403)
+
+    def _resolve_patient_doctor_scope(self, request) -> int | None:
+        raw = (
+            request.headers.get("X-Target-Expert-ID")
+            or request.headers.get("X-Target-Doctor-ID")
+            or request.query_params.get("expert_id")
+            or request.query_params.get("doctor_id")
+            or request.data.get("expert_id")
+            or request.data.get("doctor_id")
+        )
+        if raw:
+            try:
+                candidate = int(raw)
+            except (TypeError, ValueError):
+                candidate = None
+            if candidate and TreatmentConnection.objects.filter(
+                patient=request.user,
+                doctor_id=candidate,
+                status=TreatmentConnection.Status.ACTIVE,
+            ).exists():
+                return candidate
+
+        conn = TreatmentConnection.objects.filter(
+            patient=request.user,
+            status=TreatmentConnection.Status.ACTIVE,
+        ).order_by("-updated_at").first()
+        return conn.doctor_id if conn else None
 
     def get_patient(self, request):
-        patient_id = request.query_params.get("patient_id") or request.data.get("patient_id")
+        if not self._is_doctor(request.user):
+            # Patients can only access their own test list.
+            return request.user
+
+        patient_id = (
+            request.query_params.get("visitor_id")
+            or request.query_params.get("patient_id")
+            or request.data.get("visitor_id")
+            or request.data.get("patient_id")
+        )
+        if not patient_id:
+            return None
+
         patient = get_object_or_404(CustomUser, pk=patient_id)
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
             return None
@@ -450,16 +483,21 @@ class ClinicalTestsView(APIView):
     def get(self, request):
         patient = self.get_patient(request)
         if patient is None:
-            return Response({"error": "Access denied."}, status=403)
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
+        doctor_scope = request.user.id if self._is_doctor(request.user) else self._resolve_patient_doctor_scope(request)
         return Response({
             "catalog": ClinicalTestsService.list_catalog(),
-            "tests": ClinicalTestsService.get_tests(patient),
+            "tests": ClinicalTestsService.get_tests(patient, doctor_id=doctor_scope),
         })
 
     def post(self, request):
+        doctor_guard = self._require_doctor(request)
+        if doctor_guard is not None:
+            return doctor_guard
+
         patient = self.get_patient(request)
         if patient is None:
-            return Response({"error": "Access denied."}, status=403)
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
 
         catalog_id = request.data.get("catalog_id")
         title = request.data.get("title")
@@ -472,33 +510,44 @@ class ClinicalTestsView(APIView):
             title=title,
             url=url,
             result_summary=result_summary,
+            doctor_id=request.user.id,
         )
         return Response(new_test, status=201)
 
     def put(self, request, test_id):
+        doctor_guard = self._require_doctor(request)
+        if doctor_guard is not None:
+            return doctor_guard
+
         patient = self.get_patient(request)
         if patient is None:
-            return Response({"error": "Access denied."}, status=403)
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
 
         updated = ClinicalTestsService.update_test(
             patient=patient,
             created_by=request.user,
             test_id=test_id,
             payload=request.data,
+            doctor_id=request.user.id,
         )
         if not updated:
             return Response({"error": "Test not found."}, status=404)
         return Response(updated)
 
     def delete(self, request, test_id):
+        doctor_guard = self._require_doctor(request)
+        if doctor_guard is not None:
+            return doctor_guard
+
         patient = self.get_patient(request)
         if patient is None:
-            return Response({"error": "Access denied."}, status=403)
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
 
         deleted = ClinicalTestsService.delete_test(
             patient=patient,
             created_by=request.user,
             test_id=test_id,
+            doctor_id=request.user.id,
         )
         if not deleted:
             return Response({"error": "Test not found."}, status=404)
@@ -506,14 +555,55 @@ class ClinicalTestsView(APIView):
 
 
 class ClinicalTestFileUploadView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    permission_classes = [permissions.IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
 
-    def post(self, request, test_id):
-        patient_id = request.data.get("patient_id")
+    def _resolve_patient(self, request):
+        is_doctor = is_expert(request.user)
+        if not is_doctor:
+            return request.user
+
+        patient_id = request.data.get("visitor_id") or request.data.get("patient_id")
+        if not patient_id:
+            return None
         patient = get_object_or_404(CustomUser, pk=patient_id)
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
-            return Response({"error": "Access denied."}, status=403)
+            return None
+        return patient
+
+    def _resolve_doctor_scope(self, request, patient) -> int | None:
+        is_doctor = is_expert(request.user)
+        if is_doctor:
+            return request.user.id
+
+        raw = (
+            request.headers.get("X-Target-Expert-ID")
+            or request.headers.get("X-Target-Doctor-ID")
+            or request.data.get("expert_id")
+            or request.data.get("doctor_id")
+        )
+        if raw:
+            try:
+                candidate = int(raw)
+            except (TypeError, ValueError):
+                candidate = None
+            if candidate and TreatmentConnection.objects.filter(
+                patient=patient,
+                doctor_id=candidate,
+                status=TreatmentConnection.Status.ACTIVE,
+            ).exists():
+                return candidate
+
+        conn = TreatmentConnection.objects.filter(
+            patient=patient,
+            status=TreatmentConnection.Status.ACTIVE,
+        ).order_by("-updated_at").first()
+        return conn.doctor_id if conn else None
+
+    def post(self, request, test_id):
+        patient = self._resolve_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
 
         uploaded_file = request.FILES.get("file")
         if not uploaded_file:
@@ -525,14 +615,23 @@ class ClinicalTestFileUploadView(APIView):
         doctor_summary = request.data.get("result_summary", "")
         auto_summarize = str(request.data.get("auto_summarize", "true")).lower() == "true"
 
-        updated = ClinicalTestsService.attach_pdf_and_summarize(
-            patient=patient,
-            created_by=request.user,
-            test_id=test_id,
-            uploaded_file=uploaded_file,
-            doctor_summary=doctor_summary,
-            auto_summarize=auto_summarize,
-        )
+        try:
+            doctor_scope = self._resolve_doctor_scope(request, patient)
+            updated = ClinicalTestsService.attach_pdf_and_summarize(
+                patient=patient,
+                created_by=request.user,
+                test_id=test_id,
+                uploaded_file=uploaded_file,
+                doctor_summary=doctor_summary,
+                auto_summarize=auto_summarize,
+                doctor_id=doctor_scope,
+            )
+        except (ClientError, BotoCoreError):
+            logger.exception("Clinical test PDF upload failed due to object storage error.")
+            return Response(
+                {"error": "File storage is unavailable right now. Please try again shortly."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         if not updated:
             return Response({"error": "Test not found."}, status=404)
 
@@ -543,7 +642,7 @@ class ClinicalTestFileDeleteView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
 
     def delete(self, request, test_id):
-        patient_id = request.query_params.get("patient_id")
+        patient_id = request.query_params.get("visitor_id") or request.query_params.get("patient_id")
         patient = get_object_or_404(CustomUser, pk=patient_id)
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
             return Response({"error": "Access denied."}, status=403)
@@ -552,6 +651,7 @@ class ClinicalTestFileDeleteView(APIView):
             patient=patient,
             created_by=request.user,
             test_id=test_id,
+            doctor_id=request.user.id,
         )
         if not removed:
             return Response({"error": "Test not found."}, status=404)
@@ -560,15 +660,58 @@ class ClinicalTestFileDeleteView(APIView):
 
 
 class ClinicalTestFileDownloadView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    permission_classes = [permissions.IsAuthenticated]
 
-    def get(self, request, test_id):
-        patient_id = request.query_params.get("patient_id")
+    def _resolve_patient(self, request):
+        is_doctor = is_expert(request.user)
+        if not is_doctor:
+            return request.user
+
+        patient_id = request.query_params.get("visitor_id") or request.query_params.get("patient_id")
+        if not patient_id:
+            return None
         patient = get_object_or_404(CustomUser, pk=patient_id)
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
-            return Response({"error": "Access denied."}, status=403)
+            return None
+        return patient
 
-        test = ClinicalTestsService.get_test(patient, test_id)
+    def get(self, request, test_id):
+        patient = self._resolve_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
+
+        is_doctor = is_expert(request.user)
+        doctor_scope = request.user.id if is_doctor else None
+        if not is_doctor:
+            raw = (
+                request.headers.get("X-Target-Expert-ID")
+                or request.headers.get("X-Target-Doctor-ID")
+                or request.query_params.get("expert_id")
+                or request.query_params.get("doctor_id")
+            )
+            if raw:
+                try:
+                    candidate = int(raw)
+                except (TypeError, ValueError):
+                    candidate = None
+                if candidate and TreatmentConnection.objects.filter(
+                    patient=patient,
+                    doctor_id=candidate,
+                    status=TreatmentConnection.Status.ACTIVE,
+                ).exists():
+                    doctor_scope = candidate
+            if not doctor_scope:
+                conn = TreatmentConnection.objects.filter(
+                    patient=patient,
+                    status=TreatmentConnection.Status.ACTIVE,
+                ).order_by("-updated_at").first()
+                doctor_scope = conn.doctor_id if conn else None
+
+        test = ClinicalTestsService.get_test(
+            patient,
+            test_id,
+            doctor_id=doctor_scope
+        )
         if not test or not test.get("file_path"):
             return Response({"error": "File not found."}, status=404)
 
@@ -589,21 +732,21 @@ class AppendixView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
 
     def get(self, request):
-        patient_id = request.query_params.get('patient_id')
+        patient_id = request.query_params.get('visitor_id') or request.query_params.get('patient_id')
         patient = get_object_or_404(CustomUser, pk=patient_id)
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
             return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
             
-        library = AppendixService.get_library(patient)
+        library = AppendixService.get_library(patient, doctor_id=request.user.id)
         return Response(library.model_dump())
 
     def post(self, request):
-        patient_id = request.data.get('patient_id')
+        patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         patient = get_object_or_404(CustomUser, pk=patient_id)
         
         serializer = CulturalResourceSerializer(data=request.data)
         if serializer.is_valid():
-            new_resource = AppendixService.add_resource(patient, request.user, serializer.validated_data)
+            new_resource = AppendixService.add_resource(patient, request.user, serializer.validated_data, doctor_id=request.user.id)
             return Response(new_resource.model_dump(), status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -613,7 +756,7 @@ class ActiveSessionView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
 
     def post(self, request):
-        patient_id = request.data.get('patient_id')
+        patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         session_number = request.data.get('session_number')
         
         if not patient_id or session_number is None:
@@ -624,7 +767,7 @@ class ActiveSessionView(APIView):
             return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
         
         try:
-            RoadmapService.set_active_session(patient, int(session_number))
+            RoadmapService.set_active_session(patient, int(session_number), doctor_id=request.user.id)
             return Response({"status": "updated", "active_session": session_number})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -637,7 +780,7 @@ class TaskManagementView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
     
     def post(self, request):
-        patient_id = request.data.get('patient_id')
+        patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         text = request.data.get('text')
         due_date = request.data.get('due_date')
         patient = get_object_or_404(CustomUser, pk=patient_id)
@@ -645,11 +788,11 @@ class TaskManagementView(APIView):
         if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
             return Response({"error": "Access denied"}, status=403)
             
-        new_task = TaskService.assign_task(patient, request.user, text, due_date)
+        new_task = TaskService.assign_task(patient, request.user, text, due_date, doctor_id=request.user.id)
         return Response(new_task, status=status.HTTP_201_CREATED)
     
     def put(self, request, task_id):
-        patient_id = request.data.get('patient_id')
+        patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         text = request.data.get('text')
         due_date = request.data.get('due_date')
         patient = get_object_or_404(CustomUser, pk=patient_id)
@@ -657,19 +800,19 @@ class TaskManagementView(APIView):
         if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
             return Response({"error": "Access denied"}, status=403)
             
-        success = TaskService.edit_task(patient, task_id, text, due_date)
+        success = TaskService.edit_task(patient, task_id, text, due_date, doctor_id=request.user.id)
         if success:
             return Response({"status": "updated"})
         return Response({"error": "Task not found"}, status=404)
     
     def delete(self, request, task_id):
-        patient_id = request.query_params.get('patient_id') 
+        patient_id = request.query_params.get('visitor_id') or request.query_params.get('patient_id') 
         patient = get_object_or_404(CustomUser, pk=patient_id)
         
         if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
             return Response({"error": "Access denied"}, status=403)
             
-        success = TaskService.delete_task(patient, task_id)
+        success = TaskService.delete_task(patient, task_id, doctor_id=request.user.id)
         if success:
             return Response({"status": "deleted"})
         return Response({"error": "Task not found"}, status=404)
@@ -679,7 +822,7 @@ class SessionManagementView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
     
     def post(self, request):
-        patient_id = request.data.get('patient_id')
+        patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         summary = request.data.get('summary')
         private_notes = request.data.get('private_notes', '')
         # date_str = request.data.get('date') # Not used in current service signature
@@ -688,7 +831,7 @@ class SessionManagementView(APIView):
         if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
             return Response({"error": "Access denied"}, status=403)
             
-        SessionService.log_session(patient, request.user, summary, private_notes)
+        SessionService.log_session(patient, request.user, summary, private_notes, doctor_id=request.user.id)
         return Response({"status": "created"}, status=status.HTTP_201_CREATED)
     
     def put(self, request, entry_id):
@@ -713,15 +856,22 @@ class CompleteTaskView(APIView):
     def post(self, request, task_id):
         # Determine target patient based on Role
         target_patient = request.user
+        selected_doctor_id = (
+            request.data.get('expert_id')
+            or request.data.get('doctor_id')
+            or request.headers.get('X-Target-Expert-ID')
+            or request.headers.get('X-Target-Doctor-ID')
+        )
         
         # Check if Doctor is acting on behalf of a patient
-        if hasattr(request.user, 'role') and request.user.role and request.user.role.slug == 'doctor':
-            patient_id = request.data.get('patient_id')
+        if is_expert(request.user):
+            patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
             if patient_id:
                 target_patient = get_object_or_404(CustomUser, pk=patient_id)
                 # Verify permission
                 if not VaniaAccessControl.verify_doctor_access(request.user, target_patient):
                     return Response({"error": "Access denied to this patient."}, status=status.HTTP_403_FORBIDDEN)
+            selected_doctor_id = request.user.id
         
         reflection = request.data.get('reflection', "") 
         new_status = request.data.get('status', 'DONE') 
@@ -730,7 +880,8 @@ class CompleteTaskView(APIView):
             patient=target_patient, 
             task_id=task_id, 
             status=new_status, 
-            reflection=reflection
+            reflection=reflection,
+            doctor_id=int(selected_doctor_id) if selected_doctor_id else None
         )
         
         if not success: 
@@ -766,13 +917,22 @@ class SessionReportView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
 
     def post(self, request):
-        patient_id = request.data.get('patient_id')
+        patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         session_number = request.data.get('session_number')
         
         # Report Data
         summary = request.data.get('summary', '')
         private_notes = request.data.get('private_notes', '')
-        flashcards = request.data.get('flashcards', []) # List of {title, content}
+        raw_flashcards = request.data.get('flashcards', [])
+        flashcards = normalize_flashcards(raw_flashcards)
+        logger.info(
+            "🧪 [SessionReportView] patient=%s doctor=%s session=%s flashcards_in=%s flashcards_out=%s",
+            patient_id,
+            request.user.id,
+            session_number,
+            len(raw_flashcards) if isinstance(raw_flashcards, list) else 0,
+            len(flashcards),
+        )
         
         if not patient_id or session_number is None:
             return Response({"error": "Patient ID and Session Number required."}, status=400)
@@ -782,7 +942,7 @@ class SessionReportView(APIView):
             return Response({"error": "Access denied."}, status=403)
 
         # 1. Get Roadmap to check if session exists and if it has a doc_id
-        roadmap = RoadmapService.get_or_create_roadmap(patient)
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id)
         target_session = next((s for s in roadmap.sessions if s.session_number == int(session_number)), None)
         
         if not target_session:
@@ -825,15 +985,16 @@ class SessionReportView(APIView):
                 patient=patient,
                 doctor=request.user,
                 summary=json.dumps(rich_payload, ensure_ascii=False),
-                private_notes=private_notes
+                private_notes=private_notes,
+                doctor_id=request.user.id
             )
 
         # 4. Ensure Roadmap is updated (Status -> COMPLETED, Link Doc ID)
-        RoadmapService.complete_session(patient, int(session_number), str(log_entry.id))
+        RoadmapService.complete_session(patient, int(session_number), str(log_entry.id), doctor_id=request.user.id)
         
         # 5. Fetch updated states to return for UI Sync
-        updated_roadmap = RoadmapService.get_or_create_roadmap(patient)
-        updated_history = SessionService.get_patient_history(patient, viewer_role='DOCTOR')
+        updated_roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id)
+        updated_history = SessionService.get_patient_history(patient, viewer_role='DOCTOR', doctor_id=request.user.id)
 
         return Response({
             "status": "success", 

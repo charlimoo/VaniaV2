@@ -60,7 +60,7 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
         </div>
         <h3 className="font-semibold text-lg">پرونده‌ای باز نیست</h3>
         <p className="text-sm mt-2 max-w-[240px]">
-          برای مشاهده اطلاعات، لطفاً از منوی بالای صفحه چت، یک بیمار را انتخاب کنید.
+          برای مشاهده اطلاعات، لطفاً از منوی بالای صفحه چت، یک مراجع را انتخاب کنید.
         </p>
       </div>
     );
@@ -81,16 +81,6 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
             <h1 className="text-xl font-bold text-foreground">{patient_profile.name}</h1>
             <div className="flex items-center gap-3 mt-1.5 text-xs text-muted-foreground">
               <span className="font-mono bg-muted/50 px-2 py-0.5 rounded">{patient_profile.phone}</span>
-              {roadmap_data?.current_phase && (
-                <span className="px-2 py-0.5 bg-muted-50 text-blue-400 border border-muted-100 rounded-full font-medium text-[10px]">
-                  {/* Simple mapping for a user-friendly display of the current phase */}
-                  {roadmap_data.current_phase === 'PHASE_1_ANALYSIS' ? 'فاز ۱: تحلیل' :
-                   roadmap_data.current_phase === 'PHASE_2_APPROACHES' ? 'فاز ۲: پیشنهاد رویکرد' :
-                   roadmap_data.current_phase === 'PHASE_4_PROTOCOL' ? 'فاز ۴: طراحی پروتکل' :
-                   roadmap_data.current_phase === 'PHASE_5_EXECUTION' ? 'فاز ۵: اجرای جلسات' :
-                   roadmap_data.current_phase}
-                </span>
-              )}
             </div>
           </div>
         </div>

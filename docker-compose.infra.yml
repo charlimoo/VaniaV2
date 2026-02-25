@@ -32,7 +32,8 @@ services:
     environment:
       - 'MINIO_ROOT_USER=${MINIO_ROOT_USER}'
       - 'MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}'
-      - 'MINIO_SERVER_URL=${AWS_S3_CUSTOM_MAIN_DOMAIN}'
+      # Keep unset in local infra; passing a URL with scheme causes MinIO boot failure.
+      # Set MINIO_SERVER_URL only with a valid host/domain format in production infra.
     ports:
       - '9000:9000'
       - '9001:9001'

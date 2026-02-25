@@ -5,7 +5,7 @@ from fastapi import Request
 from starlette.responses import JSONResponse
 from django.conf import settings
 from users.models import CustomUser
-from .context import user_context, role_context, resource_context
+from .context import user_context, role_context, resource_context, selected_doctor_context
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ async def django_auth_middleware(request: Request, call_next):
     token_reset = None
     role_reset = None
     resource_reset = None
+    selected_doctor_reset = None
     user = None
 
     # 2. Authenticate User via JWT
@@ -61,16 +62,15 @@ async def django_auth_middleware(request: Request, call_next):
     # 3. Resolve Contexts
     if user:
         # A. Role Context
-        # Allows the frontend to explicitly state which persona (Doctor/Patient) is active
+        # Allows the frontend to explicitly state which persona is active.
         requested_role_id = request.headers.get("X-Active-Role")
         active_role_id = None
         
         if requested_role_id:
             try:
                 role_id_int = int(requested_role_id)
-                # Verify user actually has this role
-                # Note: 'role_memberships' lookup would be more robust here, but we check m2m for speed
-                if await user.roles.filter(id=role_id_int).aexists():
+                # This app currently stores a single primary role on user.role_id.
+                if user.role_id == role_id_int:
                     active_role_id = role_id_int
             except ValueError:
                 pass
@@ -84,13 +84,22 @@ async def django_auth_middleware(request: Request, call_next):
 
         # B. Resource Context (Scoped Execution)
         # We check for the generic header first, then the legacy Vania header
-        raw_resource_id = request.headers.get("X-Target-Resource-ID") or request.headers.get("X-Target-Patient-ID")
+        raw_resource_id = (
+            request.headers.get("X-Target-Resource-ID")
+            or request.headers.get("X-Target-Visitor-ID")
+            or request.headers.get("X-Target-Patient-ID")
+        )
         
         if raw_resource_id:
             # We treat the ID as a string/UUID. 
             # Validation happens inside the specific Capability Tools that consume it.
             resource_reset = resource_context.set(raw_resource_id)
             logger.debug(f"🔒 [Middleware] Context Locked to Resource ID: {raw_resource_id}")
+
+        selected_expert_id = request.headers.get("X-Target-Expert-ID") or request.headers.get("X-Target-Doctor-ID")
+        if selected_expert_id:
+            selected_doctor_reset = selected_doctor_context.set(selected_expert_id)
+            logger.debug(f"🩺 [Middleware] Context Locked to Expert ID: {selected_expert_id}")
 
     # 4. Process Request
     try:
@@ -101,3 +110,4 @@ async def django_auth_middleware(request: Request, call_next):
         if token_reset: user_context.reset(token_reset)
         if role_reset: role_context.reset(role_reset)
         if resource_reset: resource_context.reset(resource_reset)
+        if selected_doctor_reset: selected_doctor_context.reset(selected_doctor_reset)

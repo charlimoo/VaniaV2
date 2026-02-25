@@ -121,7 +121,7 @@ export function ManualReportDialog({ patientId, sessionNumber, sessionTitle, ini
             <Textarea 
               value={summary} 
               onChange={(e) => setSummary(e.target.value)} 
-              placeholder="آنچه در جلسه گذشت و تحلیل شما (قابل مشاهده برای بیمار)"
+              placeholder="آنچه در جلسه گذشت و تحلیل شما (قابل مشاهده برای مراجعه کننده)"
               className="min-h-[120px] bg-muted/20 border-border/50 focus:bg-background transition-colors text-sm leading-relaxed"
             />
           </div>
