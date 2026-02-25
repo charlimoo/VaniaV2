@@ -7,7 +7,8 @@ import {
   HelpCircle,
   MessageSquare,
   Stethoscope,  
-  Users         
+  Users,
+  Route
 } from "lucide-react";
 
 export const APP_CONFIG = {
@@ -88,7 +89,14 @@ export const APP_CONFIG = {
         icon: LayoutDashboard,
         visible: true
       },
-      // [NEW] Communication Hub
+      {
+        key: "journey",
+        title: "مسیر من",
+        url: "/dashboard/journey",
+        icon: Route,
+        visible: true,
+        allowedRoles: ["visitor"]
+      },
       {
         key: "messages",
         title: "پیام‌ها",

@@ -38,7 +38,12 @@ const TYPE_LABELS = {
 };
 
 export function PatientLibraryTab({ library, onEdit }: Props) {
-  const runtime = useAssistantRuntime();
+  let runtime: ReturnType<typeof useAssistantRuntime> | null = null;
+  try {
+    runtime = useAssistantRuntime();
+  } catch {
+    runtime = null;
+  }
 
   const handleMarkConsumed = (resource: Resource) => {
     if (resource.status === "CONSUMED") return;
@@ -56,13 +61,15 @@ export function PatientLibraryTab({ library, onEdit }: Props) {
     // 2. Trigger Agent Logic ("Therapeutic Companion")
     // This sends a message as the user, prompting the Agent to use the 'mark_resource_consumed' tool
     // and start a reflective conversation per the 6-Phase Protocol.
-    runtime.thread.append({
-      role: "user",
-      content: [{ 
-        type: "text", 
-        text: `من "${resource.title}" (${TYPE_LABELS[resource.type]}) را تمام کردم. مایلم درباره‌اش صحبت کنم.` 
-      }]
-    });
+    if (runtime) {
+      runtime.thread.append({
+        role: "user",
+        content: [{
+          type: "text",
+          text: `من "${resource.title}" (${TYPE_LABELS[resource.type]}) را تمام کردم. مایلم درباره‌اش صحبت کنم.`
+        }]
+      });
+    }
   };
 
   const activeResources = library.filter(r => r.status === "SUGGESTED");

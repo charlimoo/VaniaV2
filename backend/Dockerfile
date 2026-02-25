@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # ########## STAGE 1: Builder (Heavy Lifting) ##########
 FROM python:3.11-slim AS builder
 
@@ -16,7 +18,8 @@ RUN apt-get update && apt-get install -y \
 # 3. NOW copy requirements and install the rest.
 # Even if requirements.txt changes, the layers above (Model Download) remain cached.
 COPY requirements.txt .
-RUN pip install --user -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --user -r requirements.txt
 
 
 # ########## STAGE 2: Final (Lightweight Runtime) ##########

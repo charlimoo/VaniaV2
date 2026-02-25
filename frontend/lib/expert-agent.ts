@@ -1,7 +1,7 @@
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 import type { AgentService } from "@/lib/types";
 
-const DEFAULT_EXPERT_AGENT_SLUG = "vania-doctor-assistant";
+const DEFAULT_EXPERT_AGENT_SLUG = "tarahi-jalasat-ravan-darman";
 
 export async function resolveExpertCaseAgentSlug(): Promise<string> {
   try {
@@ -15,7 +15,7 @@ export async function resolveExpertCaseAgentSlug(): Promise<string> {
         service.requires_visitor_selector === true &&
         (service.access_status === "OWNED" || service.access_status === "FREE")
     );
-    return target?.slug || DEFAULT_EXPERT_AGENT_SLUG;
+    return  DEFAULT_EXPERT_AGENT_SLUG || target?.slug;
   } catch {
     return DEFAULT_EXPERT_AGENT_SLUG;
   }

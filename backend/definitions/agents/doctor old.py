@@ -97,6 +97,7 @@ AGENT = AgentDef(
     system_prompt=VANIA_DOCTOR_SYSTEM_PROMPT,
     is_free=False,
     audience="EXPERT",
+    tags=["داشبورد"],
     eligible_expert_professions=["psychologist"],
     requires_visitor_selector=True,
     demo_config=DemoConfigDef(

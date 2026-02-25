@@ -4,9 +4,15 @@ x-base-environment:
   entrypoint:
     - /app/start.sh
   restart: always
+x-backend-image: &backend-image vaniaapp-backend:prod
+x-frontend-image: &frontend-image vaniaapp-frontend:prod
 services:
   app:
-    build: ./backend
+    build:
+      context: ./backend
+      cache_from:
+        - *backend-image
+    image: *backend-image
     # image: 'charlievespera/vaniaapp-backend:latest'
     env_file:
       - .env
@@ -26,7 +32,13 @@ services:
       minio:
         condition: service_started
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      cache_from:
+        - *frontend-image
+    image: *frontend-image
     # image: 'charlievespera/vaniaapp-frontend:latest'
     container_name: vania_frontend
     environment:
@@ -39,7 +51,7 @@ services:
     depends_on:
       - app
   worker:
-    build: ./backend
+    image: *backend-image
     # image: 'charlievespera/vaniaapp-backend:latest'
     env_file:
       - .env
@@ -52,7 +64,7 @@ services:
       - cache
       - db
   beat:
-    build: ./backend
+    image: *backend-image
     # image: 'charlievespera/vaniaapp-backend:latest'
     env_file:
       - .env

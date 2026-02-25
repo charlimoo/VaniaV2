@@ -52,7 +52,7 @@ export function PatientSelector() {
 
   // 1. Sync Store with URL (Clear if removed)
   useEffect(() => {
-    const urlPatientId = searchParams.get('patientId');
+    const urlPatientId = searchParams.get('visitorId') || searchParams.get('patientId');
     if (!urlPatientId && activePatientId) {
         resetVaniaStore();
     }
@@ -63,7 +63,7 @@ export function PatientSelector() {
     // We fetch if:
     // A) The popover is opened
     // B) OR we have a patientId in URL but haven't loaded the name yet (Refresh scenario)
-    const urlPatientId = searchParams.get('patientId');
+    const urlPatientId = searchParams.get('visitorId') || searchParams.get('patientId');
     const shouldFetch = (popoverOpen || urlPatientId) && !hasLoaded && !loading;
 
     if (shouldFetch) {
@@ -130,7 +130,7 @@ export function PatientSelector() {
   const displayName = activePatientName || selectedPatient?.full_name || "انتخاب پرونده مراجع";
 
   // Check if we are in a loading state for the initial hydration
-  const isHydrating = loading && !hasLoaded && searchParams.get('patientId');
+  const isHydrating = loading && !hasLoaded && (searchParams.get('visitorId') || searchParams.get('patientId'));
 
   return (
     <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>

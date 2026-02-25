@@ -82,7 +82,7 @@ class TaskService:
                     type=Notification.Type.TASK_ASSIGNED,
                     title="تکلیف جدید ثبت شد",
                     message=f"تکلیف: {text}",
-                    payload={"url": "/dashboard/tasks"}
+                    payload={"url": "/dashboard/journey"}
                 )
             except Exception:
                 pass
