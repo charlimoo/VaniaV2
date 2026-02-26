@@ -82,9 +82,15 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # Looks for 'DATABASE_URL' in env. Defaults to SQLite if not found (fallback).
 DEFAULT_DB_URL = f"sqlite:///{BASE_DIR / 'db.sqlite3'}"
 DATABASE_URL = os.getenv('DATABASE_URL', DEFAULT_DB_URL)
+DB_CONN_MAX_AGE = int(os.getenv('DB_CONN_MAX_AGE', '0'))
+DB_CONN_HEALTH_CHECKS = os.getenv('DB_CONN_HEALTH_CHECKS', 'True').lower() in ('true', '1', 't')
 
 DATABASES = {
-    'default': dj_database_url.parse(DATABASE_URL, conn_max_age=100),
+    'default': dj_database_url.parse(
+        DATABASE_URL,
+        conn_max_age=DB_CONN_MAX_AGE,
+        conn_health_checks=DB_CONN_HEALTH_CHECKS,
+    ),
 }
 
 # --- 5. AGNO / SQLALCHEMY CONNECTION STRING ---

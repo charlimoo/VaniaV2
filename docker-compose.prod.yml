@@ -19,7 +19,7 @@ services:
     entrypoint:
       - /app/start.sh
     restart: always
-    command: 'gunicorn core.asgi:application --preload --timeout 120 -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000'
+    command: 'gunicorn core.asgi:application --preload --timeout 120 -w ${WEB_CONCURRENCY:-2} -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000'
     ports:
       - '8001:8000'
     depends_on:
@@ -58,7 +58,7 @@ services:
     entrypoint:
       - /app/start.sh
     restart: always
-    command: 'celery -A core worker -l info'
+    command: 'celery -A core worker -l info --concurrency=${CELERY_WORKER_CONCURRENCY:-2} --max-tasks-per-child=${CELERY_MAX_TASKS_PER_CHILD:-200}'
     depends_on:
       - app
       - cache

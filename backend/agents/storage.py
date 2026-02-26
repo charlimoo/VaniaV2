@@ -2,6 +2,7 @@
 import logging
 from enum import Enum
 from typing import Optional, Any
+from functools import lru_cache
 
 from django.conf import settings
 from agno.db.postgres import PostgresDb
@@ -18,6 +19,7 @@ class SessionType(str, Enum):
 # Constants
 TABLE_NAME = "agent_sessions"
 
+@lru_cache(maxsize=1)
 def get_storage():
     """
     Factory function to return the correct Storage Engine based on Django settings.
