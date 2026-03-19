@@ -1,6 +1,5 @@
 "use client";
 
-import { useAssistantRuntime } from "@assistant-ui/react";
 import { BookOpen, Film, Feather, Check, Quote, Star } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,6 +20,8 @@ interface Resource {
 
 interface Props {
   library: Resource[];
+  selectedDoctorId?: number | null;
+  selectedCaseId?: string;
   onEdit: (delta: any) => void;
 }
 
@@ -38,13 +39,6 @@ const TYPE_LABELS = {
 };
 
 export function PatientLibraryTab({ library, onEdit }: Props) {
-  let runtime: ReturnType<typeof useAssistantRuntime> | null = null;
-  try {
-    runtime = useAssistantRuntime();
-  } catch {
-    runtime = null;
-  }
-
   const handleMarkConsumed = (resource: Resource) => {
     if (resource.status === "CONSUMED") return;
 
@@ -57,19 +51,6 @@ export function PatientLibraryTab({ library, onEdit }: Props) {
     toast.success("تبریک! اثر در آرشیو ثبت شد.", {
       description: "بیایید درباره آن گفتگو کنیم."
     });
-
-    // 2. Trigger Agent Logic ("Therapeutic Companion")
-    // This sends a message as the user, prompting the Agent to use the 'mark_resource_consumed' tool
-    // and start a reflective conversation per the 6-Phase Protocol.
-    if (runtime) {
-      runtime.thread.append({
-        role: "user",
-        content: [{
-          type: "text",
-          text: `من "${resource.title}" (${TYPE_LABELS[resource.type]}) را تمام کردم. مایلم درباره‌اش صحبت کنم.`
-        }]
-      });
-    }
   };
 
   const activeResources = library.filter(r => r.status === "SUGGESTED");

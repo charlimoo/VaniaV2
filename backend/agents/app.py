@@ -6,7 +6,9 @@ from .middleware import django_auth_middleware
 
 # --- NEW: Import Canvas Router ---
 from canvas.routes import router as canvas_router
+from core.ai_provider import get_ai_provider_config
 
+get_ai_provider_config()
 fastapi_app = FastAPI(title="Aegra Agent Runtime")
 
 fastapi_app.add_middleware(

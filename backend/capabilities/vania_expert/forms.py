@@ -5,6 +5,7 @@ from capabilities.base import BaseFormHandler
 from capabilities.registry import register_form_handler
 from users.models import CustomUser, ContextDefinition, UserContextEntry
 from users.services import user_context_manager
+from vania_core.case_service import CaseService
 from .forms import ALL_FORMS_LIST
 logger = logging.getLogger(__name__)
 
@@ -65,8 +66,8 @@ class MarriageAssessmentHandler(BaseFormHandler):
         ]
 
         total_score = 0
-        # The PDF indicates a denominator of 130 for the calculation
-        max_possible_score = 130 
+        # The paper form uses a fixed denominator of 130 for its percentage formula.
+        max_possible_score = 130
 
         for key in score_keys:
             val = data.get(key)
@@ -105,6 +106,8 @@ class MarriageAssessmentHandler(BaseFormHandler):
             "form_key": "MARRIAGE_V1",
             "form_title": "مشاوره ازدواج",
             "submitted_by_doctor_id": user.id,
+            "case_id": data.get("case_id"),
+            "visibility_scope": "CASE_PRIVATE",
             "raw_scores": data, # Keep original inputs
             "calculated_total": total_score,
             "max_score": max_possible_score,
@@ -169,31 +172,39 @@ class GenericFormHandler(BaseFormHandler):
 
         # --- 2. Context Persistence ---
         timestamp = int(time.time())
-        # We create a unique key for this specific entry in the DB
-        # e.g. clinical_form_social_v1_1700000000
-        instance_key = f"clinical_form_{final_key.lower()}_{timestamp}"
-        
-        ContextDefinition.objects.get_or_create(
-            key=instance_key,
-            defaults={'description': description}
-        )
-
         final_data = {
             "handler": "GenericFormHandler",
             "submitted_by_doctor_id": user.id,
             "submission_timestamp": timestamp,
             "form_key": final_key,    # [IMPORTANT] Used by frontend to map field labels
             "form_title": final_title, # [IMPORTANT] Used for the header
+            "case_id": None if final_key == "BASE_PROFILE_V1" else data.get("case_id"),
+            "visibility_scope": "SHARED_BASE" if final_key == "BASE_PROFILE_V1" else "CASE_PRIVATE",
             **data
         }
 
-        entry = user_context_manager.add_entry(
-            user=patient,
-            key=instance_key,
-            data=final_data,
-            source=UserContextEntry.SourceType.USER, # Marked as USER since doctor filled it manually
-            creator=user
-        )
+        if final_key == "BASE_PROFILE_V1":
+            entry = CaseService.save_base_profile(
+                patient,
+                final_data,
+                creator=user,
+                source=UserContextEntry.SourceType.USER,
+            )
+        else:
+            # We create a unique key for this specific entry in the DB
+            # e.g. clinical_form_social_v1_1700000000
+            instance_key = f"clinical_form_{final_key.lower()}_{timestamp}"
+            ContextDefinition.objects.get_or_create(
+                key=instance_key,
+                defaults={'description': description}
+            )
+            entry = user_context_manager.add_entry(
+                user=patient,
+                key=instance_key,
+                data=final_data,
+                source=UserContextEntry.SourceType.USER, # Marked as USER since doctor filled it manually
+                creator=user
+            )
 
         logger.info(f"Saved Form '{final_title}' for Patient {patient.id}.")
 

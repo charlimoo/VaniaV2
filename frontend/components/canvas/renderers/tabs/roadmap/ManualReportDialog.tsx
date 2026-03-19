@@ -20,6 +20,7 @@ interface Flashcard {
 
 interface Props {
   patientId: number;
+  caseId?: string;
   sessionNumber: number;
   sessionTitle: string;
   initialData?: {
@@ -31,7 +32,7 @@ interface Props {
   onSuccess: (data: any) => void;
 }
 
-export function ManualReportDialog({ patientId, sessionNumber, sessionTitle, initialData, trigger, onSuccess }: Props) {
+export function ManualReportDialog({ patientId, caseId, sessionNumber, sessionTitle, initialData, trigger, onSuccess }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   
@@ -75,6 +76,7 @@ export function ManualReportDialog({ patientId, sessionNumber, sessionTitle, ini
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           patient_id: patientId,
+          case_id: caseId,
           session_number: sessionNumber,
           summary: summary,
           private_notes: privateNotes,

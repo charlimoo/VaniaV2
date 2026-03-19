@@ -18,20 +18,19 @@ class PatientJourneyCanvas(BaseCanvas):
     @classmethod
     def get_default_state(cls) -> Dict[str, Any]:
         return {
-            # UI Header
-            "greeting": "خوش آمدید",
-            
-            # Tasks from all experts
-            # Structure: [{id, text, status, doctor_name, due_date, created_at}]
-            "todo_list": [],
-            
-            # Session logs (Sanitized - Public summary only)
-            # Structure: [{date, summary, doctor_name, mood_rating}]
-            "timeline_events": [],
-            
-            # Active connections
-            # Structure: [{id, name, specialty, avatar}]
-            "my_doctors": []
+            "is_active": True,
+            "active_view": "CASES",
+            "active_tab": "CASE_OVERVIEW",
+            "base_profile": {
+                "form": {},
+                "forms": [],
+                "tests": [],
+            },
+            "cases": [],
+            "selected_case_id": None,
+            "selected_case": None,
+            "my_doctors": [],
+            "selected_doctor_id": None,
         }
 
     @classmethod
@@ -39,18 +38,18 @@ class PatientJourneyCanvas(BaseCanvas):
         return {
             "type": "object",
             "properties": {
-                "greeting": {"type": "string"},
-                "todo_list": {
+                "active_view": {"type": "string"},
+                "active_tab": {"type": "string"},
+                "selected_case_id": {"type": ["string", "null"]},
+                "my_doctors": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
                             "id": {"type": "string"},
-                            "text": {"type": "string"},
-                            "status": {"type": "string"}
+                            "name": {"type": "string"}
                         }
                     }
-                },
-                "timeline_events": {"type": "array"}
+                }
             }
         }

@@ -1,306 +1,377 @@
-# backend/capabilities/vania_patient/tools.py
 import json
 import logging
-from typing import List, Optional, AsyncGenerator, Any
+from typing import Any, AsyncGenerator, List, Optional
 
-from agno.tools import tool
 from agno.run import RunContext
+from agno.tools import tool
 from asgiref.sync import sync_to_async
 
-# --- Capability Registry ---
+from agents.context import selected_case_context, selected_doctor_context
 from capabilities.base import BaseCapability
 from capabilities.registry import register_tool
 from canvas.events import CanvasUpdateEvent
-
-# --- Vania Core Services & Models ---
+from services.models_canvas import CanvasInstance
 from users.models import CustomUser
+from vania_core.case_service import CaseService
+from vania_core.medication_service import MedicationService
 from vania_core.models import Notification, TreatmentConnection
 from vania_core.patient_service import PatientDataService
-from vania_core.task_service import TaskService
-from vania_core.appendix_service import AppendixService
-from agents.context import selected_doctor_context
-from services.models_canvas import CanvasInstance
+from vania_core.profile_snapshots import get_expert_profile_payload, get_visitor_base_profile_payload
+from vania_core.services import AppendixService, TaskService
+from vania_core.case_files_service import CaseFilesService
+from vania_core.tests_service import ClinicalTestsService
 
 logger = logging.getLogger(__name__)
 
 
-async def _resolve_selected_doctor_id(patient: CustomUser) -> Optional[int]:
-    raw = selected_doctor_context.get()
-    if raw:
+async def _resolve_selected_case(patient: CustomUser) -> Optional[dict]:
+    selected_case_id = selected_case_context.get()
+    cases = await sync_to_async(CaseService.get_accessible_cases_for_patient)(patient)
+    if selected_case_id:
+        for case_item in cases:
+            if case_item.get("id") == selected_case_id:
+                return case_item
+    raw_doctor = selected_doctor_context.get()
+    if raw_doctor:
         try:
-            selected = int(raw)
-            has_access = await sync_to_async(
-                lambda: TreatmentConnection.objects.filter(
-                    patient=patient,
-                    doctor_id=selected,
-                    status=TreatmentConnection.Status.ACTIVE
-                ).exists()
-            )()
-            if has_access:
-                return selected
+            doctor_id = int(raw_doctor)
+            match = next((item for item in cases if int(item.get("doctor_id") or 0) == doctor_id), None)
+            if match:
+                return match
         except (TypeError, ValueError):
             pass
-    conn = await sync_to_async(
-        lambda: TreatmentConnection.objects.filter(
-            patient=patient,
-            status=TreatmentConnection.Status.ACTIVE
-        ).order_by("-updated_at").first()
-    )()
-    return conn.doctor_id if conn else None
-
-# ==============================================================================
-# == HELPER FUNCTIONS
-# ==============================================================================
-
-async def _refresh_patient_canvas(session_id: str, patient: CustomUser) -> AsyncGenerator[Any, None]:
-    """
-    Asynchronously fetches fresh visitor data and pushes a CanvasUpdateEvent
-    to the frontend to keep the UI in sync with the backend state.
-    """
-    if not session_id:
-        return
-
-    try:
-        doctor_id = await _resolve_selected_doctor_id(patient)
-        data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(patient, doctor_id)
-        canvas_id = await _get_canvas_id(session_id, "VANIA_PATIENT_JOURNEY")
-
-        yield CanvasUpdateEvent(value={
-            "canvas_id": canvas_id,
-            "component_key": "VANIA_PATIENT_JOURNEY",
-            "delta": {
-                "tasks": data["tasks"],
-                "timeline": data["timeline"],
-                "library": data["library"],
-                "active_goals": data["active_goals"],
-                "my_doctors": data.get("my_doctors", []),
-                "selected_doctor_id": data.get("selected_doctor_id"),
-            }
-        })
-    except Exception as e:
-        logger.error(f"Failed to refresh visitor canvas: {e}")
+    return cases[0] if cases else None
 
 
 async def _get_canvas_id(session_id: str, component_key: str) -> Optional[str]:
-    """
-    Resolves the specific Canvas Instance UUID for the current session.
-    Frontend update handler requires canvas_id to apply deltas in realtime.
-    """
-    try:
-        instance = await CanvasInstance.objects.filter(
-            session_id=session_id,
-            canvas_def__component_key=component_key
-        ).afirst()
-        return str(instance.id) if instance else None
-    except Exception as e:
-        logger.error(f"Failed to resolve canvas id for {component_key}: {e}")
-        return None
+    instance = await CanvasInstance.objects.filter(
+        session_id=session_id,
+        canvas_def__component_key=component_key
+    ).afirst()
+    return str(instance.id) if instance else None
+
+
+async def _refresh_patient_canvas(session_id: str, patient: CustomUser, forced_case_id: Optional[str] = None) -> AsyncGenerator[Any, None]:
+    if not session_id:
+        return
+    selected_case = await _resolve_selected_case(patient)
+    if forced_case_id:
+        selected_case = next((item for item in await sync_to_async(CaseService.get_accessible_cases_for_patient)(patient) if item.get("id") == forced_case_id), selected_case)
+    data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(
+        patient,
+        int(selected_case["doctor_id"]) if selected_case else None,
+        selected_case.get("id") if selected_case else None,
+    )
+    canvas_id = await _get_canvas_id(session_id, "VANIA_PATIENT_JOURNEY")
+    yield CanvasUpdateEvent(value={
+        "canvas_id": canvas_id,
+        "component_key": "VANIA_PATIENT_JOURNEY",
+        "delta": data,
+    })
+
 
 async def _notify_doctor(patient: CustomUser, title: str, message: str, doctor_id: Optional[int] = None):
-    """
-    Sends a system notification to the visitor's active expert.
-    Used when tasks are completed or important milestones are reached.
-    """
-    try:
-        @sync_to_async
-        def send():
-            # Find the primary active connection
-            qs = TreatmentConnection.objects.filter(
-                patient=patient, 
-                status=TreatmentConnection.Status.ACTIVE
-            ).select_related('doctor')
-            if doctor_id:
-                conn = qs.filter(doctor_id=doctor_id).first()
-            else:
-                conn = qs.first()
-            
-            if conn and conn.doctor:
-                Notification.objects.create(
-                    recipient=conn.doctor,
-                    sender=patient,
-                    type=Notification.Type.TASK_ASSIGNED, # Or a generic type
-                    title=title,
-                    message=message,
-                    payload={"url": "/dashboard/patients"} # Deep link to expert dashboard
-                )
-        await send()
-    except Exception as e:
-        logger.error(f"Failed to notify expert: {e}")
+    @sync_to_async
+    def send():
+        qs = TreatmentConnection.objects.filter(
+            patient=patient,
+            status=TreatmentConnection.Status.ACTIVE
+        ).select_related("doctor")
+        conn = qs.filter(doctor_id=doctor_id).first() if doctor_id else qs.first()
+        if conn and conn.doctor:
+            Notification.objects.create(
+                recipient=conn.doctor,
+                sender=patient,
+                type=Notification.Type.TASK_ASSIGNED,
+                title=title,
+                message=message,
+                payload={"url": "/dashboard/patients"},
+            )
+    await send()
 
-# ==============================================================================
-# == TOOLS
-# ==============================================================================
+
+@tool
+async def get_my_visitor_profile(run_context: RunContext) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    payload = await sync_to_async(get_visitor_base_profile_payload)(patient)
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def get_active_expert_profile(run_context: RunContext) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    if not selected_case:
+        yield "No active case found."
+        return
+    doctor = await CustomUser.objects.aget(pk=selected_case["doctor_id"])
+    payload = await sync_to_async(get_expert_profile_payload)(doctor)
+    if not payload:
+        yield "❌ Expert profile not found."
+        return
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
 
 @tool
 async def load_my_journey(run_context: RunContext) -> AsyncGenerator[Any, None]:
-    """
-    Loads the user's complete context (Tasks, History, Library, Goals).
-    Use this at the start of the conversation to understand the visitor's current status.
-    """
-    user_id = run_context.user_id
-    if not user_id: 
+    if not run_context.user_id:
         yield "Error: User context missing."
         return
-    
-    try:
-        patient = await CustomUser.objects.aget(pk=user_id)
-        doctor_id = await _resolve_selected_doctor_id(patient)
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    if run_context.session_id:
+        async for evt in _refresh_patient_canvas(run_context.session_id, patient):
+            yield evt
+    data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(
+        patient,
+        int(selected_case["doctor_id"]) if selected_case else None,
+        selected_case.get("id") if selected_case else None,
+    )
+    yield json.dumps({
+        "selected_case": {
+            "id": data.get("selected_case_id"),
+            "title": data.get("selected_case", {}).get("title"),
+            "doctor_name": data.get("selected_case", {}).get("doctor_name"),
+        },
+        "pending_tasks_count": len([t for t in data.get("tasks", []) if t.get("status") == "PENDING"]),
+        "library_items": len(data.get("library", [])),
+        "timeline_count": len(data.get("timeline", [])),
+    }, ensure_ascii=False, indent=2)
 
-        # 1. Trigger UI Refresh
-        if run_context.session_id:
-            async for evt in _refresh_patient_canvas(run_context.session_id, patient):
-                yield evt
-
-        # 2. Return Context to LLM
-        data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(patient, doctor_id)
-        
-        # Summarize to save tokens while providing key info
-        context_summary = {
-            "current_phase": data["current_phase"],
-            "active_goals_count": len(data["active_goals"]),
-            "active_goals_preview": data["active_goals"][:3],
-            "pending_tasks_count": len([t for t in data['tasks'] if t['status'] == 'PENDING']),
-            "next_task": next((t['text'] for t in data['tasks'] if t['status'] == 'PENDING'), None),
-            "unread_library_items": len([r for r in data['library'] if r.status == 'SUGGESTED']),
-            "last_session_date": data['timeline'][0]['date'] if data['timeline'] else None
-        }
-
-        yield json.dumps(context_summary, ensure_ascii=False, indent=2)
-
-    except Exception as e:
-        logger.error(f"Error loading journey: {e}")
-        yield "An error occurred while loading your profile."
 
 @tool
-async def mark_task_complete(
-    run_context: RunContext, 
-    task_text_or_id: str, 
-    reflection: str = ""
-) -> AsyncGenerator[Any, None]:
-    """
-    Marks a specific task from the 'Rescue Net' (Tour-e Nejat) as completed.
-    
-    Args:
-        task_text_or_id: The exact text or ID of the task.
-        reflection: Optional user thoughts or feelings about the task.
-    """
-    user_id = run_context.user_id
-    patient = await CustomUser.objects.aget(pk=user_id)
-    doctor_id = await _resolve_selected_doctor_id(patient)
+async def select_case(run_context: RunContext, case_id: str) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    case_item = next((item for item in await sync_to_async(CaseService.get_accessible_cases_for_patient)(patient) if item.get("id") == case_id), None)
+    if not case_item:
+        yield "❌ Case not found."
+        return
+    if run_context.session_id:
+        async for evt in _refresh_patient_canvas(run_context.session_id, patient, case_id):
+            yield evt
+    yield f"✅ پرونده «{case_item['title']}» انتخاب شد."
 
-    # Find the task
-    all_tasks = await sync_to_async(TaskService.get_patient_tasks)(patient, doctor_id)
-    target_task = next((t for t in all_tasks if t.get('id') == task_text_or_id or task_text_or_id.lower() in t.get('text', '').lower()), None)
-            
+
+@tool
+async def mark_task_complete(run_context: RunContext, task_text_or_id: str, reflection: str = "") -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    if not selected_case:
+        yield "No active case found."
+        return
+    doctor_id = int(selected_case["doctor_id"])
+    case_id = selected_case["id"]
+    all_tasks = await sync_to_async(TaskService.get_patient_tasks)(patient, doctor_id, case_id)
+    target_task = next((t for t in all_tasks if t.get("id") == task_text_or_id or task_text_or_id.lower() in t.get("text", "").lower()), None)
     if not target_task:
         yield f"Could not find a pending task matching '{task_text_or_id}'."
         return
+    success = await sync_to_async(TaskService.update_task_status)(patient, target_task["id"], "DONE", reflection, doctor_id, case_id)
+    if not success:
+        yield "Failed to update task status."
+        return
+    if run_context.session_id:
+        async for evt in _refresh_patient_canvas(run_context.session_id, patient):
+            yield evt
+    await _notify_doctor(patient, "تکلیف انجام شد", f"مراجع {patient.full_name} تکلیف «{target_task['text']}» را انجام داد.\nبازخورد: {reflection or 'ندارد'}", doctor_id)
+    yield f"✅ Task '{target_task['text']}' marked as done."
 
-    # Update Status
-    success = await sync_to_async(TaskService.update_task_status)(
-        patient, target_task['id'], "DONE", reflection, doctor_id
-    )
-
-    if success:
-        # 1. Update Visitor Canvas
-        if run_context.session_id:
-            async for evt in _refresh_patient_canvas(run_context.session_id, patient):
-                yield evt
-        
-        # 2. Notify Expert
-        await _notify_doctor(
-            patient, 
-            "تکلیف انجام شد", 
-            f"مراجع {patient.full_name} تکلیف «{target_task['text']}» را انجام داد.\nبازخورد: {reflection or 'ندارد'}",
-            doctor_id=doctor_id
-        )
-
-        yield f"✅ Task '{target_task['text']}' marked as done. I have notified the assigned expert: {target_task.get('doctor_name', 'Expert')}."
-    else:
-        yield "Failed to update task status in the database."
 
 @tool
-async def mark_resource_consumed(
-    run_context: RunContext,
-    resource_title_or_id: str
-) -> AsyncGenerator[Any, None]:
-    """
-    Marks a book, movie, or poem from the 'Thought Appendix' (Library) as read/watched.
-    """
-    user_id = run_context.user_id
-    patient = await CustomUser.objects.aget(pk=user_id)
-    doctor_id = await _resolve_selected_doctor_id(patient)
-    
-    library = await sync_to_async(AppendixService.get_library)(patient, doctor_id)
-    
+async def mark_resource_consumed(run_context: RunContext, resource_title_or_id: str) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    if not selected_case:
+        yield "No active case found."
+        return
+    doctor_id = int(selected_case["doctor_id"])
+    case_id = selected_case["id"]
+    library = await sync_to_async(AppendixService.get_library)(patient, doctor_id, case_id)
     target = next((r for r in library.resources if r.id == resource_title_or_id or resource_title_or_id.lower() in r.title.lower()), None)
-    
     if not target:
         yield f"Resource '{resource_title_or_id}' not found in your library."
         return
-
-    success = await sync_to_async(AppendixService.update_resource_status)(
-        patient, target.id, "CONSUMED", doctor_id
-    )
-    
-    if success:
-        # Update UI
-        if run_context.session_id:
-            async for evt in _refresh_patient_canvas(run_context.session_id, patient):
-                yield evt
-        
-        yield f"Marked '{target.title}' as consumed. Ask the user reflective questions about it."
-    else:
+    success = await sync_to_async(AppendixService.update_resource_status)(patient, target.id, "CONSUMED", doctor_id, case_id)
+    if not success:
         yield "Failed to update resource status."
+        return
+    if run_context.session_id:
+        async for evt in _refresh_patient_canvas(run_context.session_id, patient):
+            yield evt
+    yield f"Marked '{target.title}' as consumed."
+
 
 @tool
 async def reflect_on_session(run_context: RunContext) -> AsyncGenerator[Any, None]:
-    """
-    Retrieves the summary and flashcards of the LAST completed session.
-    Use this to help the visitor journal or review what they learned.
-    """
-    user_id = run_context.user_id
-    patient = await CustomUser.objects.aget(pk=user_id)
-    doctor_id = await _resolve_selected_doctor_id(patient)
-    
-    # Fetch aggregated data
-    data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(patient, doctor_id)
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    data = await sync_to_async(PatientDataService.get_patient_dashboard_snapshot)(
+        patient,
+        int(selected_case["doctor_id"]) if selected_case else None,
+        selected_case.get("id") if selected_case else None,
+    )
     timeline = data.get("timeline", [])
-    
     if not timeline:
         yield "You haven't completed any sessions yet to reflect on."
         return
+    last_session = timeline[0]
+    yield json.dumps({
+        "session_number": last_session.get("session_number"),
+        "title": last_session.get("title"),
+        "date": last_session.get("date"),
+        "flashcards": last_session.get("flashcards", []),
+        "public_summary": last_session.get("summary", ""),
+    }, ensure_ascii=False, indent=2)
 
-    last_session = timeline[0] # Newest first (reverse order in service)
-    
-    # Construct response for the LLM
-    response = {
-        "session_number": last_session['session_number'],
-        "title": last_session['title'],
-        "date": last_session['date'],
-        "flashcards": last_session['flashcards'],
-        "public_summary": last_session['summary'],
-        "guidance": "Ask the user which of these techniques they practiced this week."
-    }
-    
-    yield json.dumps(response, ensure_ascii=False, indent=2)
 
-# ==============================================================================
-# == FACTORY
-# ==============================================================================
+@tool
+async def get_current_medications(run_context: RunContext) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    if not selected_case:
+        yield "No active case found."
+        return
+    plan = await sync_to_async(MedicationService.get_plan)(
+        patient,
+        int(selected_case["doctor_id"]),
+        selected_case["id"],
+    )
+    yield json.dumps(plan.model_dump(), ensure_ascii=False, indent=2)
+
+
+@tool
+async def get_my_test_result_details(run_context: RunContext, test_id: str) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    payload = await sync_to_async(ClinicalTestsService.read_test_result_bundle)(
+        patient,
+        test_id,
+        int(selected_case["doctor_id"]) if selected_case else None,
+        selected_case.get("id") if selected_case else None,
+    )
+    if not payload:
+        yield "❌ Test not found."
+        return
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def list_case_files(
+    run_context: RunContext,
+    page: int = 1,
+    page_size: int = 10,
+    query: str = "",
+    file_type: str = "",
+    readable_only: bool = False,
+    sort: str = "recent",
+) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    if not selected_case:
+        yield "No active case found."
+        return
+    payload = await sync_to_async(CaseFilesService.list_files)(
+        patient,
+        int(selected_case["doctor_id"]),
+        selected_case["id"],
+        page=page,
+        page_size=page_size,
+        query=query or None,
+        file_type=file_type or None,
+        readable_only=readable_only,
+        sort=sort or "recent",
+    )
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def search_case_files(
+    run_context: RunContext,
+    query: str,
+    page: int = 1,
+    page_size: int = 5,
+    file_id: str = "",
+) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    if not selected_case:
+        yield "No active case found."
+        return
+    payload = await sync_to_async(CaseFilesService.search_files)(
+        patient,
+        int(selected_case["doctor_id"]),
+        selected_case["id"],
+        query=query,
+        page=page,
+        page_size=page_size,
+        file_id=file_id or None,
+    )
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def read_case_file(
+    run_context: RunContext,
+    file_id: str,
+    mode: str = "excerpt",
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    chunk_start: Optional[int] = None,
+    chunk_count: int = 3,
+    query: str = "",
+) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    if not selected_case:
+        yield "No active case found."
+        return
+    payload = await sync_to_async(CaseFilesService.read_file)(
+        patient,
+        int(selected_case["doctor_id"]),
+        selected_case["id"],
+        file_id=file_id,
+        mode=mode,
+        page=page,
+        page_size=page_size,
+        chunk_start=chunk_start,
+        chunk_count=chunk_count,
+        query=query or None,
+    )
+    if not payload:
+        yield "❌ File not found."
+        return
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def get_case_file_details(run_context: RunContext, file_id: str) -> AsyncGenerator[Any, None]:
+    patient = await CustomUser.objects.aget(pk=run_context.user_id)
+    selected_case = await _resolve_selected_case(patient)
+    if not selected_case:
+        yield "No active case found."
+        return
+    payload = await sync_to_async(CaseFilesService.get_file_details)(patient, int(selected_case["doctor_id"]), selected_case["id"], file_id)
+    if not payload:
+        yield "❌ File not found."
+        return
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
 
 @register_tool("vania_visitor")
 class VaniaVisitorToolFactory(BaseCapability):
-    """
-    Factory class that provides the tools for the Vania Visitor Agent.
-    """
-
     def get_tools(self, user, session_id) -> List:
         return [
+            get_my_visitor_profile,
+            get_active_expert_profile,
             load_my_journey,
+            select_case,
             mark_task_complete,
             mark_resource_consumed,
-            reflect_on_session
+            reflect_on_session,
+            get_current_medications,
+            get_my_test_result_details,
+            list_case_files,
+            search_case_files,
+            read_case_file,
+            get_case_file_details,
         ]
-
-

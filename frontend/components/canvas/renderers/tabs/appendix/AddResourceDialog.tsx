@@ -21,11 +21,12 @@ import { CulturalResource, ResourceType } from "@/lib/types/vania";
 
 interface Props {
   patientId: number;
+  caseId?: string;
   onSuccess: (resource: CulturalResource) => void;
   trigger?: React.ReactNode;
 }
 
-export function AddResourceDialog({ patientId, onSuccess, trigger }: Props) {
+export function AddResourceDialog({ patientId, caseId, onSuccess, trigger }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -49,6 +50,7 @@ export function AddResourceDialog({ patientId, onSuccess, trigger }: Props) {
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           patient_id: patientId,
+          case_id: caseId,
           title: formData.title,
           type: formData.type,
           creator: formData.creator,

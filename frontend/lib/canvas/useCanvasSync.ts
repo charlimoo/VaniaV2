@@ -13,6 +13,7 @@ interface UseCanvasSyncProps {
   onRename?: (title: string) => void;
   patientId?: number | null;
   doctorId?: number | null;
+  caseId?: string | null;
   isDraft?: boolean;
 }
 
@@ -24,6 +25,7 @@ export function useCanvasSync({
   onRename, 
   patientId,
   doctorId,
+  caseId,
   isDraft = false,
 }: UseCanvasSyncProps) {
   
@@ -34,8 +36,10 @@ export function useCanvasSync({
   // [FIX] Import the new setter
   const setContextResourceId = useCanvasStore((s) => s.setContextResourceId);
   const setContextDoctorId = useCanvasStore((s) => s.setContextDoctorId);
+  const setContextCaseId = useCanvasStore((s) => s.setContextCaseId);
   
   const hydratedRef = useRef<string | null>(null);
+  const lastHydrationKeyRef = useRef<string | null>(null);
 
   // [FIX] Effect to sync patientId to the global store
   useEffect(() => {
@@ -54,6 +58,10 @@ export function useCanvasSync({
     }
   }, [doctorId, setContextDoctorId]);
 
+  useEffect(() => {
+    setContextCaseId(caseId || null);
+  }, [caseId, setContextCaseId]);
+
   // --- Hydration Function ---
   const hydrate = async () => {
     if (!token || !threadId) {
@@ -69,6 +77,9 @@ export function useCanvasSync({
       if (doctorId) {
           queryParams += `&expert_id=${doctorId}&doctor_id=${doctorId}`;
       }
+      if (caseId) {
+          queryParams += `&case_id=${caseId}`;
+      }
 
       const url = `${API_BASE_URL}/agent/canvas/state/${threadId}${queryParams}`;
       const headers = getAuthHeaders();
@@ -80,6 +91,9 @@ export function useCanvasSync({
           headers["X-Target-Expert-ID"] = doctorId.toString();
           headers["X-Target-Doctor-ID"] = doctorId.toString();
       }
+      if (caseId) {
+          headers["X-Target-Case-ID"] = caseId;
+      }
 
       const res = await fetch(url, { headers });
       
@@ -88,6 +102,13 @@ export function useCanvasSync({
         if (Array.isArray(data.canvases)) {
             setInstances(data.canvases);
             hydratedRef.current = threadId;
+            lastHydrationKeyRef.current = [
+              threadId,
+              agentId || "",
+              patientId || "",
+              doctorId || "",
+              caseId || "",
+            ].join(":");
         }
       } else {
           console.error(`[CanvasSync] ❌ Fetch failed: ${res.status}`);
@@ -100,14 +121,22 @@ export function useCanvasSync({
   // --- Initial Hydration Effect ---
   useEffect(() => {
     if (!token || !threadId || !agentId) return;
-    
-    if (hydratedRef.current !== threadId) {
-        hydrate();
-    } else if ((patientId || doctorId) && hydratedRef.current === threadId) {
-        hydrate();
+
+    const hydrationKey = [
+      threadId,
+      agentId,
+      patientId || "",
+      doctorId || "",
+      caseId || "",
+    ].join(":");
+
+    if (lastHydrationKeyRef.current === hydrationKey) {
+      return;
     }
+
+    hydrate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId, token, agentId, patientId, doctorId]);
+  }, [threadId, token, agentId, patientId, doctorId, caseId]);
 
   // --- Real-time Subscription Effect ---
   useEffect(() => {

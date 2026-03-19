@@ -4,7 +4,8 @@ import logging
 from users.services import user_context_manager
 from users.models import UserContextEntry
 from .schemas import ThoughtAppendix, CulturalResource
-from .context_scope import migrate_legacy_to_scoped_once, build_scoped_key
+from .context_scope import migrate_legacy_to_scoped_once, migrate_doctor_scoped_to_case_once, build_scoped_key
+from .case_service import build_case_scoped_key
 
 logger = logging.getLogger(__name__)
 
@@ -16,12 +17,20 @@ class AppendixService:
     CONTEXT_KEY = "thought_appendix_library"
 
     @staticmethod
-    def get_library(patient, doctor_id=None) -> ThoughtAppendix:
+    def get_library(patient, doctor_id=None, case_id=None) -> ThoughtAppendix:
         """
         Retrieves the library Pydantic model for a patient.
         Creates a default empty library if one doesn't exist.
         """
-        if doctor_id:
+        if doctor_id and case_id:
+            entry = migrate_doctor_scoped_to_case_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                case_id=case_id,
+                base_key=AppendixService.CONTEXT_KEY,
+                default_factory=lambda: ThoughtAppendix().model_dump(),
+            )
+        elif doctor_id:
             entry = migrate_legacy_to_scoped_once(
                 patient=patient,
                 doctor_id=doctor_id,
@@ -36,7 +45,7 @@ class AppendixService:
         if not entry:
             user_context_manager.set_singleton_context(
                 user=patient,
-                key=build_scoped_key(AppendixService.CONTEXT_KEY, doctor_id) if doctor_id else AppendixService.CONTEXT_KEY,
+                key=build_case_scoped_key(AppendixService.CONTEXT_KEY, doctor_id, case_id) if doctor_id and case_id else build_scoped_key(AppendixService.CONTEXT_KEY, doctor_id) if doctor_id else AppendixService.CONTEXT_KEY,
                 data=default_lib.model_dump(),
                 source=UserContextEntry.SourceType.SYSTEM
             )
@@ -49,11 +58,11 @@ class AppendixService:
             return default_lib
 
     @staticmethod
-    def add_resource(patient, doctor, resource_data: dict, doctor_id=None):
+    def add_resource(patient, doctor, resource_data: dict, doctor_id=None, case_id=None):
         """
         Adds a new resource to the library.
         """
-        library = AppendixService.get_library(patient, doctor_id=doctor_id)
+        library = AppendixService.get_library(patient, doctor_id=doctor_id, case_id=case_id)
         
         new_item = CulturalResource(
             id=str(uuid.uuid4()),
@@ -63,7 +72,7 @@ class AppendixService:
         library.resources.insert(0, new_item)
         
         # Persist
-        key = build_scoped_key(AppendixService.CONTEXT_KEY, doctor_id) if doctor_id else AppendixService.CONTEXT_KEY
+        key = build_case_scoped_key(AppendixService.CONTEXT_KEY, doctor_id, case_id) if doctor_id and case_id else build_scoped_key(AppendixService.CONTEXT_KEY, doctor_id) if doctor_id else AppendixService.CONTEXT_KEY
         entry = user_context_manager.get_context(patient, key)
         if entry:
             entry.data = library.model_dump()
@@ -72,12 +81,12 @@ class AppendixService:
         return new_item
 
     @staticmethod
-    def update_resource_status(patient, resource_id: str, status: str, doctor_id=None) -> bool:
+    def update_resource_status(patient, resource_id: str, status: str, doctor_id=None, case_id=None) -> bool:
         """
         Updates the status of a resource (e.g. from 'SUGGESTED' to 'CONSUMED').
         Used when a patient finishes a book or movie.
         """
-        library = AppendixService.get_library(patient, doctor_id=doctor_id)
+        library = AppendixService.get_library(patient, doctor_id=doctor_id, case_id=case_id)
         
         updated = False
         for res in library.resources:
@@ -87,7 +96,7 @@ class AppendixService:
                 break
         
         if updated:
-            key = build_scoped_key(AppendixService.CONTEXT_KEY, doctor_id) if doctor_id else AppendixService.CONTEXT_KEY
+            key = build_case_scoped_key(AppendixService.CONTEXT_KEY, doctor_id, case_id) if doctor_id and case_id else build_scoped_key(AppendixService.CONTEXT_KEY, doctor_id) if doctor_id else AppendixService.CONTEXT_KEY
             entry = user_context_manager.get_context(patient, key)
             if entry:
                 entry.data = library.model_dump()

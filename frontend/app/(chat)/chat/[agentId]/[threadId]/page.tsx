@@ -35,7 +35,7 @@ import { AgentService } from "@/lib/types";
 import { useCanvasStore } from "@/lib/canvas/store";
 import { useWorkspaceStore } from "@/lib/workspace-store";
 import { useCanvasSync } from "@/lib/canvas/useCanvasSync";
-import { threadManager, simpleAttachmentAdapter } from "@/lib/SimpleThreadAdapters";
+import { createSimpleAttachmentAdapter, threadManager } from "@/lib/SimpleThreadAdapters";
 import { useUser } from "@/hooks/use-user";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 import { useChatLayout } from "@/components/chat/chat-layout-context";
@@ -61,6 +61,7 @@ export default function ChatPage() {
   const patientId = patientIdParam ? parseInt(patientIdParam) : null;
   const doctorIdParam = searchParams.get('expertId') || searchParams.get('doctorId');
   const doctorId = doctorIdParam ? parseInt(doctorIdParam) : null;
+  const caseId = searchParams.get('caseId');
 
   const { setActivePatient } = useVaniaStore();
 
@@ -90,6 +91,7 @@ export default function ChatPage() {
   const canvasPanelRef = useRef<ImperativePanelHandle>(null);
   const isPollingTitle = useRef(false);
   const isLayoutTransitioning = useRef(false);
+  const restoredContextRef = useRef<string | null>(null);
 
   const isDraft = threadId.startsWith("local-") && !isCreatedOnBackend;
 
@@ -100,10 +102,24 @@ export default function ChatPage() {
   // If we open a saved thread (not local) AND there is no patientId in the URL,
   // we check the backend to see if this thread belongs to a patient.
   useEffect(() => {
-    if (threadId.startsWith("local-") || (patientId && doctorId)) return;
+    if (threadId.startsWith("local-")) return;
+
+    const restoreKey = [
+      threadId,
+      patientId || "",
+      doctorId || "",
+      caseId || "",
+    ].join(":");
+
+    if (restoredContextRef.current === restoreKey) return;
+    if (patientId && doctorId) {
+      restoredContextRef.current = restoreKey;
+      return;
+    }
 
     const restoreContext = async () => {
         try {
+            restoredContextRef.current = restoreKey;
             const token = localStorage.getItem("accessToken");
             if (!token) return;
 
@@ -117,6 +133,7 @@ export default function ChatPage() {
                 const sessionState = data.session_state || {};
                 let resolvedPatientId = patientId || sessionState.visitor_id || sessionState.patient_id || null;
                 let resolvedDoctorId = doctorId || sessionState.selected_expert_id || sessionState.selected_doctor_id || null;
+                let resolvedCaseId = caseId || sessionState.selected_case_id || null;
                 if (!resolvedDoctorId && resolvedPatientId) {
                   const localExpert = localStorage.getItem(getExpertLocalKey(Number(resolvedPatientId)));
                   const localDoctor = localStorage.getItem(getDoctorLocalKey(Number(resolvedPatientId)));
@@ -140,8 +157,13 @@ export default function ChatPage() {
                     const query = new URLSearchParams();
                     if (resolvedPatientId) query.set("visitorId", String(resolvedPatientId));
                     if (resolvedDoctorId) query.set("expertId", String(resolvedDoctorId));
+                    if (resolvedCaseId) query.set("caseId", String(resolvedCaseId));
                     if (query.toString()) {
-                      router.replace(`/chat/${agentId}/${threadId}?${query.toString()}`);
+                      const targetUrl = `/chat/${agentId}/${threadId}?${query.toString()}`;
+                      const currentUrl = `/chat/${agentId}/${threadId}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
+                      if (targetUrl !== currentUrl) {
+                        router.replace(targetUrl);
+                      }
                     }
                 }
             }
@@ -151,7 +173,7 @@ export default function ChatPage() {
     };
 
     restoreContext();
-  }, [threadId, patientId, doctorId, agentId, router, setActivePatient]);
+  }, [threadId, patientId, doctorId, caseId, agentId, router, setActivePatient, searchParams]);
 
   useEffect(() => {
     if (!threadId.startsWith("local-")) return;
@@ -277,12 +299,15 @@ export default function ChatPage() {
         extraHeaders["X-Target-Expert-ID"] = doctorId.toString();
         extraHeaders["X-Target-Doctor-ID"] = doctorId.toString();
     }
+    if (caseId) {
+        extraHeaders["X-Target-Case-ID"] = caseId;
+    }
 
     return new HttpAgent({
       url: `${API_BASE_URL}/agent/agui?agent_id=${agentId}`,
       headers: { ...headers, ...extraHeaders } as Record<string, string>
     });
-  }, [agentId, agentSettings, isPreviewMode, patientId, doctorId]); // Add patientId dependency
+  }, [agentId, agentSettings, isPreviewMode, patientId, doctorId, caseId]); // Add patientId dependency
 
   // 6. Subscription & Smart Title Polling
   useEffect(() => {
@@ -371,12 +396,30 @@ export default function ChatPage() {
     }
   }, [threadId, agentId, refreshThreads, patientId, doctorId]); // Add patientId dependency
 
+  const ensureThread = useCallback(async () => {
+    const token = localStorage.getItem("accessToken");
+    if (!threadId.startsWith("local-") || !token || isCreatedOnBackend) return;
+    await threadManager.createThreadOnBackend(threadId, threadTitle, agentId, token, patientId, doctorId);
+    setIsCreatedOnBackend(true);
+    refreshThreads();
+  }, [agentId, doctorId, isCreatedOnBackend, patientId, refreshThreads, threadId, threadTitle]);
+
+  const attachmentsAdapter = useMemo(
+    () =>
+      createSimpleAttachmentAdapter({
+        threadId,
+        agentId,
+        ensureThread,
+      }),
+    [threadId, agentId, ensureThread],
+  );
+
   const runtime = useAgUiRuntime({
     agent,
     threadId,
     agentId,
     onNewMessageWrapper: handleNewMessage,
-    adapters: { history: historyAdapter, attachments: simpleAttachmentAdapter },
+    adapters: { history: historyAdapter, attachments: attachmentsAdapter },
     onError: (err) => console.error("Runtime Error:", err)
   });
 
@@ -390,6 +433,7 @@ export default function ChatPage() {
     onRename: (title) => { setThreadTitle(title); refreshThreads(); },
     patientId: patientId, // [FIX] Pass patientId to hydration hook
     doctorId: doctorId
+    ,caseId
   });
 
   useEffect(() => {
@@ -405,6 +449,9 @@ export default function ChatPage() {
       session_state.selected_expert_id = doctorId;
       session_state.selected_doctor_id = doctorId;
     }
+    if (caseId) {
+      session_state.selected_case_id = caseId;
+    }
     if (Object.keys(session_state).length === 0) return;
     fetch(`${API_BASE_URL}/agent/sessions/${threadId}`, {
       method: "PATCH",
@@ -414,7 +461,7 @@ export default function ChatPage() {
       },
       body: JSON.stringify({ session_state }),
     }).catch(() => {});
-  }, [threadId, patientId, doctorId]);
+  }, [threadId, patientId, doctorId, caseId]);
 
   // 9. Mobile Gestures
   const handleMobileToggle = () => setMobileView(prev => prev === 'chat' ? 'canvas' : 'chat');

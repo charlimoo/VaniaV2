@@ -3,14 +3,22 @@ import logging
 import mimetypes
 from botocore.exceptions import BotoCoreError, ClientError
 from django.db.models import Q
+from django.conf import settings
+from django.contrib.admin.views.decorators import staff_member_required
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
-from django.http import FileResponse
+from django.http import FileResponse, HttpResponse
 from django.core.files.storage import default_storage
+from django.utils.dateparse import parse_datetime
+from django.shortcuts import redirect
+from django.urls import reverse
 from rest_framework import generics, status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 import json
+from typing import Optional
 from django.utils import timezone
 # --- Vania Core Imports ---
 from .services import (
@@ -22,6 +30,7 @@ from .services import (
     ProfileService,
 )
 from .tests_service import ClinicalTestsService
+from .case_files_service import CaseFilesService
 from .flashcards import normalize_flashcards
 from .models import (
     TreatmentConnection, 
@@ -31,8 +40,11 @@ from .models import (
     SecureMessage, 
     RoleVerificationRequest, 
     Location, 
+    GoogleCalendarConnection,
+    ExpertMeetingLink,
 )
 from .permissions import IsDoctorUser, VaniaAccessControl
+from .google_calendar import calendar_service, SCOPES
 from .serializers import (
     # Existing Serializers
     InvitePatientSerializer, ConnectionListSerializer, RespondConnectionSerializer,
@@ -47,10 +59,99 @@ from .serializers import (
 
 # --- User Imports ---
 from users.models import CustomUser, UserContextEntry
-from users.roles import is_expert
+from users.roles import is_expert, is_visitor
+from capabilities.vania_visitor.forms import FORM_BASE_PROFILE
+from .case_service import CaseService
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
+
+
+def _resolve_expert_case_scope(request, patient, case_id: Optional[str]):
+    """
+    Returns (case_item, doctor_scope, can_edit) for expert requests.
+    For read-only shared cases, doctor_scope is the owner expert id.
+    """
+    if not is_expert(request.user):
+        return None, None, True
+    if not case_id:
+        return None, int(request.user.id), True
+    case_item = CaseService.get_accessible_case_for_expert(patient, request.user, case_id)
+    if not case_item:
+        return None, None, False
+    return case_item, int(case_item.get("doctor_id") or 0), bool(case_item.get("can_edit"))
+
+
+def _build_google_redirect_uri(request):
+    redirect_uri = request.build_absolute_uri(reverse("vania_core:google-calendar-callback"))
+    if not settings.DEBUG:
+        redirect_uri = redirect_uri.replace("http://", "https://")
+    return redirect_uri
+
+
+@staff_member_required
+def google_calendar_login(request):
+    from google_auth_oauthlib.flow import Flow
+
+    config = GoogleCalendarConnection.get_solo()
+    if not config.client_id or not config.client_secret:
+        return HttpResponse("Please provide Client ID and Client Secret in admin first.", status=400)
+
+    client_config = {
+        "web": {
+            "client_id": config.client_id,
+            "client_secret": config.client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
+
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        redirect_uri=_build_google_redirect_uri(request),
+    )
+    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
+    return redirect(auth_url)
+
+
+@staff_member_required
+def google_calendar_callback(request):
+    from google_auth_oauthlib.flow import Flow
+
+    config = GoogleCalendarConnection.get_solo()
+    if "error" in request.GET:
+        return HttpResponse(f"Google Auth Error: {request.GET.get('error')}", status=400)
+
+    client_config = {
+        "web": {
+            "client_id": config.client_id,
+            "client_secret": config.client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+    }
+
+    flow = Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        redirect_uri=_build_google_redirect_uri(request),
+    )
+
+    try:
+        authorization_response = request.build_absolute_uri()
+        if not settings.DEBUG:
+            authorization_response = authorization_response.replace("http://", "https://")
+
+        flow.fetch_token(authorization_response=authorization_response)
+        credentials = flow.credentials
+        config.token_json = json.loads(credentials.to_json())
+        config.is_connected = True
+        config.save(update_fields=["token_json", "is_connected", "updated_at"])
+        return HttpResponse("Successfully connected to Google Calendar. You can close this tab.")
+    except Exception as exc:
+        logger.exception("Google OAuth callback failed.")
+        return HttpResponse(f"Authentication failed: {exc}", status=500)
 
 # ==============================================================================
 # == 1. PATIENT & DOCTOR MANAGEMENT VIEWS
@@ -200,6 +301,119 @@ class DoctorProfileView(APIView):
             return Response(serializer.data)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class MyBaseProfileView(APIView):
+    """Allows a visitor to manage their shared base profile outside the canvas."""
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def get(self, request):
+        if not is_visitor(request.user):
+            return Response({"error": "این بخش فقط برای مراجعان فعال است."}, status=status.HTTP_403_FORBIDDEN)
+
+        entry = CaseService.get_latest_base_profile_entry(request.user)
+        data = entry.data if entry and isinstance(entry.data, dict) else {}
+        payload = {
+            **data,
+            "full_name": data.get("full_name") or request.user.full_name or "",
+            "mobile_phone": data.get("mobile_phone") or request.user.phone_number or "",
+            "email": data.get("email") or request.user.email or "",
+            "form_key": FORM_BASE_PROFILE["key"],
+            "form_title": FORM_BASE_PROFILE["title"],
+        }
+        return Response({
+            "form": FORM_BASE_PROFILE,
+            "data": payload,
+        })
+
+    def patch(self, request):
+        if not is_visitor(request.user):
+            return Response({"error": "این بخش فقط برای مراجعان فعال است."}, status=status.HTTP_403_FORBIDDEN)
+
+        incoming = request.data if isinstance(request.data, dict) else {}
+        existing_entry = CaseService.get_latest_base_profile_entry(request.user)
+        existing_data = existing_entry.data if existing_entry and isinstance(existing_entry.data, dict) else {}
+        payload = {
+            **existing_data,
+            **incoming,
+            "form_key": FORM_BASE_PROFILE["key"],
+            "form_title": FORM_BASE_PROFILE["title"],
+            "visibility_scope": "SHARED_BASE",
+            "case_id": None,
+        }
+
+        entry = CaseService.save_base_profile(request.user, payload, creator=request.user, source=UserContextEntry.SourceType.USER)
+
+        updated_fields = []
+        next_full_name = (payload.get("full_name") or "").strip()
+        next_email = (payload.get("email") or "").strip()
+
+        if next_full_name and next_full_name != (request.user.full_name or ""):
+            request.user.full_name = next_full_name
+            updated_fields.append("full_name")
+
+        if next_email != (request.user.email or ""):
+            if next_email:
+                try:
+                    validate_email(next_email)
+                except ValidationError:
+                    return Response({"error": "ایمیل وارد شده معتبر نیست."}, status=status.HTTP_400_BAD_REQUEST)
+            request.user.email = next_email
+            updated_fields.append("email")
+
+        if updated_fields:
+            request.user.save(update_fields=updated_fields)
+
+        return Response({
+            "status": "success",
+            "data": entry.data,
+        })
+
+
+class CaseShareOptionsView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, case_id):
+        if not is_visitor(request.user):
+            return Response({"error": "Only visitors can manage case shares."}, status=status.HTTP_403_FORBIDDEN)
+        payload = CaseService.get_case_share_options_for_patient(request.user, case_id)
+        if not payload:
+            return Response({"error": "Case not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(payload)
+
+
+class CaseShareGrantView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, case_id):
+        if not is_visitor(request.user):
+            return Response({"error": "Only visitors can manage case shares."}, status=status.HTTP_403_FORBIDDEN)
+        expert_id = request.data.get("expert_id") or request.data.get("doctor_id")
+        if not expert_id:
+            return Response({"error": "expert_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        grantee = get_object_or_404(CustomUser, pk=expert_id)
+        try:
+            payload = CaseService.grant_read_only_access(
+                patient=request.user,
+                case_id=case_id,
+                grantee_doctor=grantee,
+                granted_by=request.user,
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(payload, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, case_id, expert_id=None):
+        if not is_visitor(request.user):
+            return Response({"error": "Only visitors can manage case shares."}, status=status.HTTP_403_FORBIDDEN)
+        target_expert_id = expert_id or request.data.get("expert_id") or request.query_params.get("expert_id")
+        if not target_expert_id:
+            return Response({"error": "expert_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        revoked = CaseService.revoke_read_only_access(request.user, case_id, int(target_expert_id))
+        if not revoked:
+            return Response({"error": "Share not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"status": "revoked"})
 
 # ==============================================================================
 # == 2. CONNECTION & REQUEST MANAGEMENT VIEWS
@@ -361,7 +575,7 @@ class ConversationListView(APIView):
             
             last_msg = SecureMessage.objects.filter(Q(sender=user, recipient=other) | Q(sender=other, recipient=user)).last()
             unread = SecureMessage.objects.filter(sender=other, recipient=user, is_read=False).count()
-            results.append({"user_id": other.id, "name": other.full_name or other.phone_number,"phone_number": other.phone_number, "avatar": avatar, "role_label": role_label, "specialty": specialty, "last_message": last_msg.content if last_msg else "گفتگو را شروع کنید...", "last_message_date": last_msg.created_at if last_msg else conn.updated_at, "unread_count": unread})
+            results.append({"user_id": other.id, "name": other.full_name or other.phone_number,"phone_number": other.phone_number, "email": other.email, "avatar": avatar, "role_label": role_label, "specialty": specialty, "last_message": last_msg.content if last_msg else "گفتگو را شروع کنید...", "last_message_date": last_msg.created_at if last_msg else conn.updated_at, "unread_count": unread})
         results.sort(key=lambda x: x['last_message_date'], reverse=True)
         serializer = ConversationSerializer(results, many=True)
         return Response(serializer.data)
@@ -384,6 +598,118 @@ class MessageThreadView(APIView):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
+class CreateMeetLinkView(APIView):
+    """
+    Allows experts to generate a Google Meet link for an active visitor conversation.
+    The response includes a Persian prefill message for the existing composer.
+    """
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    parser_classes = [JSONParser]
+
+    def post(self, request, other_user_id):
+        visitor = get_object_or_404(CustomUser, pk=other_user_id)
+
+        has_connection = TreatmentConnection.objects.filter(
+            doctor=request.user,
+            patient=visitor,
+            status=TreatmentConnection.Status.ACTIVE,
+        ).exists()
+        if not has_connection:
+            return Response(
+                {"error": "You do not have an active connection with this visitor."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        config = GoogleCalendarConnection.get_solo()
+        if not config.is_connected or not config.token_json:
+            return Response(
+                {"error": "Google Calendar is not connected in admin yet."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        raw_scheduled_at = request.data.get("scheduled_at")
+        parsed_scheduled_at = parse_datetime(raw_scheduled_at) if raw_scheduled_at else None
+        if raw_scheduled_at and parsed_scheduled_at is None:
+            return Response({"error": "Scheduled time is invalid."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if parsed_scheduled_at and timezone.is_naive(parsed_scheduled_at):
+            parsed_scheduled_at = timezone.make_aware(parsed_scheduled_at, timezone.get_current_timezone())
+
+        started_at = parsed_scheduled_at or timezone.now()
+        ends_at = started_at + timezone.timedelta(minutes=60)
+        default_emails = [email for email in [request.user.email, visitor.email] if email]
+        has_requested_emails = "attendee_emails" in request.data
+        requested_emails = request.data.get("attendee_emails") if has_requested_emails else default_emails
+        if not isinstance(requested_emails, list):
+            return Response({"error": "Attendee emails must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+
+        attendee_emails: list[str] = []
+        for email in requested_emails:
+            if not email:
+                continue
+            normalized_email = str(email).strip().lower()
+            if not normalized_email or normalized_email in attendee_emails:
+                continue
+            try:
+                validate_email(normalized_email)
+            except ValidationError:
+                return Response(
+                    {"error": f"Invalid attendee email: {normalized_email}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            attendee_emails.append(normalized_email)
+
+        summary_name = visitor.full_name or visitor.phone_number or f"Visitor {visitor.id}"
+        description = (
+            f"Expert: {request.user.full_name or request.user.phone_number}\n"
+            f"Visitor: {summary_name}\n"
+            f"Created in Vania messaging."
+        )
+
+        try:
+            meet_result = calendar_service.create_meet_event(
+                summary=f"جلسه آنلاین | {summary_name}",
+                description=description,
+                started_at=started_at,
+                ends_at=ends_at,
+                attendee_emails=attendee_emails,
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            logger.exception("Meet creation failed for expert=%s visitor=%s", request.user.id, visitor.id)
+            return Response(
+                {"error": "Creating the Meet link failed. Please try again."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        ExpertMeetingLink.objects.create(
+            creator=request.user,
+            visitor=visitor,
+            google_event_id=meet_result.event_id,
+            meet_link=meet_result.meet_link,
+            attendee_emails=meet_result.attendee_emails,
+            started_at=started_at,
+            ends_at=ends_at,
+        )
+
+        prefill_message = (
+            "سلام وقتتون بخیر\n"
+            "اتاق جلسه آنلاین آماده شده و می‌تونید از طریق لینک زیر وارد شوید:\n"
+            f"{meet_result.meet_link}\n"
+            "لطفا در زمان هماهنگ‌شده وارد جلسه شوید."
+        )
+
+        return Response(
+            {
+                "meet_link": meet_result.meet_link,
+                "google_event_id": meet_result.event_id,
+                "attendee_emails": meet_result.attendee_emails,
+                "prefill_message": prefill_message,
+            }
+        )
+
 # ==============================================================================
 # == 4. VCOS 6-PHASE PROTOCOL API VIEWS
 # ==============================================================================
@@ -394,6 +720,7 @@ class RoadmapView(APIView):
 
     def get(self, request):
         patient_id = request.query_params.get('visitor_id') or request.query_params.get('patient_id')
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
         if not patient_id:
             return Response({"error": "'patient_id' query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
         
@@ -401,13 +728,21 @@ class RoadmapView(APIView):
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
             return Response({"error": "Access denied to this patient's records."}, status=status.HTTP_403_FORBIDDEN)
 
-        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id)
+        _, doctor_scope, _ = _resolve_expert_case_scope(request, patient, case_id)
+        if case_id and not doctor_scope:
+            return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=doctor_scope or request.user.id, case_id=case_id)
         serializer = TherapyRoadmapSerializer(roadmap)
         return Response(serializer.data)
 
     def post(self, request):
         patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
         patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied to this patient's records."}, status=status.HTTP_403_FORBIDDEN)
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
         
         serializer = AddSessionSerializer(data=request.data)
         if serializer.is_valid():
@@ -417,9 +752,55 @@ class RoadmapView(APIView):
                 instructions=serializer.validated_data.get('instructions', ""),
                 scheduled_date=serializer.validated_data.get('scheduled_date'),
                 doctor_id=request.user.id,
+                case_id=case_id,
             )
             return Response(new_session.model_dump(), status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request):
+        patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied to this patient's records."}, status=status.HTTP_403_FORBIDDEN)
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id, case_id=case_id)
+
+        if "treatment_approaches" in request.data:
+            raw_items = request.data.get("treatment_approaches") or []
+            if not isinstance(raw_items, list):
+                return Response({"error": "'treatment_approaches' must be a list."}, status=status.HTTP_400_BAD_REQUEST)
+            roadmap.treatment_approaches = [str(item).strip() for item in raw_items if str(item).strip()]
+
+        RoadmapService.save_roadmap(patient, roadmap, doctor_id=request.user.id, case_id=case_id)
+        return Response(TherapyRoadmapSerializer(roadmap).data)
+
+    def delete(self, request):
+        patient_id = request.query_params.get('visitor_id') or request.query_params.get('patient_id')
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        session_number = request.query_params.get("session_number")
+        if not patient_id or not session_number:
+            return Response({"error": "'patient_id' and 'session_number' are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied to this patient's records."}, status=status.HTTP_403_FORBIDDEN)
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+
+        deleted = RoadmapService.delete_session(
+            patient,
+            int(session_number),
+            doctor_id=request.user.id,
+            case_id=case_id,
+        )
+        if not deleted:
+            return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id, case_id=case_id)
+        return Response(TherapyRoadmapSerializer(roadmap).data)
 
 
 class ClinicalTestsView(APIView):
@@ -484,10 +865,17 @@ class ClinicalTestsView(APIView):
         patient = self.get_patient(request)
         if patient is None:
             return Response({"error": "Access denied or missing patient_id."}, status=403)
-        doctor_scope = request.user.id if self._is_doctor(request.user) else self._resolve_patient_doctor_scope(request)
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if self._is_doctor(request.user):
+            _, doctor_scope, _ = _resolve_expert_case_scope(request, patient, case_id)
+            if case_id and not doctor_scope:
+                return Response({"error": "Access denied for this case."}, status=403)
+            doctor_scope = doctor_scope or request.user.id
+        else:
+            doctor_scope = self._resolve_patient_doctor_scope(request)
         return Response({
             "catalog": ClinicalTestsService.list_catalog(),
-            "tests": ClinicalTestsService.get_tests(patient, doctor_id=doctor_scope),
+            "tests": ClinicalTestsService.get_tests(patient, doctor_id=doctor_scope, case_id=case_id),
         })
 
     def post(self, request):
@@ -502,7 +890,10 @@ class ClinicalTestsView(APIView):
         catalog_id = request.data.get("catalog_id")
         title = request.data.get("title")
         url = request.data.get("url")
-        result_summary = request.data.get("result_summary")
+        result_summary = request.data.get("result_summary") or request.data.get("result_text")
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=403)
         new_test = ClinicalTestsService.add_test(
             patient=patient,
             created_by=request.user,
@@ -511,24 +902,38 @@ class ClinicalTestsView(APIView):
             url=url,
             result_summary=result_summary,
             doctor_id=request.user.id,
+            case_id=case_id,
         )
         return Response(new_test, status=201)
 
     def put(self, request, test_id):
-        doctor_guard = self._require_doctor(request)
-        if doctor_guard is not None:
-            return doctor_guard
-
         patient = self.get_patient(request)
         if patient is None:
             return Response({"error": "Access denied or missing patient_id."}, status=403)
 
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
+        payload = dict(request.data)
+        if self._is_doctor(request.user):
+            _, doctor_scope, can_edit = _resolve_expert_case_scope(request, patient, case_id)
+            if case_id and not doctor_scope:
+                return Response({"error": "Access denied for this case."}, status=403)
+            if case_id and not can_edit:
+                return Response({"error": "This case is read-only for you."}, status=403)
+            doctor_scope = doctor_scope or request.user.id
+        else:
+            doctor_scope = self._resolve_patient_doctor_scope(request)
+        if not self._is_doctor(request.user):
+            payload = {
+                "result_text": request.data.get("result_text", request.data.get("result_summary", "")),
+                "result_summary": request.data.get("result_text", request.data.get("result_summary", "")),
+            }
         updated = ClinicalTestsService.update_test(
             patient=patient,
             created_by=request.user,
             test_id=test_id,
-            payload=request.data,
-            doctor_id=request.user.id,
+            payload=payload,
+            doctor_id=doctor_scope,
+            case_id=case_id,
         )
         if not updated:
             return Response({"error": "Test not found."}, status=404)
@@ -543,11 +948,15 @@ class ClinicalTestsView(APIView):
         if patient is None:
             return Response({"error": "Access denied or missing patient_id."}, status=403)
 
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=403)
         deleted = ClinicalTestsService.delete_test(
             patient=patient,
             created_by=request.user,
             test_id=test_id,
             doctor_id=request.user.id,
+            case_id=case_id,
         )
         if not deleted:
             return Response({"error": "Test not found."}, status=404)
@@ -604,28 +1013,34 @@ class ClinicalTestFileUploadView(APIView):
         patient = self._resolve_patient(request)
         if patient is None:
             return Response({"error": "Access denied or missing patient_id."}, status=403)
+        is_doctor = is_expert(request.user)
 
         uploaded_file = request.FILES.get("file")
         if not uploaded_file:
             return Response({"error": "File is required."}, status=400)
 
-        if not uploaded_file.name.lower().endswith(".pdf"):
-            return Response({"error": "Only PDF files are allowed."}, status=400)
-
-        doctor_summary = request.data.get("result_summary", "")
-        auto_summarize = str(request.data.get("auto_summarize", "true")).lower() == "true"
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
 
         try:
-            doctor_scope = self._resolve_doctor_scope(request, patient)
-            updated = ClinicalTestsService.attach_pdf_and_summarize(
+            if is_doctor:
+                _, doctor_scope, can_edit = _resolve_expert_case_scope(request, patient, case_id)
+                if case_id and not doctor_scope:
+                    return Response({"error": "Access denied for this case."}, status=403)
+                if case_id and not can_edit:
+                    return Response({"error": "This case is read-only for you."}, status=403)
+                doctor_scope = doctor_scope or request.user.id
+            else:
+                doctor_scope = self._resolve_doctor_scope(request, patient)
+            updated = ClinicalTestsService.attach_test_file(
                 patient=patient,
                 created_by=request.user,
                 test_id=test_id,
                 uploaded_file=uploaded_file,
-                doctor_summary=doctor_summary,
-                auto_summarize=auto_summarize,
                 doctor_id=doctor_scope,
+                case_id=case_id,
             )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
         except (ClientError, BotoCoreError):
             logger.exception("Clinical test PDF upload failed due to object storage error.")
             return Response(
@@ -639,19 +1054,41 @@ class ClinicalTestFileUploadView(APIView):
 
 
 class ClinicalTestFileDeleteView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    permission_classes = [permissions.IsAuthenticated]
 
     def delete(self, request, test_id):
-        patient_id = request.query_params.get("visitor_id") or request.query_params.get("patient_id")
-        patient = get_object_or_404(CustomUser, pk=patient_id)
-        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
-            return Response({"error": "Access denied."}, status=403)
+        is_doctor = is_expert(request.user)
+        if is_doctor:
+            patient_id = request.query_params.get("visitor_id") or request.query_params.get("patient_id")
+            patient = get_object_or_404(CustomUser, pk=patient_id)
+            if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+                return Response({"error": "Access denied."}, status=403)
+            case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+            _, doctor_scope, can_edit = _resolve_expert_case_scope(request, patient, case_id)
+            if case_id and not doctor_scope:
+                return Response({"error": "Access denied for this case."}, status=403)
+            if case_id and not can_edit:
+                return Response({"error": "This case is read-only for you."}, status=403)
+            doctor_scope = doctor_scope or request.user.id
+        else:
+            patient = request.user
+            raw = (
+                request.headers.get("X-Target-Expert-ID")
+                or request.headers.get("X-Target-Doctor-ID")
+                or request.query_params.get("expert_id")
+                or request.query_params.get("doctor_id")
+            )
+            doctor_scope = int(raw) if raw and str(raw).isdigit() else None
 
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        attachment_id = request.query_params.get("attachment_id")
         removed = ClinicalTestsService.remove_test_file(
             patient=patient,
             created_by=request.user,
             test_id=test_id,
-            doctor_id=request.user.id,
+            attachment_id=attachment_id,
+            doctor_id=doctor_scope,
+            case_id=case_id,
         )
         if not removed:
             return Response({"error": "Test not found."}, status=404)
@@ -680,9 +1117,15 @@ class ClinicalTestFileDownloadView(APIView):
         if patient is None:
             return Response({"error": "Access denied or missing patient_id."}, status=403)
 
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
         is_doctor = is_expert(request.user)
-        doctor_scope = request.user.id if is_doctor else None
-        if not is_doctor:
+        if is_doctor:
+            _, doctor_scope, _ = _resolve_expert_case_scope(request, patient, case_id)
+            if case_id and not doctor_scope:
+                return Response({"error": "Access denied for this case."}, status=403)
+            doctor_scope = doctor_scope or request.user.id
+        else:
+            doctor_scope = None
             raw = (
                 request.headers.get("X-Target-Expert-ID")
                 or request.headers.get("X-Target-Doctor-ID")
@@ -707,23 +1150,235 @@ class ClinicalTestFileDownloadView(APIView):
                 ).order_by("-updated_at").first()
                 doctor_scope = conn.doctor_id if conn else None
 
-        test = ClinicalTestsService.get_test(
+        attachment_id = request.query_params.get("attachment_id")
+        attachment = ClinicalTestsService.get_test_attachment(
             patient,
             test_id,
-            doctor_id=doctor_scope
+            attachment_id=attachment_id,
+            doctor_id=doctor_scope,
+            case_id=case_id,
         )
-        if not test or not test.get("file_path"):
+        if not attachment or not attachment.get("file_path"):
             return Response({"error": "File not found."}, status=404)
 
-        storage_path = test["file_path"]
+        storage_path = attachment["file_path"]
         if not default_storage.exists(storage_path):
             return Response({"error": "Stored file missing."}, status=404)
 
-        file_name = test.get("file_name") or "test-result.pdf"
+        file_name = attachment.get("file_name") or "test-result"
         file_obj = default_storage.open(storage_path, "rb")
-        content_type = mimetypes.guess_type(file_name)[0] or "application/pdf"
+        content_type = attachment.get("content_type") or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
         response = FileResponse(file_obj, content_type=content_type)
         response["Content-Disposition"] = f'attachment; filename=\"{file_name}\"'
+        return response
+
+
+class CaseFilesView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def _resolve_patient(self, request):
+        if not is_expert(request.user):
+            return request.user
+
+        patient_id = (
+            request.query_params.get("visitor_id")
+            or request.query_params.get("patient_id")
+            or request.data.get("visitor_id")
+            or request.data.get("patient_id")
+        )
+        if not patient_id:
+            return None
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return None
+        return patient
+
+    def _resolve_doctor_scope(self, request, patient) -> Optional[int]:
+        if is_expert(request.user):
+            case_id = (
+                request.query_params.get("case_id")
+                or request.headers.get("X-Target-Case-ID")
+                or request.data.get("case_id")
+            )
+            _, doctor_scope, _ = _resolve_expert_case_scope(request, patient, case_id)
+            return doctor_scope or int(request.user.id)
+
+        raw = (
+            request.headers.get("X-Target-Expert-ID")
+            or request.headers.get("X-Target-Doctor-ID")
+            or request.query_params.get("expert_id")
+            or request.query_params.get("doctor_id")
+            or request.data.get("expert_id")
+            or request.data.get("doctor_id")
+        )
+        if raw:
+            try:
+                candidate = int(raw)
+            except (TypeError, ValueError):
+                candidate = None
+            if candidate and TreatmentConnection.objects.filter(
+                patient=patient,
+                doctor_id=candidate,
+                status=TreatmentConnection.Status.ACTIVE,
+            ).exists():
+                return candidate
+
+        conn = TreatmentConnection.objects.filter(
+            patient=patient,
+            status=TreatmentConnection.Status.ACTIVE,
+        ).order_by("-updated_at").first()
+        return int(conn.doctor_id) if conn else None
+
+    def get(self, request, file_id=None):
+        patient = self._resolve_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
+
+        doctor_scope = self._resolve_doctor_scope(request, patient)
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if is_expert(request.user) and case_id and not CaseService.expert_can_view_case(patient, request.user, case_id):
+            return Response({"error": "Access denied for this case."}, status=403)
+        if not doctor_scope or not case_id:
+            return Response({"error": "doctor_id and case_id are required."}, status=400)
+
+        if file_id:
+            payload = CaseFilesService.get_file_details(patient, doctor_scope, case_id, file_id)
+            if not payload:
+                return Response({"error": "File not found."}, status=404)
+            return Response(payload)
+
+        page = int(request.query_params.get("page", "1") or 1)
+        page_size = int(request.query_params.get("page_size", "10") or 10)
+        query = request.query_params.get("query")
+        file_type = request.query_params.get("file_type")
+        readable_only = str(request.query_params.get("readable_only", "")).lower() in {"1", "true", "yes"}
+        sort = request.query_params.get("sort", "recent")
+        payload = CaseFilesService.list_files(
+            patient=patient,
+            doctor_id=doctor_scope,
+            case_id=case_id,
+            page=page,
+            page_size=page_size,
+            query=query,
+            file_type=file_type,
+            readable_only=readable_only,
+            sort=sort,
+        )
+        return Response(payload)
+
+    def post(self, request, file_id=None):
+        patient = self._resolve_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
+
+        doctor_scope = self._resolve_doctor_scope(request, patient)
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if is_expert(request.user) and case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=403)
+        if not doctor_scope or not case_id:
+            return Response({"error": "doctor_id and case_id are required."}, status=400)
+
+        uploaded_file = request.FILES.get("file")
+        if not uploaded_file:
+            return Response({"error": "File is required."}, status=400)
+
+        try:
+            record = CaseFilesService.create_file(
+                patient=patient,
+                created_by=request.user,
+                doctor_id=doctor_scope,
+                case_id=case_id,
+                uploaded_file=uploaded_file,
+                name=request.data.get("name", ""),
+                description=request.data.get("description", ""),
+            )
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=400)
+        except (ClientError, BotoCoreError):
+            logger.exception("Case file upload failed due to object storage error.")
+            return Response(
+                {"error": "File storage is unavailable right now. Please try again shortly."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        return Response(record, status=201)
+
+    def delete(self, request, file_id):
+        patient = self._resolve_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
+
+        doctor_scope = self._resolve_doctor_scope(request, patient)
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if is_expert(request.user) and case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=403)
+        if not doctor_scope or not case_id:
+            return Response({"error": "doctor_id and case_id are required."}, status=400)
+
+        deleted = CaseFilesService.delete_file(
+            patient=patient,
+            created_by=request.user,
+            doctor_id=doctor_scope,
+            case_id=case_id,
+            file_id=file_id,
+        )
+        if not deleted:
+            return Response({"error": "File not found."}, status=404)
+        return Response({"status": "deleted"})
+
+
+class CaseFileDownloadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _resolve_patient(self, request):
+        if not is_expert(request.user):
+            return request.user
+
+        patient_id = request.query_params.get("visitor_id") or request.query_params.get("patient_id")
+        if not patient_id:
+            return None
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return None
+        return patient
+
+    def get(self, request, file_id):
+        patient = self._resolve_patient(request)
+        if patient is None:
+            return Response({"error": "Access denied or missing patient_id."}, status=403)
+
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if is_expert(request.user):
+            _, doctor_scope, _ = _resolve_expert_case_scope(request, patient, case_id)
+            if case_id and not doctor_scope:
+                return Response({"error": "Access denied for this case."}, status=403)
+            doctor_scope = doctor_scope or int(request.user.id)
+        else:
+            raw = (
+                request.headers.get("X-Target-Expert-ID")
+                or request.headers.get("X-Target-Doctor-ID")
+                or request.query_params.get("expert_id")
+                or request.query_params.get("doctor_id")
+            )
+            try:
+                doctor_scope = int(raw) if raw else None
+            except (TypeError, ValueError):
+                doctor_scope = None
+        if not doctor_scope or not case_id:
+            return Response({"error": "doctor_id and case_id are required."}, status=400)
+
+        record = CaseFilesService.get_file(patient, doctor_scope, case_id, file_id)
+        if not record or not record.get("storage_path"):
+            return Response({"error": "File not found."}, status=404)
+        if not default_storage.exists(record["storage_path"]):
+            return Response({"error": "Stored file missing."}, status=404)
+
+        file_name = record.get("original_file_name") or record.get("name") or "case-file"
+        content_type = record.get("content_type") or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+        file_obj = default_storage.open(record["storage_path"], "rb")
+        response = FileResponse(file_obj, content_type=content_type)
+        response["Content-Disposition"] = f'attachment; filename="{file_name}"'
         return response
 
 
@@ -737,7 +1392,11 @@ class AppendixView(APIView):
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
             return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
             
-        library = AppendixService.get_library(patient, doctor_id=request.user.id)
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        _, doctor_scope, _ = _resolve_expert_case_scope(request, patient, case_id)
+        if case_id and not doctor_scope:
+            return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+        library = AppendixService.get_library(patient, doctor_id=doctor_scope or request.user.id, case_id=case_id)
         return Response(library.model_dump())
 
     def post(self, request):
@@ -746,7 +1405,10 @@ class AppendixView(APIView):
         
         serializer = CulturalResourceSerializer(data=request.data)
         if serializer.is_valid():
-            new_resource = AppendixService.add_resource(patient, request.user, serializer.validated_data, doctor_id=request.user.id)
+            case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
+            if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+                return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+            new_resource = AppendixService.add_resource(patient, request.user, serializer.validated_data, doctor_id=request.user.id, case_id=case_id)
             return Response(new_resource.model_dump(), status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -758,6 +1420,7 @@ class ActiveSessionView(APIView):
     def post(self, request):
         patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         session_number = request.data.get('session_number')
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
         
         if not patient_id or session_number is None:
             return Response({"error": "Both 'patient_id' and 'session_number' are required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -765,9 +1428,11 @@ class ActiveSessionView(APIView):
         patient = get_object_or_404(CustomUser, pk=patient_id)
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
             return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
         
         try:
-            RoadmapService.set_active_session(patient, int(session_number), doctor_id=request.user.id)
+            RoadmapService.set_active_session(patient, int(session_number), doctor_id=request.user.id, case_id=case_id)
             return Response({"status": "updated", "active_session": session_number})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -783,36 +1448,46 @@ class TaskManagementView(APIView):
         patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         text = request.data.get('text')
         due_date = request.data.get('due_date')
+        dimension = request.data.get('dimension', 'PERSONAL')
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
         patient = get_object_or_404(CustomUser, pk=patient_id)
         
         if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
             return Response({"error": "Access denied"}, status=403)
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=403)
             
-        new_task = TaskService.assign_task(patient, request.user, text, due_date, doctor_id=request.user.id)
+        new_task = TaskService.assign_task(patient, request.user, text, due_date, dimension, doctor_id=request.user.id, case_id=case_id)
         return Response(new_task, status=status.HTTP_201_CREATED)
     
     def put(self, request, task_id):
         patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         text = request.data.get('text')
         due_date = request.data.get('due_date')
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
         patient = get_object_or_404(CustomUser, pk=patient_id)
         
         if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
             return Response({"error": "Access denied"}, status=403)
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=403)
             
-        success = TaskService.edit_task(patient, task_id, text, due_date, doctor_id=request.user.id)
+        success = TaskService.edit_task(patient, task_id, text, due_date, doctor_id=request.user.id, case_id=case_id)
         if success:
             return Response({"status": "updated"})
         return Response({"error": "Task not found"}, status=404)
     
     def delete(self, request, task_id):
         patient_id = request.query_params.get('visitor_id') or request.query_params.get('patient_id') 
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
         patient = get_object_or_404(CustomUser, pk=patient_id)
         
         if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
             return Response({"error": "Access denied"}, status=403)
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=403)
             
-        success = TaskService.delete_task(patient, task_id, doctor_id=request.user.id)
+        success = TaskService.delete_task(patient, task_id, doctor_id=request.user.id, case_id=case_id)
         if success:
             return Response({"status": "deleted"})
         return Response({"error": "Task not found"}, status=404)
@@ -825,13 +1500,16 @@ class SessionManagementView(APIView):
         patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         summary = request.data.get('summary')
         private_notes = request.data.get('private_notes', '')
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
         # date_str = request.data.get('date') # Not used in current service signature
         patient = get_object_or_404(CustomUser, pk=patient_id)
         
         if not VaniaAccessControl.verify_doctor_access(request.user, patient): 
             return Response({"error": "Access denied"}, status=403)
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=403)
             
-        SessionService.log_session(patient, request.user, summary, private_notes, doctor_id=request.user.id)
+        SessionService.log_session(patient, request.user, summary, private_notes, doctor_id=request.user.id, case_id=case_id)
         return Response({"status": "created"}, status=status.HTTP_201_CREATED)
     
     def put(self, request, entry_id):
@@ -862,6 +1540,7 @@ class CompleteTaskView(APIView):
             or request.headers.get('X-Target-Expert-ID')
             or request.headers.get('X-Target-Doctor-ID')
         )
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
         
         # Check if Doctor is acting on behalf of a patient
         if is_expert(request.user):
@@ -871,7 +1550,15 @@ class CompleteTaskView(APIView):
                 # Verify permission
                 if not VaniaAccessControl.verify_doctor_access(request.user, target_patient):
                     return Response({"error": "Access denied to this patient."}, status=status.HTTP_403_FORBIDDEN)
-            selected_doctor_id = request.user.id
+            if case_id:
+                _, doctor_scope, can_edit = _resolve_expert_case_scope(request, target_patient, case_id)
+                if not doctor_scope:
+                    return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+                if not can_edit:
+                    return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+                selected_doctor_id = doctor_scope
+            else:
+                selected_doctor_id = request.user.id
         
         reflection = request.data.get('reflection', "") 
         new_status = request.data.get('status', 'DONE') 
@@ -881,7 +1568,8 @@ class CompleteTaskView(APIView):
             task_id=task_id, 
             status=new_status, 
             reflection=reflection,
-            doctor_id=int(selected_doctor_id) if selected_doctor_id else None
+            doctor_id=int(selected_doctor_id) if selected_doctor_id else None,
+            case_id=case_id,
         )
         
         if not success: 
@@ -919,6 +1607,7 @@ class SessionReportView(APIView):
     def post(self, request):
         patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         session_number = request.data.get('session_number')
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
         
         # Report Data
         summary = request.data.get('summary', '')
@@ -940,9 +1629,11 @@ class SessionReportView(APIView):
         patient = get_object_or_404(CustomUser, pk=patient_id)
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
             return Response({"error": "Access denied."}, status=403)
+        if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
+            return Response({"error": "This case is read-only for you."}, status=403)
 
         # 1. Get Roadmap to check if session exists and if it has a doc_id
-        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id)
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id, case_id=case_id)
         target_session = next((s for s in roadmap.sessions if s.session_number == int(session_number)), None)
         
         if not target_session:
@@ -986,15 +1677,16 @@ class SessionReportView(APIView):
                 doctor=request.user,
                 summary=json.dumps(rich_payload, ensure_ascii=False),
                 private_notes=private_notes,
-                doctor_id=request.user.id
+                doctor_id=request.user.id,
+                case_id=case_id,
             )
 
         # 4. Ensure Roadmap is updated (Status -> COMPLETED, Link Doc ID)
-        RoadmapService.complete_session(patient, int(session_number), str(log_entry.id), doctor_id=request.user.id)
+        RoadmapService.complete_session(patient, int(session_number), str(log_entry.id), doctor_id=request.user.id, case_id=case_id)
         
         # 5. Fetch updated states to return for UI Sync
-        updated_roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id)
-        updated_history = SessionService.get_patient_history(patient, viewer_role='DOCTOR', doctor_id=request.user.id)
+        updated_roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id, case_id=case_id)
+        updated_history = SessionService.get_patient_history(patient, viewer_role='DOCTOR', doctor_id=request.user.id, case_id=case_id)
 
         return Response({
             "status": "success", 

@@ -16,7 +16,9 @@ import { RescueNetDownloadButton } from "./rescuenet/RescueNetDownloadButton";
 interface Props {
   tasks: RescueTask[];
   patientId: number;
+  caseId?: string;
   onEdit: (delta: any) => void;
+  readOnly?: boolean;
 }
 // --- Configuration for the 9 Dimensions ---
 const DIMENSIONS: { key: RescueDimension; label: string; colorClass: string }[] = [
@@ -30,7 +32,7 @@ const DIMENSIONS: { key: RescueDimension; label: string; colorClass: string }[] 
   { key: "RECREATION", label: "تفریحی-ورزشی", colorClass: "bg-muted-50 text-green-400 border-muted" },
   { key: "SOLITUDE", label: "مدیریت تنهایی", colorClass: "bg-muted-50 text-orange-400 border-muted" },
 ];
-export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
+export function RescueNetTab({ tasks, patientId, caseId, onEdit, readOnly = false }: Props) {
   
   // Group tasks
   const groupedTasks = DIMENSIONS.map(dim => ({
@@ -55,12 +57,13 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
   };
 
   const handleDelete = async (taskId: string) => {
+    if (readOnly) return;
     if (!confirm("آیا از حذف این تکلیف اطمینان دارید؟")) return;
 
     try {
         const res = await fetch(`${API_BASE_URL}/api/vania/tasks/manage/${taskId}/?patient_id=${patientId}`, {
             method: "DELETE",
-            headers: getAuthHeaders()
+            headers: { ...getAuthHeaders(), ...(caseId ? { "X-Target-Case-ID": caseId } : {}) }
         });
 
         if (!res.ok) throw new Error("خطا در حذف تکلیف");
@@ -75,6 +78,7 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
   };
 
   const handleToggleStatus = async (task: RescueTask) => {
+    if (readOnly) return;
     const newStatus = task.status === "DONE" ? "PENDING" : "DONE";
     
     // Optimistic
@@ -99,6 +103,7 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
             body: JSON.stringify({ 
                 status: newStatus,
                 patient_id: patientId // Pass patient ID for doctor context
+                ,case_id: caseId
             })
         });
 
@@ -136,15 +141,16 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
                 <div className="text-[10px] text-muted-foreground">تنوع ابعاد</div>
             </div>
             
-            <AddTaskDialog 
+            {!readOnly ? <AddTaskDialog 
                 patientId={patientId}
+                caseId={caseId}
                 onSuccess={handleTaskAdded}
                 trigger={
                     <Button size="sm" className="gap-2 h-9">
                         <Plus className="w-4 h-4" /> افزودن
                     </Button>
                 }
-            />
+            /> : null}
             
         </div>
       </div>
@@ -180,10 +186,12 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
                         onClick={() => handleToggleStatus(task)}
                         className={cn(
                             "mt-0.5 w-5 h-5 rounded-full border flex items-center justify-center shrink-0 transition-all",
+                            readOnly && "cursor-default opacity-70",
                             task.status === "DONE" 
                                 ? "bg-emerald-500 border-emerald-500 text-white" 
                                 : "border-muted-foreground/30 hover:border-primary bg-muted/10"
                         )}
+                        disabled={readOnly}
                     >
                         {task.status === "DONE" && <Check className="w-3 h-3" />}
                     </button>
@@ -202,8 +210,8 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
                     </div>
 
                     {/* Actions (Edit/Delete) - Only show on hover */}
-                    <div className="flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover/task:opacity-100">
-                        <EditTaskDialog task={task} patientId={patientId} onSuccess={handleTaskUpdated} />
+                    {!readOnly ? <div className="flex items-center gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover/task:opacity-100">
+                        <EditTaskDialog task={task} patientId={patientId} caseId={caseId} onSuccess={handleTaskUpdated} />
                         
                         <Button 
                             variant="ghost" 
@@ -213,7 +221,7 @@ export function RescueNetTab({ tasks, patientId, onEdit }: Props) {
                         >
                             <Trash2 className="w-3 h-3" />
                         </Button>
-                    </div>
+                    </div> : null}
                   </div>
                 ))
               )}

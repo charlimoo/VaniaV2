@@ -14,6 +14,7 @@ VANIA_EXPERT_SYSTEM_PROMPT = """
 ### IDENTITY & ROLE
 You are **Vania (وانیا)**, an advanced Expert AI Assistant acting as a "Cognitive Amplifier" for a human expert.
 Your mission is to help the expert manage a structured case lifecycle and keep canvas-backed state consistent.
+The patient workspace now has a shared `پرونده پایه` plus multiple case workspaces (`پرونده`) per expert.
 
 ### CORE PRINCIPLES
 1. Follow evidence-based reasoning in the relevant domain.
@@ -28,6 +29,10 @@ Your mission is to help the expert manage a structured case lifecycle and keep c
 2. Treat roadmap phase and session status as metadata. The exact workflow is defined by the active agent/domain prompt.
 3. Use tools to persist state changes; do not rely on plain text only.
 4. When input is ambiguous, ask focused clarifying questions first.
+5. Use `BASE_PROFILE_V1` for shared base-profile work, and use the active case for all other state changes.
+6. Use `manage_medications` when you need to prescribe, edit, or remove medications in the active case.
+7. If the user asks about case documents/files, use the case-file tools first. Start with listing or searching, then read only the minimum relevant excerpt.
+8. Do not guess file contents from names alone and do not paste whole documents into chat.
 """
 
 
@@ -40,7 +45,7 @@ AGENT = AgentDef(
     is_free=False,
     tags=["داشبورد"],
     audience="EXPERT",
-    eligible_expert_professions=["psychiatrist", "psychologist", "lawyer"],
+    eligible_expert_professions=["psychiatrist", "psychologist", "lawyer", "general_doctor"],
     requires_visitor_selector=True,
     demo_config=DemoConfigDef(
         access_mode=DemoAccessMode.ALLOWED,
@@ -58,20 +63,20 @@ AGENT = AgentDef(
     user_guide="""
 **راهنمای دستیار متخصص**
 
-1. ابتدا مراجع را از بالای چت انتخاب کنید.
-2. از دستیار بخواهید تحلیل مرحله‌ای انجام دهد و برنامه جلسات را بسازد.
-3. در طول اجرا، گزارش جلسه را با ابزارها نهایی کنید و تکالیف را ثبت کنید.
+1. ابتدا مراجع را از بالای چت انتخاب کنید و در صورت نیاز پرونده جدید بسازید.
+2. `پرونده پایه` را با فرم پایه تکمیل کنید.
+3. داخل پرونده فعال، تحلیل، فرم‌ها، تست‌ها، جلسات و تکالیف را مدیریت کنید.
     """,
     suggestions=[
         SuggestionDef(
             title="شروع تحلیل ",
             subtitle="تحلیل پرونده مراجع",
-            prompt="لطفاً تحلیل فاز ۱ را شروع کن و خلاصه اولیه پرونده را بساز.",
+            prompt="لطفاً اگر پرونده پایه ناقص است آن را بررسی کن، سپس برای پرونده فعال تحلیل فاز ۱ را شروع کن.",
         ),
         SuggestionDef(
             title="طراحی برنامه ",
             subtitle="ساخت جلسات و راهبرد",
-            prompt="با توجه به داده‌های فعلی، راهبردها را پیشنهاد بده و جلسه بعدی را طراحی کن.",
+            prompt="برای پرونده فعال، با توجه به داده‌های فعلی راهبردها را پیشنهاد بده و جلسه بعدی را طراحی کن.",
         ),
     ],
     default_open_canvases=["VANIA_PATIENT_MANAGER"],
@@ -85,9 +90,16 @@ AGENT = AgentDef(
         "has_canvas": True,
         "default_width": 60,
         "show_voice_input": True,
-        "allowed_file_types": ["image/jpeg", "image/png", "application/pdf"],
+        "allowed_file_types": [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "application/pdf",
+            "text/plain",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        ],
     },
 )
 
 AGENTS = [AGENT]
-

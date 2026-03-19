@@ -1,219 +1,387 @@
-# backend/capabilities/vania_doctor/tools.py
 import json
 import logging
 import time
-from typing import List, Optional, AsyncGenerator, Any, Dict
-from django.utils import timezone
+from typing import Any, AsyncGenerator, Dict, List, Optional
+
 from asgiref.sync import sync_to_async
+from django.utils import timezone
 
-# --- Agno Imports ---
-from agno.tools import tool
 from agno.run import RunContext
+from agno.tools import tool
 
-# --- Capability System Imports ---
+from agents.context import resource_context, selected_case_context
 from capabilities.base import BaseCapability
 from capabilities.registry import register_tool
-from canvas.events import CanvasUpdateEvent 
-
-# --- Core Vania Models & Context ---
-from agents.context import resource_context
-from users.models import CustomUser, UserContextEntry, ContextDefinition
+from canvas.events import CanvasUpdateEvent
+from services.models_canvas import CanvasInstance
+from users.models import ContextDefinition, CustomUser, UserContextEntry
 from users.services import user_context_manager
-from vania_core.services import (
-    RoadmapService, 
-    AppendixService, 
-    SessionService, 
-    TaskService,
-    ProfileService,
-    ClinicalTestsService,
-)
+from vania_core.case_service import CaseService
 from vania_core.flashcards import normalize_flashcards
+from vania_core.medication_service import MedicationService
+from vania_core.profession_policy import (
+    build_canvas_policy_payload,
+    filter_form_definitions,
+    filter_tests_catalog,
+    get_policy_for_user,
+    is_tool_family_allowed,
+    resolve_allowed_form_keys,
+    sanitize_expert_case_payload,
+)
+from vania_core.profile_snapshots import get_expert_profile_payload, get_visitor_base_profile_payload
 from vania_core.schemas import TherapyPhase
-from services.models_canvas import CanvasInstance # [FIX] Added Import
+from vania_core.services import AppendixService, ProfileService, RoadmapService, SessionService, TaskService
+from vania_core.case_files_service import CaseFilesService
+from vania_core.tests_service import ClinicalTestsService
+from vania_core.tests_catalog import TEST_CATALOG
 
-# --- Form Definitions ---
 from .forms import ALL_FORMS_LIST
 
-# Configure Logger
 logger = logging.getLogger(__name__)
 
-# ==========================================
-# 1. HELPER FUNCTIONS
-# ==========================================
+TOOL_FAMILY_BY_NAME = {
+    "get_my_expert_profile": "profiles",
+    "get_active_visitor_profile": "profiles",
+    "create_case": "case_management",
+    "rename_case": "case_management",
+    "delete_case": "case_management",
+    "select_case": "case_management",
+    "update_clinical_summary": "clinical_summary",
+    "manage_roadmap": "roadmap",
+    "finalize_session_report": "roadmap",
+    "add_rescue_task": "rescue_net",
+    "prescribe_resource": "appendix",
+    "manage_medications": "medications",
+    "get_current_medications": "medications",
+    "get_form_schema": "forms",
+    "submit_clinical_form": "forms",
+    "manage_clinical_tests": "tests",
+    "get_test_result_details": "tests",
+    "list_case_files": "files",
+    "search_case_files": "files",
+    "read_case_file": "files",
+    "get_case_file_details": "files",
+    "update_forms_tests_analysis": "analysis",
+}
+
+
+def _flatten_form_fields(schema: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    flattened: List[Dict[str, Any]] = []
+    for field in schema or []:
+        if field.get("type") == "section":
+            flattened.extend(_flatten_form_fields(field.get("fields", [])))
+            continue
+        flattened.append(field)
+    return flattened
+
 
 async def _get_active_patient() -> Optional[CustomUser]:
-    """
-    Retrieves the active visitor object locked to the current request context via the 'X-Target-Resource-ID' header.
-    This is a critical security and context helper used by almost every tool.
-    
-    Returns:
-        The CustomUser object for the visitor, or None if no visitor is selected.
-    """
     patient_id = resource_context.get()
     if not patient_id:
         return None
     try:
-        # Asynchronously fetch the user from the database
         return await CustomUser.objects.aget(pk=patient_id)
     except CustomUser.DoesNotExist:
-        logger.warning(f"Tool attempted to access non-existent visitor ID: {patient_id}")
         return None
 
+
+async def _get_active_case(patient: CustomUser, doctor: CustomUser) -> Dict[str, Any]:
+    requested_case_id = selected_case_context.get()
+    return await sync_to_async(CaseService.get_or_create_selected_case_for_expert)(patient, doctor, requested_case_id)
+
+
+async def _ensure_case_editable(patient: CustomUser, doctor: CustomUser, case_id: str) -> Optional[str]:
+    can_edit = await sync_to_async(CaseService.expert_can_edit_case)(patient, doctor, case_id)
+    if can_edit:
+        return None
+    return "❌ This case is read-only for you."
+
+
 async def _get_canvas_id(session_id: str, component_key: str) -> Optional[str]:
-    """
-    [FIX] Resolves the specific Canvas Instance UUID for the current session.
-    This is required for the frontend to know exactly which tab to update.
-    """
     try:
-        # We use filter().afirst() to get the instance asynchronously
         instance = await CanvasInstance.objects.filter(
             session_id=session_id,
             canvas_def__component_key=component_key
         ).afirst()
-        
         return str(instance.id) if instance else None
-    except Exception as e:
-        logger.error(f"❌ Failed to resolve canvas ID for session {session_id}: {e}")
+    except Exception as exc:
+        logger.error("Failed to resolve canvas id: %s", exc)
         return None
 
-# ==========================================
-# 2. PROFILE MANAGEMENT TOOL
-# ==========================================
 
-@tool
-async def update_clinical_summary(
-    run_context: RunContext,
-    summary_text: str
-) -> AsyncGenerator[Any, None]:
-    """
-    Updates the main 'Clinical Summary' text field in the visitor profile tab.
-    Use this to synthesize the visitor's history, notes, and core case formulation.
-    This text is directly visible to the expert in the UI.
-    
-    Args:
-        summary_text: The full, updated text for the clinical summary.
-    """
-    patient = await _get_active_patient()
-    doctor_id = int(run_context.user_id)
-    if not patient: 
-        yield "Error: No visitor is selected. A visitor must be active to update their profile."
-        return
+def _extract_active_goals_from_history(history: List[Dict[str, Any]]) -> List[str]:
+    for item in history:
+        raw_summary = item.get("summary", "")
+        if isinstance(raw_summary, str) and raw_summary.strip().startswith("{"):
+            try:
+                parsed = json.loads(raw_summary)
+                goals = parsed.get("smart_goals") if isinstance(parsed, dict) else None
+                if goals:
+                    return goals
+            except Exception:
+                continue
+    return []
 
-    # 1. Persist Data
-    await sync_to_async(ProfileService.update_summary)(patient, summary_text, doctor_id)
-    
-    # 2. Explicit UI Sync
-    # [FIX] Resolve Canvas ID
-    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
-    
-    yield CanvasUpdateEvent(value={
-        "canvas_id": canvas_id, # [FIX] Required by Frontend
-        "component_key": "VANIA_PATIENT_MANAGER",
-        "delta": {
-            "clinical_summary": summary_text
+
+async def _build_case_payload(patient: CustomUser, doctor_id: int, case_id: str) -> Dict[str, Any]:
+    roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id, case_id)
+    appendix = await sync_to_async(AppendixService.get_library)(patient, doctor_id, case_id)
+    medications = await sync_to_async(MedicationService.get_plan)(patient, doctor_id, case_id)
+    sessions = await sync_to_async(SessionService.get_patient_history)(patient, "DOCTOR", doctor_id, case_id)
+    return {
+        "selected_case": {
+            "clinical_summary": await sync_to_async(ProfileService.get_summary)(patient, doctor_id, case_id),
+            "forms_tests_analysis": await sync_to_async(ProfileService.get_forms_tests_analysis)(patient, doctor_id, case_id),
+            "roadmap_data": roadmap.model_dump(),
+            "appendix_data": appendix.model_dump(),
+            "medications": [item.model_dump() for item in medications.medications],
+            "tasks": await sync_to_async(TaskService.get_patient_tasks)(patient, doctor_id, case_id),
+            "sessions": sessions,
+            "active_goals": _extract_active_goals_from_history(sessions),
+            "forms": await sync_to_async(CaseService.get_visible_form_entries)(patient, "EXPERT", doctor_id, case_id),
+            "tests": await sync_to_async(CaseService.get_visible_tests)(patient, "EXPERT", doctor_id, case_id),
+            "files": await sync_to_async(CaseFilesService.get_files)(patient, doctor_id, case_id),
+        },
+        "base_profile": {
+            "form": (await sync_to_async(CaseService.get_latest_base_profile_entry)(patient)).data if await sync_to_async(CaseService.get_latest_base_profile_entry)(patient) else {},
+            "forms": await sync_to_async(CaseService.get_visible_form_entries)(patient, "EXPERT", doctor_id, None),
+            "tests": await sync_to_async(CaseService.get_visible_tests)(patient, "EXPERT", doctor_id, None),
         }
+    }
+
+
+def _tool_family_error(doctor: CustomUser, family: str) -> Optional[str]:
+    policy = get_policy_for_user(doctor)
+    if is_tool_family_allowed(policy, family):
+        return None
+    return "❌ This action is not available for your expert profession."
+
+
+def _resolve_allowed_form_keys_for_user(doctor: CustomUser) -> List[str]:
+    return resolve_allowed_form_keys(ALL_FORMS_LIST, getattr(getattr(doctor, "expert_profession", None), "slug", None))
+
+
+async def _emit_canvas_refresh(run_context: RunContext, patient: CustomUser, doctor: CustomUser, case_id: str, extra_delta: Optional[Dict[str, Any]] = None):
+    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
+    case_meta = await sync_to_async(CaseService.get_accessible_case_for_expert)(patient, doctor, case_id)
+    storage_doctor_id = int((case_meta or {}).get("doctor_id") or doctor.id)
+    payload = await _build_case_payload(patient, storage_doctor_id, case_id)
+    profession_slug = getattr(getattr(doctor, "expert_profession", None), "slug", None)
+    policy_payload = build_canvas_policy_payload(profession_slug, viewer="expert", form_definitions=ALL_FORMS_LIST)
+    allowed_form_keys = policy_payload["allowed_form_keys"]
+    selected_case_payload = sanitize_expert_case_payload(
+        payload["selected_case"],
+        profession_slug,
+        allowed_form_keys,
+    )
+    payload.update({
+        **policy_payload,
+        "selected_case_id": case_id,
+        "cases": await sync_to_async(CaseService.get_accessible_cases_for_expert)(patient, doctor),
+        "patient_profile": await sync_to_async(CaseService.build_patient_profile)(patient),
+        "base_profile": {
+            "form": payload["base_profile"]["form"],
+            "forms": sanitize_expert_case_payload(
+                {
+                    "forms": payload["base_profile"]["forms"],
+                    "tests": [],
+                },
+                profession_slug,
+                allowed_form_keys,
+            )["forms"],
+            "tests": sanitize_expert_case_payload(
+                {
+                    "forms": [],
+                    "tests": payload["base_profile"]["tests"],
+                },
+                profession_slug,
+                allowed_form_keys,
+            )["tests"],
+        },
+        "tests_catalog": filter_tests_catalog(TEST_CATALOG, profession_slug),
+        "available_forms": filter_form_definitions(ALL_FORMS_LIST, profession_slug),
+        "selected_case": {
+            "id": case_id,
+            "title": case_meta.get("title") if case_meta else "",
+            "doctor_id": case_meta.get("doctor_id") if case_meta else storage_doctor_id,
+            "doctor_name": case_meta.get("doctor_name") if case_meta else "",
+            "doctor_profession_slug": case_meta.get("doctor_profession_slug") if case_meta else profession_slug,
+            "doctor_profession_label": case_meta.get("doctor_profession_label") if case_meta else "",
+            "can_edit": case_meta.get("can_edit", True) if case_meta else True,
+            "is_read_only": case_meta.get("is_read_only", False) if case_meta else False,
+            **policy_payload,
+            **selected_case_payload,
+        },
     })
-    
-    yield "✅ The visitor's clinical summary has been updated in their profile."
+    if extra_delta:
+        payload.update(extra_delta)
+    return CanvasUpdateEvent(value={
+        "canvas_id": canvas_id,
+        "component_key": "VANIA_PATIENT_MANAGER",
+        "delta": payload,
+    })
 
-# ==========================================
-# 3. KNOWLEDGE & STRATEGY
-# ==========================================
-
-# NOTE: The 'search_clinical_protocol' tool has been removed.
-# The Agent is now instructed to rely on its internal expert clinical knowledge 
-# to propose and define treatment approaches.
-
-# ==========================================
-# 4. ROADMAP MANAGEMENT
-# ==========================================
 
 @tool
-async def manage_roadmap(
-    run_context: RunContext,
-    action: str, 
-    data: Dict[str, Any] = {} 
-) -> AsyncGenerator[Any, None]:
-    """
-    Manages the Therapy Roadmap.
-    Use this to plan sessions, update treatment strategy, or set workflow phase metadata.
-    Note: phase is used as guidance context for the agent, not as a hard execution gate.
-    
-    Args:
-        action: The operation to perform. Must be one of:
-                - "SET_PHASE": Sets roadmap phase metadata (e.g., data={'phase': 'PHASE_2_APPROACHES'}).
-                - "ADD_SESSION": Plans a future session, saving the AI's private instructions for the expert (data={'title': '...', 'instructions': '...'}).
-                - "UPDATE_STRATEGY": Saves the list of chosen therapy approaches to the roadmap (data={'approaches': ['CBT', 'ACT']}).
-    """
+async def get_my_expert_profile(run_context: RunContext) -> AsyncGenerator[Any, None]:
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    payload = await sync_to_async(get_expert_profile_payload)(doctor)
+    if not payload:
+        yield "❌ Expert profile not found."
+        return
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def get_active_visitor_profile(run_context: RunContext) -> AsyncGenerator[Any, None]:
     patient = await _get_active_patient()
-    doctor_id = int(run_context.user_id)
-    if not patient: 
+    if not patient:
         yield "Error: No visitor selected."
         return
+    payload = await sync_to_async(get_visitor_base_profile_payload)(patient)
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
 
-    # --- Action Dispatcher ---
-    if action.upper() == "SET_PHASE":
-        phase_str = data.get("phase")
-        if not phase_str:
-            yield "❌ Missing 'phase' in data payload for SET_PHASE action."
-            return
-        try:
-            phase_enum = TherapyPhase(phase_str)
-            await sync_to_async(RoadmapService.update_phase)(patient, phase_enum, doctor_id=doctor_id)
-            yield f"✅ Roadmap phase metadata updated to: {phase_str}"
-        except ValueError:
-            yield f"❌ Invalid phase: '{phase_str}'"
-            return
 
-    elif action.upper() == "ADD_SESSION":
-        # Smart default for title if Agent forgets
-        roadmap_current = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id)
-        next_num = len(roadmap_current.sessions) + 1
-        
-        title = data.get("title")
-        if not title:
-            title = f"جلسه {next_num}"
-            logger.warning(f"Agent forgot title for session {next_num}. Using default.")
+@tool
+async def create_case(run_context: RunContext, title: str = "") -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    created_case = await sync_to_async(CaseService.create_case)(patient, doctor, title or None)
+    event = await _emit_canvas_refresh(run_context, patient, doctor, created_case["id"], {"active_view": "CASES"})
+    yield event
+    yield f"✅ Case '{created_case['title']}' created and selected."
 
-        instructions = data.get("instructions", "No specific protocol instructions provided.")
-        
-        scheduled_date = data.get("scheduled_date")
-        await sync_to_async(RoadmapService.add_session)(patient, title, instructions, scheduled_date, doctor_id)
-        yield f"✅ Session '{title}' added to the roadmap."
 
-    elif action.upper() == "UPDATE_STRATEGY":
-        approaches = data.get("approaches", [])
-        if approaches and isinstance(approaches, list):
-            # We fetch, update locally, and save using the service primitive
-            roadmap_to_update = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id)
-            roadmap_to_update.treatment_approaches = approaches
-            await sync_to_async(RoadmapService.save_roadmap)(patient, roadmap_to_update, doctor_id)
-            yield f"✅ Treatment strategy saved: {', '.join(approaches)}"
-        else:
-            yield "❌ Missing or invalid 'approaches' list in data payload."
+@tool
+async def rename_case(run_context: RunContext, case_id: str, title: str) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    editable_error = await _ensure_case_editable(patient, doctor, case_id)
+    if editable_error:
+        yield editable_error
+        return
+    updated_case = await sync_to_async(CaseService.rename_case)(patient, int(doctor.id), case_id, title)
+    if not updated_case:
+        yield "❌ Case not found or title is invalid."
+        return
+    event = await _emit_canvas_refresh(run_context, patient, doctor, case_id, {"active_view": "CASES"})
+    yield event
+    yield f"✅ Case renamed to '{updated_case['title']}'."
 
+
+@tool
+async def delete_case(run_context: RunContext, case_id: str) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    case_item = await sync_to_async(CaseService.get_accessible_case_for_expert)(patient, doctor, case_id)
+    if not case_item:
+        yield "❌ Case not found."
+        return
+    if not case_item.get("can_edit"):
+        yield "❌ This case is read-only for you."
+        return
+    deleted = await sync_to_async(CaseService.delete_case)(patient, int(doctor.id), case_id)
+    if not deleted:
+        yield "❌ Case could not be deleted."
+        return
+    remaining_cases = await sync_to_async(CaseService.get_accessible_cases_for_expert)(patient, doctor)
+    if remaining_cases:
+        next_case_id = remaining_cases[0]["id"]
+    else:
+        next_case = await sync_to_async(CaseService.create_case)(patient, doctor)
+        next_case_id = next_case["id"]
+    event = await _emit_canvas_refresh(run_context, patient, doctor, next_case_id, {"active_view": "CASES"})
+    yield event
+    yield f"✅ Case '{case_item['title']}' deleted."
+
+
+@tool
+async def select_case(run_context: RunContext, case_id: str) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    case_item = await sync_to_async(CaseService.get_accessible_case_for_expert)(patient, doctor, case_id)
+    if not case_item:
+        yield "❌ Case not found."
+        return
+    event = await _emit_canvas_refresh(run_context, patient, doctor, case_id, {"active_view": "CASES"})
+    yield event
+    yield f"✅ Case '{case_item['title']}' is now active."
+
+
+@tool
+async def update_clinical_summary(run_context: RunContext, summary_text: str) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "clinical_summary")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
+        yield "Error: No visitor is selected."
+        return
+    active_case = await _get_active_case(patient, doctor)
+    editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
+    if editable_error:
+        yield editable_error
+        return
+    await sync_to_async(ProfileService.update_summary)(patient, summary_text, int(active_case.get("doctor_id") or doctor.id), active_case["id"])
+    yield await _emit_canvas_refresh(run_context, patient, doctor, active_case["id"])
+    yield "✅ Case clinical summary updated."
+
+
+@tool
+async def manage_roadmap(run_context: RunContext, action: str, data: Dict[str, Any] = {}) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "roadmap")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    active_case = await _get_active_case(patient, doctor)
+    editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
+    if editable_error:
+        yield editable_error
+        return
+    doctor_id = int(active_case.get("doctor_id") or doctor.id)
+    action_key = (action or "").upper()
+    if action_key == "SET_PHASE":
+        phase_enum = TherapyPhase(data.get("phase"))
+        await sync_to_async(RoadmapService.update_phase)(patient, phase_enum, doctor_id, active_case["id"])
+    elif action_key == "ADD_SESSION":
+        await sync_to_async(RoadmapService.add_session)(
+            patient,
+            data.get("title") or "جلسه جدید",
+            data.get("instructions", ""),
+            data.get("scheduled_date"),
+            doctor_id,
+            active_case["id"],
+        )
+    elif action_key == "UPDATE_STRATEGY":
+        roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id, active_case["id"])
+        roadmap.treatment_approaches = data.get("approaches", [])
+        await sync_to_async(RoadmapService.save_roadmap)(patient, roadmap, doctor_id, active_case["id"])
     else:
         yield f"❌ Unknown action for manage_roadmap: '{action}'"
+        return
+    await sync_to_async(CaseService.touch_case)(patient, doctor_id, active_case["id"])
+    yield await _emit_canvas_refresh(run_context, patient, doctor, active_case["id"])
+    yield "✅ Roadmap updated."
 
-    # --- Explicit UI Sync ---
-    # Fetch the authoritative state from DB after modification and push to frontend
-    updated_roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id)
-    
-    # [FIX] Resolve Canvas ID
-    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
-
-    yield CanvasUpdateEvent(value={
-        "canvas_id": canvas_id, # [FIX] Required
-        "component_key": "VANIA_PATIENT_MANAGER",
-        "delta": {
-            "roadmap_data": updated_roadmap.model_dump()
-        }
-    })
-
-
-# ==========================================
-# 5. EXECUTION & REPORTING
-# ==========================================
 
 @tool
 async def finalize_session_report(
@@ -224,227 +392,219 @@ async def finalize_session_report(
     smart_goals: List[str],
     flashcards: List[Dict[str, str]],
     summary: str,
-    private_notes: str = ""
+    private_notes: str = "",
 ) -> AsyncGenerator[Any, None]:
-    """
-    Generates the formal 'Session Support Document' (سند پشتیبان), saves it,
-    and marks the session as COMPLETED on the roadmap.
-    
-    Args:
-        session_number: The number of the session being reported.
-        topic: The main subject discussed.
-        swot: A dict with keys 'Strengths', 'Weaknesses', 'Opportunities', 'Threats'.
-        smart_goals: A list of SMART goals set for the visitor.
-        flashcards: A list of dicts {"title": "...", "content": "..."} for visitor reminders.
-        summary: A narrative summary of the session.
-        private_notes: Confidential notes visible only to the expert.
-    """
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
-    doctor_id = int(doctor.id)
-    
-    if not patient: 
+    blocked = _tool_family_error(doctor, "roadmap")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
         yield "Error: No visitor selected."
         return
-
-    # Normalize potential model output variants (string cards, alt keys, etc.).
+    active_case = await _get_active_case(patient, doctor)
+    editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
+    if editable_error:
+        yield editable_error
+        return
     normalized_flashcards = normalize_flashcards(flashcards)
-    logger.info(
-        "🧪 [finalize_session_report] patient=%s doctor=%s session=%s flashcards_in=%s flashcards_out=%s",
-        patient.id,
-        doctor_id,
-        session_number,
-        len(flashcards or []),
-        len(normalized_flashcards),
-    )
-
-    # 1. Structure the payload into a rich JSON object
-    rich_payload = {
+    payload = {
         "is_structured_report": True,
         "session_number": session_number,
         "topic": topic,
-        "date": timezone.now().strftime('%Y-%m-%d'),
-        "approaches_used": [], # Placeholder, could be populated from roadmap
-        "symptoms_analysis": summary, # Using summary as a base for analysis
+        "date": timezone.now().strftime("%Y-%m-%d"),
+        "symptoms_analysis": summary,
         "swot_analysis": swot,
         "smart_goals": smart_goals,
         "flashcards": normalized_flashcards,
     }
-    
-    # 2. Save the structured report to the session history log
     log_entry = await sync_to_async(SessionService.log_session)(
-        patient=patient,
-        doctor=doctor,
-        summary=json.dumps(rich_payload, ensure_ascii=False),
-        private_notes=private_notes,
-        doctor_id=doctor_id
+        patient, doctor, json.dumps(payload, ensure_ascii=False), private_notes, None, int(active_case.get("doctor_id") or doctor.id), active_case["id"]
     )
-    
-    # 3. Update the roadmap: Mark session as COMPLETED and link the report ID
-    await sync_to_async(RoadmapService.complete_session)(
-        patient, 
-        session_number, 
-        doc_id=str(log_entry.id),
-        doctor_id=doctor_id
-    )
-    
-    # 4. Explicit UI Sync (Multi-Pillar Update)
-    # This tool affects both the Roadmap (status change) and the Session History list.
-    updated_roadmap = await sync_to_async(RoadmapService.get_or_create_roadmap)(patient, doctor_id)
-    updated_history = await sync_to_async(SessionService.get_patient_history)(patient, viewer_role='DOCTOR', doctor_id=doctor_id)
+    await sync_to_async(RoadmapService.complete_session)(patient, session_number, str(log_entry.id), int(active_case.get("doctor_id") or doctor.id), active_case["id"])
+    await sync_to_async(CaseService.touch_case)(patient, int(active_case.get("doctor_id") or doctor.id), active_case["id"])
+    yield await _emit_canvas_refresh(run_context, patient, doctor, active_case["id"])
+    yield f"✅ Session {session_number} report finalized."
 
-    # [FIX] Resolve Canvas ID
-    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
-
-    yield CanvasUpdateEvent(value={
-        "canvas_id": canvas_id, # [FIX] Required
-        "component_key": "VANIA_PATIENT_MANAGER",
-        "delta": {
-            "roadmap_data": updated_roadmap.model_dump(),
-            "sessions": updated_history,
-            # We also update active_goals for the UI since this session might have new ones
-            "active_goals": smart_goals
-        }
-    })
-        
-    yield f"✅ Session {session_number} report finalized and linked to the Roadmap."
 
 @tool
-async def add_rescue_task(
-    run_context: RunContext,
-    text: str,
-    dimension: str,
-    due_date: str = None
-) -> AsyncGenerator[Any, None]:
-    """
-    Adds a task to the visitor's 'Rescue Net' (Tour-e Nejat).
-    
-    Args:
-        text: The content of the task (e.g., "Practice mindfulness for 10 minutes").
-        dimension: ONE of the 9 dimensions: "PERSONAL", "RELATIONSHIP", "CAREER", "EMOTIONAL",
-                   "INTELLECTUAL", "FRIENDSHIP", "ENVIRONMENT", "SOLITUDE", "RECREATION".
-        due_date: Optional date string (e.g., "1403/05/20").
-    """
+async def add_rescue_task(run_context: RunContext, text: str, dimension: str, due_date: str = None) -> AsyncGenerator[Any, None]:
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
-    doctor_id = int(doctor.id)
-    
+    blocked = _tool_family_error(doctor, "rescue_net")
+    if blocked:
+        yield blocked
+        return
     if not patient:
         yield "Error: No visitor selected."
         return
+    active_case = await _get_active_case(patient, doctor)
+    editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
+    if editable_error:
+        yield editable_error
+        return
+    storage_doctor_id = int(active_case.get("doctor_id") or doctor.id)
+    await sync_to_async(TaskService.assign_task)(patient, doctor, text, due_date, dimension.upper(), storage_doctor_id, active_case["id"])
+    await sync_to_async(CaseService.touch_case)(patient, storage_doctor_id, active_case["id"])
+    yield await _emit_canvas_refresh(run_context, patient, doctor, active_case["id"])
+    yield f"✅ Task added to {dimension}."
 
-    # 1. Perform Write
-    await sync_to_async(TaskService.assign_task)(
-        patient=patient,
-        doctor=doctor,
-        text=text,
-        due_date=due_date,
-        dimension=dimension.upper(), # Ensure consistency with Enum
-        doctor_id=doctor_id
-    )
-    
-    # 2. Explicit UI Sync
-    # We fetch the WHOLE task list because the frontend merges arrays by overwriting.
-    all_tasks = await sync_to_async(TaskService.get_patient_tasks)(patient, doctor_id)
-    
-    # [FIX] Resolve Canvas ID
-    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
-
-    yield CanvasUpdateEvent(value={
-        "canvas_id": canvas_id, # [FIX] Required
-        "component_key": "VANIA_PATIENT_MANAGER",
-        "delta": {
-            "tasks": all_tasks
-        }
-    })
-        
-    yield f"✅ Task added to the '{dimension}' dimension: '{text}'"
-
-
-# ==========================================
-# 6. THOUGHT APPENDIX
-# ==========================================
 
 @tool
-async def prescribe_resource(
-    run_context: RunContext,
-    type: str, 
-    title: str,
-    creator: str,
-    reason: str,
-    excerpt: str = ""
-) -> AsyncGenerator[Any, None]:
-    """
-    Prescribes a cultural resource to the 'Thought Appendix' (پیوست اندیشه).
-    
-    Args:
-        type: The type of resource. Must be one of "BOOK", "POEM", "MOVIE".
-        title: The title of the work (e.g., "Man's Search for Meaning").
-        creator: The author, poet, or director (e.g., "Viktor Frankl").
-        reason: The therapeutic reason for this prescription, tailored to the visitor.
-        excerpt: A short, impactful quote or verse (optional).
-    """
+async def prescribe_resource(run_context: RunContext, type: str, title: str, creator: str, reason: str, excerpt: str = "") -> AsyncGenerator[Any, None]:
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
-    doctor_id = int(doctor.id)
-    
+    blocked = _tool_family_error(doctor, "appendix")
+    if blocked:
+        yield blocked
+        return
     if not patient:
         yield "Error: No visitor selected."
         return
-    
-    resource_data = {
-        "type": type.upper(), # Ensure Enum compatibility
-        "title": title,
-        "creator": creator,
-        "reason_for_prescription": reason,
-        "content_excerpt": excerpt
-    }
-    
-    # 1. Perform Write
-    await sync_to_async(AppendixService.add_resource)(patient, doctor, resource_data, doctor_id)
-    
-    # 2. Explicit UI Sync
-    updated_library = await sync_to_async(AppendixService.get_library)(patient, doctor_id)
-    
-    # [FIX] Resolve Canvas ID
-    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
+    active_case = await _get_active_case(patient, doctor)
+    editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
+    if editable_error:
+        yield editable_error
+        return
+    await sync_to_async(AppendixService.add_resource)(
+        patient,
+        doctor,
+        {
+            "type": type.upper(),
+            "title": title,
+            "creator": creator,
+            "reason_for_prescription": reason,
+            "content_excerpt": excerpt,
+        },
+        int(active_case.get("doctor_id") or doctor.id),
+        active_case["id"],
+    )
+    await sync_to_async(CaseService.touch_case)(patient, int(active_case.get("doctor_id") or doctor.id), active_case["id"])
+    yield await _emit_canvas_refresh(run_context, patient, doctor, active_case["id"])
+    yield f"✅ Resource '{title}' added."
 
-    yield CanvasUpdateEvent(value={
-        "canvas_id": canvas_id, # [FIX] Required
-        "component_key": "VANIA_PATIENT_MANAGER",
-        "delta": {
-            "appendix_data": updated_library.model_dump()
-        }
-    })
-        
-    yield f"✅ Prescribed {type}: '{title}' has been added to the Thought Appendix."
-
-
-# ==========================================
-# 7. CLINICAL FORMS AUTOMATION
-# ==========================================
 
 @tool
-async def get_form_schema(
-    run_context: RunContext,
-    form_key: str
-) -> AsyncGenerator[Any, None]:
-    """
-    [PERCEPTION] Retrieves the structure (schema) of a clinical form.
-    Use this tool FIRST to understand which questions need to be answered before
-    you can use 'submit_clinical_form'.
-    
-    Args:
-        form_key: The unique ID of the form (e.g., "PSYCHOLOGY_V1", "SOCIAL_V1").
-    """
-    form_def = next((f for f in ALL_FORMS_LIST if f['key'] == form_key), None)
-    
+async def manage_medications(run_context: RunContext, action: str, data: Dict[str, Any] = {}) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "medications")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    active_case = await _get_active_case(patient, doctor)
+    editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
+    if editable_error:
+        yield editable_error
+        return
+
+    storage_doctor_id = int(active_case.get("doctor_id") or doctor.id)
+    action_key = (action or "").upper()
+    if action_key == "ADD":
+        await sync_to_async(MedicationService.add_medication)(
+            patient,
+            doctor,
+            {
+                "drug_name": data.get("drug_name") or data.get("name") or "",
+                "dosage": data.get("dosage", ""),
+                "usage_instructions": data.get("usage_instructions", ""),
+                "timing": data.get("timing", ""),
+                "duration": data.get("duration", ""),
+                "notes": data.get("notes", ""),
+            },
+            storage_doctor_id,
+            active_case["id"],
+        )
+    elif action_key == "UPDATE":
+        updated = await sync_to_async(MedicationService.update_medication)(
+            patient,
+            data.get("medication_id") or data.get("id"),
+            {
+                key: value
+                for key, value in {
+                    "drug_name": data.get("drug_name", data.get("name")),
+                    "dosage": data.get("dosage"),
+                    "usage_instructions": data.get("usage_instructions"),
+                    "timing": data.get("timing"),
+                    "duration": data.get("duration"),
+                    "notes": data.get("notes"),
+                }.items()
+                if value is not None
+            },
+            creator=doctor,
+            doctor_id=storage_doctor_id,
+            case_id=active_case["id"],
+        )
+        if not updated:
+            yield "❌ Medication not found."
+            return
+    elif action_key == "DELETE":
+        deleted = await sync_to_async(MedicationService.delete_medication)(
+            patient,
+            data.get("medication_id") or data.get("id"),
+            creator=doctor,
+            doctor_id=storage_doctor_id,
+            case_id=active_case["id"],
+        )
+        if not deleted:
+            yield "❌ Medication not found."
+            return
+    elif action_key == "REPLACE":
+        plan = await sync_to_async(MedicationService.save_plan)(
+            patient,
+            data.get("medications", []),
+            doctor,
+            storage_doctor_id,
+            active_case["id"],
+        )
+        yield json.dumps(plan.model_dump(), ensure_ascii=False, indent=2)
+    else:
+        yield f"❌ Unknown medication action '{action}'."
+        return
+
+    await sync_to_async(CaseService.touch_case)(patient, storage_doctor_id, active_case["id"])
+    yield await _emit_canvas_refresh(run_context, patient, doctor, active_case["id"])
+    yield "✅ Medication plan updated."
+
+
+@tool
+async def get_current_medications(run_context: RunContext) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "medications")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    active_case = await _get_active_case(patient, doctor)
+    storage_doctor_id = int(active_case.get("doctor_id") or doctor.id)
+    plan = await sync_to_async(MedicationService.get_plan)(patient, storage_doctor_id, active_case["id"])
+    yield json.dumps(plan.model_dump(), ensure_ascii=False, indent=2)
+
+
+@tool
+async def get_form_schema(run_context: RunContext, form_key: str) -> AsyncGenerator[Any, None]:
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "forms")
+    if blocked:
+        yield blocked
+        return
+    allowed_form_keys = _resolve_allowed_form_keys_for_user(doctor)
+    if form_key not in allowed_form_keys:
+        yield f"❌ Form '{form_key}' is not available for your expert profession."
+        return
+    form_def = next((f for f in ALL_FORMS_LIST if f["key"] == form_key), None)
     if not form_def:
-        yield f"Error: Form with key '{form_key}' not found. Please use one of the available form keys."
+        yield f"Error: Form with key '{form_key}' not found."
         return
-
-    # Return a structured JSON string of the schema for the LLM to parse
-    schema_info = {
+    flattened_fields = _flatten_form_fields(form_def.get("schema", []))
+    yield json.dumps({
         "form_key": form_def["key"],
         "title": form_def["title"],
         "description": form_def["description"],
@@ -453,281 +613,337 @@ async def get_form_schema(
                 "name": field["name"],
                 "label": field["label"],
                 "type": field.get("type", "text"),
-                "options": field.get("options") # Will be null if not a select
-            } for field in form_def["schema"]
-        ]
-    }
-    
-    yield json.dumps(schema_info, ensure_ascii=False, indent=2)
-    
+                "options": field.get("options"),
+            }
+            for field in flattened_fields
+        ],
+    }, ensure_ascii=False, indent=2)
+
+
 @tool
-async def submit_clinical_form(
-    run_context: RunContext,
-    form_key: str,
-    **kwargs
-) -> AsyncGenerator[Any, None]:
-    """
-    [ACTION] Fills and submits a structured clinical form for the active visitor.
-    The fields from the form should be passed as direct keyword arguments.
-    
-    Args:
-        form_key: The unique ID of the form (e.g., "PSYCHOLOGY_V1", "SOCIAL_V1").
-        **kwargs: The fields of the form. For example: referral_agent="Dr. Smith", referral_reason="..."
-    """
+async def submit_clinical_form(run_context: RunContext, form_key: str, **kwargs) -> AsyncGenerator[Any, None]:
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
-    doctor_id = int(doctor.id)
-    
+    blocked = _tool_family_error(doctor, "forms")
+    if blocked:
+        yield blocked
+        return
     if not patient:
         yield "Error: No visitor selected."
         return
-
-    form_def = next((f for f in ALL_FORMS_LIST if f['key'] == form_key), None)
+    allowed_form_keys = _resolve_allowed_form_keys_for_user(doctor)
+    if form_key not in allowed_form_keys:
+        yield f"❌ Form '{form_key}' is not available for your expert profession."
+        return
+    form_def = next((f for f in ALL_FORMS_LIST if f["key"] == form_key), None)
     if not form_def:
         yield f"Error: Invalid form_key '{form_key}'."
         return
-    
-    # --- [FIX] FLATTEN DATA ---
-    # If the LLM passed data inside a key literally named 'kwargs'
-    actual_data = kwargs.get('kwargs', kwargs) if 'kwargs' in kwargs else kwargs
-    
-    if not actual_data:
-        yield "Error: No form data provided."
+    actual_data = kwargs.get("kwargs", kwargs) if "kwargs" in kwargs else kwargs
+    active_case = await _get_active_case(patient, doctor)
+    editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
+    if editable_error:
+        yield editable_error
         return
-
     timestamp = int(time.time())
     instance_key = f"clinical_form_{form_key.lower()}_{timestamp}"
-    
-    final_data = {
+    payload = {
         "form_key": form_key,
-        "form_title": form_def['title'],
+        "form_title": form_def["title"],
         "handler": "AgentTool",
-        "submitted_by_doctor_id": doctor.id,
+        "submitted_by_doctor_id": int(active_case.get("doctor_id") or doctor.id),
         "submission_timestamp": timestamp,
-        **actual_data  # [FIX] Use the flattened data
+        "visibility_scope": "SHARED_BASE" if form_key == "BASE_PROFILE_V1" else "CASE_PRIVATE",
+        "case_id": None if form_key == "BASE_PROFILE_V1" else active_case["id"],
+        **actual_data,
     }
-
-    await sync_to_async(ContextDefinition.objects.get_or_create)(
-        key=instance_key,
-        defaults={'description': f"Agent submission: {form_def['title']}"}
-    )
-
-    await sync_to_async(user_context_manager.add_entry)(
-        user=patient,
-        key=instance_key,
-        data=final_data,
-        source=UserContextEntry.SourceType.AGENT,
-        creator=doctor
-    )
-
-    # [FIX] Define the synchronous database query inside a dedicated function
-    @sync_to_async
-    def get_forms_history_sync(patient_user):
-        # Use select_related to pre-fetch the 'definition' object in the same query
-        entries = list(UserContextEntry.objects.filter(
-            user=patient_user, 
-            definition__key__startswith="clinical_form_"
-        ).select_related('definition').order_by('-created_at'))
-        return [e for e in entries if int(e.data.get("submitted_by_doctor_id") or 0) == doctor_id]
-
-    # Now call the async version of that function
-    form_entries = await get_forms_history_sync(patient)
-
-    forms_history = []
-    # This loop is now safe because 'f.definition' is pre-loaded
-    for f in form_entries:
-        forms_history.append({
-            "id": str(f.id),
-            "form_key": f.data.get('form_key'),
-            "type": f.data.get('form_title', f.definition.key), # This line is now safe
-            "date": f.created_at.isoformat(),
-            "data": f.data 
-        })
-
-    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
-    
-    # 1. Always update the Forms List
-    form_entries = await get_forms_history_sync(patient)
-    forms_history = []
-    for f in form_entries:
-        forms_history.append({
-            "id": str(f.id),
-            "form_key": f.data.get('form_key'),
-            "type": f.data.get('form_title', f.definition.key),
-            "date": f.created_at.isoformat(),
-            "data": f.data
-        })
-    
-    updates = {
-        "forms": forms_history
-    }
-
-    # 2. IF Base Profile was updated, refresh the Patient Profile Header
     if form_key == "BASE_PROFILE_V1":
-        updates["patient_profile"] = {
-            "id": patient.id,
-            "name": actual_data.get("full_name") or patient.full_name,
-            "phone": patient.phone_number,
-            "age": actual_data.get("birth_date"),
-            "job": f"{actual_data.get('job_status', '')} {actual_data.get('job_title', '')}",
-            "education": actual_data.get("education_level"),
-            "marital_status": actual_data.get("marital_status")
-        }
-
-    # 3. Emit Event
-    yield CanvasUpdateEvent(value={
-        "canvas_id": canvas_id,
-        "component_key": "VANIA_PATIENT_MANAGER",
-        "delta": updates
-    })
-
-    yield f"✅ Form submitted. Context updated."
+        await sync_to_async(CaseService.save_base_profile)(
+            patient,
+            payload,
+            creator=doctor,
+            source=UserContextEntry.SourceType.AGENT,
+        )
+    else:
+        await sync_to_async(ContextDefinition.objects.get_or_create)(key=instance_key, defaults={"description": f"Agent submission: {form_def['title']}"})
+        await sync_to_async(user_context_manager.add_entry)(user=patient, key=instance_key, data=payload, source=UserContextEntry.SourceType.AGENT, creator=doctor)
+    if form_key == "BASE_PROFILE_V1" and payload.get("full_name"):
+        patient.full_name = payload["full_name"]
+        await sync_to_async(patient.save)(update_fields=["full_name"])
+    if form_key != "BASE_PROFILE_V1":
+        await sync_to_async(CaseService.touch_case)(patient, int(active_case.get("doctor_id") or doctor.id), active_case["id"])
+    selected_case_id = active_case["id"]
+    yield await _emit_canvas_refresh(run_context, patient, doctor, selected_case_id)
+    yield "✅ Form submitted."
 
 
 @tool
-async def manage_clinical_tests(
-    run_context: RunContext,
-    action: str,
-    data: Dict[str, Any] = {}
-) -> AsyncGenerator[Any, None]:
-    """
-    Manage psychology tests in the visitor tests panel.
-    Actions:
-    - ADD_TEST: data={catalog_id:int} or data={title:str, url:str}
-    - UPDATE_SUMMARY: data={test_id:str, result_summary:str}
-    - DELETE_TEST: data={test_id:str}
-    """
+async def manage_clinical_tests(run_context: RunContext, action: str, data: Dict[str, Any] = {}) -> AsyncGenerator[Any, None]:
     patient = await _get_active_patient()
     doctor = await CustomUser.objects.aget(pk=run_context.user_id)
-    doctor_id = int(doctor.id)
-
+    blocked = _tool_family_error(doctor, "tests")
+    if blocked:
+        yield blocked
+        return
     if not patient:
         yield "Error: No visitor selected."
         return
-
+    active_case = await _get_active_case(patient, doctor)
+    editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
+    if editable_error:
+        yield editable_error
+        return
+    doctor_id = int(active_case.get("doctor_id") or doctor.id)
+    policy = get_policy_for_user(doctor)
     action_key = (action or "").upper()
     if action_key == "ADD_TEST":
-        catalog_id = data.get("catalog_id")
-        title = data.get("title")
-        url = data.get("url")
-        created = await sync_to_async(ClinicalTestsService.add_test)(
-            patient=patient,
-            created_by=doctor,
-            catalog_id=int(catalog_id) if catalog_id else None,
-            title=title,
-            url=url,
-            doctor_id=doctor_id,
+        if policy.get("test_mode") == "exams_only":
+            if data.get("catalog_id"):
+                yield "❌ General doctors can register only manual exam entries without catalog-based tests."
+                return
+            data = {**data, "url": ""}
+        await sync_to_async(ClinicalTestsService.add_test)(
+            patient, doctor, data.get("catalog_id"), data.get("title"), data.get("url"), None, doctor_id, active_case["id"]
         )
-        msg = f"✅ Test added: {created.get('title')}"
-    elif action_key == "UPDATE_SUMMARY":
-        test_id = data.get("test_id")
-        result_summary = data.get("result_summary", "")
+    elif action_key in {"UPDATE_SUMMARY", "UPDATE_RESULT_TEXT"}:
         updated = await sync_to_async(ClinicalTestsService.update_test)(
-            patient=patient,
-            created_by=doctor,
-            test_id=test_id,
-            payload={"result_summary": result_summary},
-            doctor_id=doctor_id,
+            patient,
+            doctor,
+            data.get("test_id"),
+            {
+                "result_text": data.get("result_text", data.get("result_summary", "")),
+                "result_summary": data.get("result_text", data.get("result_summary", "")),
+            },
+            doctor_id,
+            active_case["id"],
         )
         if not updated:
             yield "❌ Test not found."
             return
-        msg = "✅ Test summary updated."
+    elif action_key == "UPDATE_TEST":
+        updated = await sync_to_async(ClinicalTestsService.update_test)(
+            patient,
+            doctor,
+            data.get("test_id"),
+            data,
+            doctor_id,
+            active_case["id"],
+        )
+        if not updated:
+            yield "❌ Test not found."
+            return
     elif action_key == "DELETE_TEST":
-        test_id = data.get("test_id")
         deleted = await sync_to_async(ClinicalTestsService.delete_test)(
-            patient=patient,
-            created_by=doctor,
-            test_id=test_id,
-            doctor_id=doctor_id,
+            patient, doctor, data.get("test_id"), doctor_id, active_case["id"]
         )
         if not deleted:
             yield "❌ Test not found."
             return
-        msg = "✅ Test deleted."
     else:
         yield f"❌ Unknown action '{action}'."
         return
-
-    tests_history = await sync_to_async(ClinicalTestsService.get_tests)(patient, doctor_id)
-    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
-    yield CanvasUpdateEvent(value={
-        "canvas_id": canvas_id,
-        "component_key": "VANIA_PATIENT_MANAGER",
-        "delta": {
-            "tests": tests_history
-        }
-    })
-    yield msg
+    await sync_to_async(CaseService.touch_case)(patient, doctor_id, active_case["id"])
+    yield await _emit_canvas_refresh(run_context, patient, doctor, active_case["id"])
+    yield "✅ Clinical tests updated."
 
 
 @tool
-async def update_forms_tests_analysis(
-    run_context: RunContext,
-    analysis_text: str
-) -> AsyncGenerator[Any, None]:
-    """
-    Saves 'تحلیل بالینی تست ها و فرم ها' into the visitor profile canvas.
-    """
+async def get_test_result_details(run_context: RunContext, test_id: str) -> AsyncGenerator[Any, None]:
     patient = await _get_active_patient()
-    doctor_id = int(run_context.user_id)
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "tests")
+    if blocked:
+        yield blocked
+        return
     if not patient:
         yield "Error: No visitor selected."
         return
+    active_case = await _get_active_case(patient, doctor)
+    payload = await sync_to_async(ClinicalTestsService.read_test_result_bundle)(
+        patient,
+        test_id,
+        int(active_case.get("doctor_id") or doctor.id),
+        active_case["id"],
+    )
+    if not payload:
+        yield "❌ Test not found."
+        return
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
 
-    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, analysis_text, doctor_id)
-    canvas_id = await _get_canvas_id(run_context.session_id, "VANIA_PATIENT_MANAGER")
-    yield CanvasUpdateEvent(value={
-        "canvas_id": canvas_id,
-        "component_key": "VANIA_PATIENT_MANAGER",
-        "delta": {
-            "forms_tests_analysis": analysis_text
-        }
-    })
+
+@tool
+async def list_case_files(
+    run_context: RunContext,
+    page: int = 1,
+    page_size: int = 10,
+    query: str = "",
+    file_type: str = "",
+    readable_only: bool = False,
+    sort: str = "recent",
+) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "files")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    active_case = await _get_active_case(patient, doctor)
+    payload = await sync_to_async(CaseFilesService.list_files)(
+        patient,
+        int(active_case.get("doctor_id") or doctor.id),
+        active_case["id"],
+        page=page,
+        page_size=page_size,
+        query=query or None,
+        file_type=file_type or None,
+        readable_only=readable_only,
+        sort=sort or "recent",
+    )
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def search_case_files(
+    run_context: RunContext,
+    query: str,
+    page: int = 1,
+    page_size: int = 5,
+    file_id: str = "",
+) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "files")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    active_case = await _get_active_case(patient, doctor)
+    payload = await sync_to_async(CaseFilesService.search_files)(
+        patient,
+        int(active_case.get("doctor_id") or doctor.id),
+        active_case["id"],
+        query=query,
+        page=page,
+        page_size=page_size,
+        file_id=file_id or None,
+    )
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def read_case_file(
+    run_context: RunContext,
+    file_id: str,
+    mode: str = "excerpt",
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    chunk_start: Optional[int] = None,
+    chunk_count: int = 3,
+    query: str = "",
+) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "files")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    active_case = await _get_active_case(patient, doctor)
+    payload = await sync_to_async(CaseFilesService.read_file)(
+        patient,
+        int(active_case.get("doctor_id") or doctor.id),
+        active_case["id"],
+        file_id=file_id,
+        mode=mode,
+        page=page,
+        page_size=page_size,
+        chunk_start=chunk_start,
+        chunk_count=chunk_count,
+        query=query or None,
+    )
+    if not payload:
+        yield "❌ File not found."
+        return
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def get_case_file_details(run_context: RunContext, file_id: str) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "files")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    active_case = await _get_active_case(patient, doctor)
+    payload = await sync_to_async(CaseFilesService.get_file_details)(patient, int(active_case.get("doctor_id") or doctor.id), active_case["id"], file_id)
+    if not payload:
+        yield "❌ File not found."
+        return
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def update_forms_tests_analysis(run_context: RunContext, analysis_text: str) -> AsyncGenerator[Any, None]:
+    patient = await _get_active_patient()
+    doctor = await CustomUser.objects.aget(pk=run_context.user_id)
+    blocked = _tool_family_error(doctor, "analysis")
+    if blocked:
+        yield blocked
+        return
+    if not patient:
+        yield "Error: No visitor selected."
+        return
+    active_case = await _get_active_case(patient, doctor)
+    editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
+    if editable_error:
+        yield editable_error
+        return
+    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, analysis_text, int(active_case.get("doctor_id") or doctor.id), active_case["id"])
+    yield await _emit_canvas_refresh(run_context, patient, doctor, active_case["id"])
     yield "✅ تحلیل بالینی تست‌ها و فرم‌ها ذخیره شد."
 
 
-# ==========================================
-# 8. TOOL FACTORY REGISTRATION
-# ==========================================
-
 @register_tool("vania_expert")
 class VaniaExpertToolFactory(BaseCapability):
-    """
-    Provides the full suite of clinical tools for the Vania Expert Agent,
-    enabling end-to-end treatment workflow management.
-    """
-    
     def get_tools(self, user, session_id) -> List[Any]:
-        """
-        Gathers and returns all necessary tools for the Vania Expert Agent.
-        """
-        return [
-            # Profile & Analysis
+        tools = [
+            get_my_expert_profile,
+            get_active_visitor_profile,
+            create_case,
+            rename_case,
+            delete_case,
+            select_case,
             update_clinical_summary,
-            
-            # Strategy
-            # NOTE: RAG search tool removed. Agent relies on internal knowledge.
-            
-            # Roadmap & General Management
             manage_roadmap,
-            
-            # Execution
             finalize_session_report,
             add_rescue_task,
-            
-            # Appendix
+            manage_medications,
+            get_current_medications,
             prescribe_resource,
-            
-            # General Clinical Utils
             get_form_schema,
-            submit_clinical_form, # New automated form filling
+            submit_clinical_form,
             manage_clinical_tests,
+            get_test_result_details,
+            list_case_files,
+            search_case_files,
+            read_case_file,
+            get_case_file_details,
             update_forms_tests_analysis,
         ]
-
-
-
-
-
-
+        policy = get_policy_for_user(user)
+        return [
+            item
+            for item in tools
+            if is_tool_family_allowed(policy, TOOL_FAMILY_BY_NAME.get(item.__name__, "profiles"))
+        ]

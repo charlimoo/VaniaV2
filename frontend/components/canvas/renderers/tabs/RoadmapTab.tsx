@@ -7,6 +7,8 @@ import {
   ArrowUp,
   Eye,
   FileText,
+  Trash2,
+  X,
   Lock,
   Map,
   Play,
@@ -17,9 +19,9 @@ import { TherapyRoadmap, RoadmapSession } from "@/lib/types/vania";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { useAssistantRuntime } from "@assistant-ui/react";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 
 // --- Sub-Components ---
@@ -31,9 +33,11 @@ interface Props {
   roadmap: TherapyRoadmap;
   activeGoals: string[]; // [NEW]
   patientId: number;
+  caseId?: string;
   patientName: string;
   allSessionsHistory: any[]; 
   onEdit: (delta: any) => void;
+  readOnly?: boolean;
 }
 /**
  * Renders the "Roadmap" (سند پشتیبان) tab, which serves as the central hub for the therapy plan.
@@ -43,30 +47,28 @@ interface Props {
  * - View detailed, structured reports for completed sessions.
  * - Manually add new sessions to the plan.
  */
-export function RoadmapTab({ roadmap, activeGoals, patientId, patientName, allSessionsHistory, onEdit }: Props) {
-  const runtime = useAssistantRuntime();
+export function RoadmapTab({ roadmap, activeGoals, patientId, caseId, patientName, allSessionsHistory, onEdit, readOnly = false }: Props) {
   const [selectedSession, setSelectedSession] = useState<RoadmapSession | null>(null);
+  const [approachDraft, setApproachDraft] = useState("");
 
   // --- Event Handlers ---
 
   const handleStartSession = async (session: RoadmapSession) => {
+    if (readOnly) {
+      toast.error("این پرونده فقط برای مشاهده در اختیار شماست.");
+      return;
+    }
     const toastId = toast.loading(`در حال فعال‌سازی جلسه ${session.session_number}...`);
     try {
         // 1. Notify the backend to set this session as "active" in the roadmap state
         await fetch(`${API_BASE_URL}/api/vania/roadmap/active/`, {
             method: "POST",
             headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-            body: JSON.stringify({ patient_id: patientId, session_number: session.session_number })
+            body: JSON.stringify({ patient_id: patientId, session_number: session.session_number, case_id: caseId })
         });
         
         toast.dismiss(toastId);
         toast.success(`جلسه ${session.session_number} (${session.title}) شروع شد.`);
-        
-        // 2. Send a system message to the agent to load the context for this session
-        runtime.thread.append({
-            role: "user",
-            content: [{ type: "text", text: `من جلسه ${session.session_number} (${session.title}) را شروع کردم. لطفاً پروتکل و راهنمایی‌های لازم را ارائه بده.` }]
-        });
 
     } catch (e) {
         toast.dismiss(toastId);
@@ -107,6 +109,71 @@ export function RoadmapTab({ roadmap, activeGoals, patientId, patientName, allSe
     });
   };
 
+  const handleDeleteSession = async (session: RoadmapSession) => {
+    if (readOnly) return;
+    if (!confirm(`جلسه ${session.session_number} حذف شود؟`)) return;
+
+    try {
+      const query = new URLSearchParams({
+        patient_id: String(patientId),
+        session_number: String(session.session_number),
+      });
+      if (caseId) query.set("case_id", caseId);
+
+      const res = await fetch(`${API_BASE_URL}/api/vania/roadmap/?${query.toString()}`, {
+        method: "DELETE",
+        headers: { ...getAuthHeaders() },
+      });
+
+      if (!res.ok) throw new Error("حذف جلسه ناموفق بود.");
+
+      const updatedRoadmap: TherapyRoadmap = await res.json();
+      onEdit({ roadmap_data: updatedRoadmap });
+      toast.success("جلسه حذف شد.");
+    } catch (e: any) {
+      toast.error(e.message || "خطا در حذف جلسه.");
+    }
+  };
+
+  const saveTreatmentApproaches = async (nextApproaches: string[]) => {
+    onEdit({
+      roadmap_data: {
+        ...roadmap,
+        treatment_approaches: nextApproaches,
+      },
+    });
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/vania/roadmap/`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+        body: JSON.stringify({
+          patient_id: patientId,
+          case_id: caseId,
+          treatment_approaches: nextApproaches,
+        }),
+      });
+
+      if (!res.ok) throw new Error("ذخیره رویکرد درمانی ناموفق بود.");
+    } catch (e: any) {
+      toast.error(e.message || "خطا در ذخیره رویکرد درمانی.");
+    }
+  };
+
+  const handleAddApproach = async () => {
+    const value = approachDraft.trim();
+    if (!value || readOnly) return;
+    const nextApproaches = [...(roadmap.treatment_approaches || []), value];
+    setApproachDraft("");
+    await saveTreatmentApproaches(nextApproaches);
+  };
+
+  const handleRemoveApproach = async (index: number) => {
+    if (readOnly) return;
+    const nextApproaches = (roadmap.treatment_approaches || []).filter((_, itemIndex) => itemIndex !== index);
+    await saveTreatmentApproaches(nextApproaches);
+  };
+
 
 if (selectedSession) {
     return (
@@ -115,34 +182,13 @@ if (selectedSession) {
             allSessionsHistory={allSessionsHistory}
             patientName={patientName}
             patientId={patientId} // [FIX] Pass this prop
+            caseId={caseId}
             onBack={() => setSelectedSession(null)} 
             // [FIX] Pass onEdit to handle updates from the dialog
             onUpdate={(data) => onEdit({ roadmap_data: data.roadmap, sessions: data.history })} 
         />
     );
 }
-  // Handle Empty State with Add Button
-  if (!roadmap || !roadmap.sessions || roadmap.sessions.length === 0) {
-    return (
-        <div className="flex flex-col items-center justify-center h-full text-muted-foreground border-2 border-dashed rounded-xl bg-muted/10 animate-in fade-in p-6 gap-4">
-            <Map className="w-10 h-10 opacity-20" />
-            <div className="text-center">
-                <h3 className="text-sm font-semibold">نقشه راه درمان خالی است</h3>
-                <p className="text-xs opacity-70 mt-1">جلسات را دستی اضافه کنید یا از دستیار بخواهید.</p>
-            </div>
-            <AddSessionDialog 
-                patientId={patientId} 
-                onSuccess={handleSessionAdded} // [FIX] Connect handler
-                trigger={
-                    <Button variant="outline" className="gap-2">
-                        <Plus className="w-4 h-4" /> شروع برنامه‌ریزی
-                    </Button>
-                }
-            />
-        </div>
-    );
-  }
-
   // 3. List View (Timeline): The default view showing all sessions
   return (
     <div className="space-y-6 pb-10 animate-in fade-in slide-in-from-right-2 duration-300">
@@ -173,30 +219,62 @@ if (selectedSession) {
               <Map className="w-4 h-4 text-primary"/>
               نقشه راه درمان
           </h3>
-          <AddSessionDialog 
+          {!readOnly ? <AddSessionDialog 
             patientId={patientId} 
+            caseId={caseId}
             onSuccess={handleSessionAdded} // [FIX] Connect handler
             trigger={
                 <Button size="sm" variant="ghost" className="h-7 text-xs gap-1.5 text-primary hover:bg-primary/10">
                     <Plus className="w-3.5 h-3.5" /> افزودن جلسه
                 </Button>
             }
-          />
+          /> : null}
         </div>
         <div className="flex flex-wrap gap-2 pt-2 border-t border-border/50">
           {(roadmap.treatment_approaches?.length || 0) > 0 ? (
              roadmap.treatment_approaches.map((app, i) => (
-                <Badge key={i} variant="secondary" className="font-normal">{app}</Badge>
+                <Badge key={i} variant="secondary" className="flex items-center gap-1.5 font-normal">
+                  {app}
+                  {!readOnly ? (
+                    <button type="button" onClick={() => handleRemoveApproach(i)} className="text-muted-foreground transition hover:text-foreground">
+                      <X className="h-3 w-3" />
+                    </button>
+                  ) : null}
+                </Badge>
              ))
           ) : (
-             <span className="text-xs text-muted-foreground italic">رویکرد درمانی هنوز انتخاب نشده است (مربوط به فاز ۳).</span>
+             <span className="text-xs text-muted-foreground italic">هنوز رویکرد درمانی ثبت نشده است.</span>
           )}
         </div>
+        {!readOnly ? (
+          <div className="flex flex-col gap-2 border-t border-border/50 pt-3 sm:flex-row sm:items-center">
+            <Input
+              value={approachDraft}
+              onChange={(e) => setApproachDraft(e.target.value)}
+              placeholder="مثلا: CBT یا ACT"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleAddApproach();
+                }
+              }}
+            />
+            <Button size="sm" className="gap-2 sm:w-auto" onClick={() => void handleAddApproach()} disabled={!approachDraft.trim()}>
+              <Plus className="h-3.5 w-3.5" />
+              افزودن رویکرد
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       {/* --- Session Timeline --- */}
+      {(roadmap.sessions || []).length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border/60 px-4 py-8 text-center text-sm text-muted-foreground">
+          هنوز جلسه‌ای به سند پشتیبان اضافه نشده است.
+        </div>
+      ) : (
       <div className="relative mr-1.5 space-y-6 border-r-2 border-border/60 pl-1 sm:mr-3.5 sm:space-y-8">
-        {roadmap.sessions.map((session, index) => (
+        {(roadmap.sessions || []).map((session, index) => (
           <div key={index} className="group relative pr-5 sm:pr-8">
             
             {/* Timeline Dot and Line */}
@@ -236,7 +314,7 @@ if (selectedSession) {
                   </div>
                   
                   <div className="flex shrink-0 items-center gap-1">
-                    <div className="flex items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
+                    {!readOnly ? <div className="flex items-center gap-1 opacity-0 pointer-events-none transition-opacity group-hover:opacity-100 group-hover:pointer-events-auto">
                       <Button
                         variant="ghost"
                         size="icon"
@@ -263,7 +341,19 @@ if (selectedSession) {
                       >
                         <ArrowDown className="w-3.5 h-3.5" />
                       </Button>
-                    </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleDeleteSession(session);
+                        }}
+                        aria-label="حذف جلسه"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div> : null}
 
                     {/* View/Details Button */}
                     <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground" onClick={() => setSelectedSession(session)}>
@@ -271,7 +361,7 @@ if (selectedSession) {
                     </Button>
 
                     {/* Start Session Button (only for non-completed sessions) */}
-                    {session.status !== 'COMPLETED' && (
+                    {!readOnly && session.status !== 'COMPLETED' && (
                         <Button 
                             size="sm" 
                             variant={session.status === 'READY' ? "default" : "outline"}
@@ -300,6 +390,7 @@ if (selectedSession) {
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }

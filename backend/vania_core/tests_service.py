@@ -3,6 +3,8 @@ import uuid
 import logging
 import re
 import unicodedata
+import base64
+import mimetypes
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -15,7 +17,8 @@ from pypdf import PdfReader
 from users.models import UserContextEntry
 from users.services import user_context_manager
 from .tests_catalog import TEST_CATALOG, TEST_CATALOG_BY_ID
-from .context_scope import migrate_legacy_to_scoped_once, build_scoped_key
+from .context_scope import migrate_legacy_to_scoped_once, migrate_doctor_scoped_to_case_once, build_scoped_key
+from .case_service import build_case_scoped_key
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +37,23 @@ except Exception:
 class ClinicalTestsService:
     CONTEXT_KEY = "clinical_tests"
     MAX_EXTRACTED_TEXT_CHARS = 24000
+    ALLOWED_ATTACHMENT_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
 
     @staticmethod
     def list_catalog() -> List[Dict[str, Any]]:
         return TEST_CATALOG
 
     @staticmethod
-    def _get_state(patient, doctor_id=None) -> Dict[str, Any]:
-        if doctor_id:
+    def _get_state(patient, doctor_id=None, case_id=None) -> Dict[str, Any]:
+        if doctor_id and case_id:
+            entry = migrate_doctor_scoped_to_case_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                case_id=case_id,
+                base_key=ClinicalTestsService.CONTEXT_KEY,
+                default_factory=lambda: {"tests": []},
+            )
+        elif doctor_id:
             entry = migrate_legacy_to_scoped_once(
                 patient=patient,
                 doctor_id=doctor_id,
@@ -57,15 +69,17 @@ class ClinicalTestsService:
         return {"tests": []}
 
     @staticmethod
-    def get_tests(patient, doctor_id=None) -> List[Dict[str, Any]]:
-        state = ClinicalTestsService._get_state(patient, doctor_id=doctor_id)
+    def get_tests(patient, doctor_id=None, case_id=None) -> List[Dict[str, Any]]:
+        state = ClinicalTestsService._get_state(patient, doctor_id=doctor_id, case_id=case_id)
         tests = state.get("tests", [])
+        for test in tests:
+            ClinicalTestsService._normalize_test_record(test)
         tests.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return tests
 
     @staticmethod
-    def save_tests(patient, tests: List[Dict[str, Any]], source=UserContextEntry.SourceType.USER, creator=None, doctor_id=None):
-        key = build_scoped_key(ClinicalTestsService.CONTEXT_KEY, doctor_id) if doctor_id else ClinicalTestsService.CONTEXT_KEY
+    def save_tests(patient, tests: List[Dict[str, Any]], source=UserContextEntry.SourceType.USER, creator=None, doctor_id=None, case_id=None):
+        key = build_case_scoped_key(ClinicalTestsService.CONTEXT_KEY, doctor_id, case_id) if doctor_id and case_id else build_scoped_key(ClinicalTestsService.CONTEXT_KEY, doctor_id) if doctor_id else ClinicalTestsService.CONTEXT_KEY
         user_context_manager.set_singleton_context(
             user=patient,
             key=key,
@@ -83,8 +97,9 @@ class ClinicalTestsService:
         url: Optional[str] = None,
         result_summary: Optional[str] = None,
         doctor_id=None,
+        case_id=None,
     ) -> Dict[str, Any]:
-        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id, case_id=case_id)
         now_iso = datetime.now().isoformat()
 
         resolved_title = title or ""
@@ -100,26 +115,35 @@ class ClinicalTestsService:
             "catalog_id": int(catalog_id) if catalog_id else None,
             "title": resolved_title,
             "url": resolved_url,
+            "result_text": (result_summary or "").strip(),
             "result_summary": (result_summary or "").strip(),
+            "attachments": [],
             "file_path": None,
             "file_name": None,
             "file_uploaded_at": None,
             "created_at": now_iso,
             "updated_at": now_iso,
+            "submitted_by_doctor_id": int(doctor_id or getattr(created_by, "id", 0) or 0),
+            "case_id": case_id,
         }
         tests.insert(0, new_test)
-        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id)
+        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id, case_id=case_id)
         return new_test
 
     @staticmethod
-    def update_test(patient, created_by, test_id: str, payload: Dict[str, Any], doctor_id=None) -> Optional[Dict[str, Any]]:
-        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
+    def update_test(patient, created_by, test_id: str, payload: Dict[str, Any], doctor_id=None, case_id=None) -> Optional[Dict[str, Any]]:
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id, case_id=case_id)
         updated = None
         for test in tests:
             if test.get("id") == test_id:
-                for key in ["title", "url", "result_summary"]:
+                for key in ["title", "url", "result_text", "result_summary"]:
                     if key in payload:
-                        test[key] = payload.get(key)
+                        if key in {"result_text", "result_summary"}:
+                            next_text = (payload.get(key) or "").strip()
+                            test["result_text"] = next_text
+                            test["result_summary"] = next_text
+                        else:
+                            test[key] = payload.get(key)
                 if "catalog_id" in payload:
                     catalog_id = payload.get("catalog_id")
                     test["catalog_id"] = int(catalog_id) if catalog_id else None
@@ -128,13 +152,14 @@ class ClinicalTestsService:
                         test["title"] = item["title"]
                         test["url"] = item["url"]
                 test["updated_at"] = datetime.now().isoformat()
+                ClinicalTestsService._normalize_test_record(test)
                 updated = test
                 break
 
         if updated is None:
             return None
 
-        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id)
+        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id, case_id=case_id)
         return updated
 
     @staticmethod
@@ -143,8 +168,8 @@ class ClinicalTestsService:
             default_storage.delete(file_path)
 
     @staticmethod
-    def delete_test(patient, created_by, test_id: str, doctor_id=None) -> bool:
-        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
+    def delete_test(patient, created_by, test_id: str, doctor_id=None, case_id=None) -> bool:
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id, case_id=case_id)
         filtered = []
         removed = False
         for test in tests:
@@ -157,20 +182,19 @@ class ClinicalTestsService:
         if not removed:
             return False
 
-        ClinicalTestsService.save_tests(patient, filtered, creator=created_by, doctor_id=doctor_id)
+        ClinicalTestsService.save_tests(patient, filtered, creator=created_by, doctor_id=doctor_id, case_id=case_id)
         return True
 
     @staticmethod
-    def attach_pdf_and_summarize(
+    def attach_test_file(
         patient,
         created_by,
         test_id: str,
         uploaded_file,
-        doctor_summary: Optional[str] = None,
-        auto_summarize: bool = True,
         doctor_id=None,
+        case_id=None,
     ) -> Optional[Dict[str, Any]]:
-        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id, case_id=case_id)
         target = None
         for test in tests:
             if test.get("id") == test_id:
@@ -182,58 +206,202 @@ class ClinicalTestsService:
 
         ClinicalTestsService._delete_file_if_exists(target.get("file_path"))
 
-        extension = os.path.splitext(uploaded_file.name or "")[1].lower() or ".pdf"
+        extension = os.path.splitext(uploaded_file.name or "")[1].lower()
+        if extension not in ClinicalTestsService.ALLOWED_ATTACHMENT_EXTENSIONS:
+            raise ValueError("Unsupported file type.")
         safe_name = f"{uuid.uuid4().hex}{extension}"
         relative_path = os.path.join("clinical_tests", str(patient.id), safe_name)
         saved_path = default_storage.save(relative_path, uploaded_file)
 
-        target["file_path"] = saved_path
-        target["file_name"] = uploaded_file.name
-        target["file_uploaded_at"] = datetime.now().isoformat()
-
-        summary_text = (doctor_summary or "").strip()
-        if not summary_text and auto_summarize:
-            extracted_text = ClinicalTestsService.extract_pdf_text(saved_path)
-            if extracted_text:
-                ai_summary = ClinicalTestsService.summarize_test_result(
-                    test_title=target.get("title", "تست روانشناسی"),
-                    test_text=extracted_text,
-                )
-                if ai_summary:
-                    summary_text = ai_summary
-
-        target["result_summary"] = summary_text
+        attachments = target.get("attachments", [])
+        if not isinstance(attachments, list):
+            attachments = []
+        attachments.append({
+            "id": str(uuid.uuid4()),
+            "file_path": saved_path,
+            "file_name": uploaded_file.name,
+            "file_uploaded_at": datetime.now().isoformat(),
+            "content_type": mimetypes.guess_type(uploaded_file.name)[0] or "application/octet-stream",
+        })
+        target["attachments"] = attachments
         target["updated_at"] = datetime.now().isoformat()
+        ClinicalTestsService._normalize_test_record(target)
 
-        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id)
+        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id, case_id=case_id)
         return target
 
     @staticmethod
-    def remove_test_file(patient, created_by, test_id: str, doctor_id=None) -> bool:
-        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id)
+    def remove_test_file(patient, created_by, test_id: str, attachment_id: Optional[str] = None, doctor_id=None, case_id=None) -> bool:
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id, case_id=case_id)
         changed = False
         for test in tests:
             if test.get("id") == test_id:
-                ClinicalTestsService._delete_file_if_exists(test.get("file_path"))
-                test["file_path"] = None
-                test["file_name"] = None
-                test["file_uploaded_at"] = None
+                attachments = test.get("attachments", [])
+                if not isinstance(attachments, list):
+                    attachments = []
+                target_attachment = None
+                if attachment_id:
+                    target_attachment = next((item for item in attachments if item.get("id") == attachment_id), None)
+                elif attachments:
+                    target_attachment = attachments[0]
+                if target_attachment is None and test.get("file_path"):
+                    target_attachment = {
+                        "file_path": test.get("file_path"),
+                        "file_name": test.get("file_name"),
+                    }
+                if target_attachment is None:
+                    return False
+                ClinicalTestsService._delete_file_if_exists(target_attachment.get("file_path"))
+                if attachment_id:
+                    test["attachments"] = [item for item in attachments if item.get("id") != attachment_id]
+                elif attachments:
+                    test["attachments"] = attachments[1:]
+                else:
+                    test["attachments"] = []
                 test["updated_at"] = datetime.now().isoformat()
+                ClinicalTestsService._normalize_test_record(test)
                 changed = True
                 break
 
         if not changed:
             return False
 
-        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id)
+        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id, case_id=case_id)
         return True
 
     @staticmethod
-    def get_test(patient, test_id: str, doctor_id=None) -> Optional[Dict[str, Any]]:
-        for test in ClinicalTestsService.get_tests(patient, doctor_id=doctor_id):
+    def get_test(patient, test_id: str, doctor_id=None, case_id=None) -> Optional[Dict[str, Any]]:
+        for test in ClinicalTestsService.get_tests(patient, doctor_id=doctor_id, case_id=case_id):
             if test.get("id") == test_id:
                 return test
         return None
+
+    @staticmethod
+    def get_test_attachment(patient, test_id: str, attachment_id: Optional[str] = None, doctor_id=None, case_id=None) -> Optional[Dict[str, Any]]:
+        test = ClinicalTestsService.get_test(patient, test_id, doctor_id=doctor_id, case_id=case_id)
+        if not test:
+            return None
+        attachments = test.get("attachments", [])
+        if not isinstance(attachments, list):
+            attachments = []
+        if attachment_id:
+            return next((item for item in attachments if item.get("id") == attachment_id), None)
+        if attachments:
+            return attachments[0]
+        if test.get("file_path"):
+            return {
+                "id": "legacy-file",
+                "file_path": test.get("file_path"),
+                "file_name": test.get("file_name"),
+                "file_uploaded_at": test.get("file_uploaded_at"),
+                "content_type": mimetypes.guess_type(test.get("file_name") or "")[0] or "application/octet-stream",
+            }
+        return None
+
+    @staticmethod
+    def _normalize_test_record(test: Dict[str, Any]) -> Dict[str, Any]:
+        attachments = test.get("attachments", [])
+        if not isinstance(attachments, list):
+            attachments = []
+        normalized_attachments = []
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            normalized_attachments.append({
+                "id": item.get("id") or str(uuid.uuid4()),
+                "file_path": item.get("file_path"),
+                "file_name": item.get("file_name"),
+                "file_uploaded_at": item.get("file_uploaded_at"),
+                "content_type": item.get("content_type") or mimetypes.guess_type(item.get("file_name") or "")[0] or "application/octet-stream",
+            })
+        if not normalized_attachments and test.get("file_path"):
+            normalized_attachments.append({
+                "id": "legacy-file",
+                "file_path": test.get("file_path"),
+                "file_name": test.get("file_name"),
+                "file_uploaded_at": test.get("file_uploaded_at"),
+                "content_type": mimetypes.guess_type(test.get("file_name") or "")[0] or "application/octet-stream",
+            })
+        test["attachments"] = normalized_attachments
+        if "result_text" not in test:
+            test["result_text"] = test.get("result_summary", "") or ""
+        test["result_summary"] = test.get("result_text", "") or ""
+        primary_attachment = normalized_attachments[0] if normalized_attachments else None
+        test["file_path"] = primary_attachment.get("file_path") if primary_attachment else None
+        test["file_name"] = primary_attachment.get("file_name") if primary_attachment else None
+        test["file_uploaded_at"] = primary_attachment.get("file_uploaded_at") if primary_attachment else None
+        return test
+
+    @staticmethod
+    def read_test_result_bundle(patient, test_id: str, doctor_id=None, case_id=None) -> Optional[Dict[str, Any]]:
+        test = ClinicalTestsService.get_test(patient, test_id, doctor_id=doctor_id, case_id=case_id)
+        if not test:
+            return None
+        attachments = []
+        for attachment in test.get("attachments", []) or []:
+            extracted_text = ClinicalTestsService.extract_attachment_text(attachment)
+            attachments.append({
+                "id": attachment.get("id"),
+                "file_name": attachment.get("file_name"),
+                "content_type": attachment.get("content_type"),
+                "file_uploaded_at": attachment.get("file_uploaded_at"),
+                "extracted_text": extracted_text,
+            })
+        return {
+            "id": test.get("id"),
+            "title": test.get("title"),
+            "url": test.get("url"),
+            "catalog_id": test.get("catalog_id"),
+            "result_text": test.get("result_text", ""),
+            "case_id": test.get("case_id"),
+            "attachments": attachments,
+        }
+
+    @staticmethod
+    def extract_attachment_text(attachment: Dict[str, Any]) -> str:
+        storage_path = attachment.get("file_path")
+        file_name = attachment.get("file_name") or ""
+        if not storage_path or not default_storage.exists(storage_path):
+            return ""
+        extension = os.path.splitext(file_name)[1].lower()
+        if extension == ".pdf":
+            return ClinicalTestsService.extract_pdf_text(storage_path)
+        if extension in {".png", ".jpg", ".jpeg", ".webp"}:
+            return ClinicalTestsService.extract_image_text(storage_path, attachment.get("content_type"))
+        return ""
+
+    @staticmethod
+    def extract_image_text(storage_path: str, content_type: Optional[str] = None) -> str:
+        api_key = getattr(settings, "OPENAI_API_KEY", None)
+        if not api_key:
+            return ""
+        try:
+            with default_storage.open(storage_path, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode("ascii")
+            mime_type = content_type or mimetypes.guess_type(storage_path)[0] or "image/png"
+            client = OpenAI(api_key=api_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                temperature=0,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "متن موجود در تصویر را با دقت استخراج کن. فقط متن قابل مشاهده را برگردان و اگر متن معناداری وجود ندارد، رشته خالی برگردان.",
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "متن و اعداد موجود در این تصویر نتیجه تست را استخراج کن."},
+                            {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{encoded}"}},
+                        ],
+                    },
+                ],
+            )
+            content = response.choices[0].message.content if response.choices else ""
+            return (content or "").strip()
+        except Exception as exc:
+            logger.warning("Image extraction failed for %s: %s", storage_path, exc)
+            return ""
 
     @staticmethod
     def extract_pdf_text(storage_path: str) -> str:

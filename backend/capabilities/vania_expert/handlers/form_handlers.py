@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 @register_form_handler
 class MarriageAssessmentHandler(BaseFormHandler):
     """
-    Handles Form No. 4 (Matchmaking / همسان‌گزینی).
-    Logic: Calculates compatibility percentage based on scoring fields (0-5).
+    Handles Form No. 3 (Marriage Counseling / مشاوره ازدواج).
+    Logic: Calculates compatibility percentage based on the scored marriage fields.
     """
     label = "Vania: Marriage Compatibility Calc"
 
@@ -29,20 +29,39 @@ class MarriageAssessmentHandler(BaseFormHandler):
             raise ValueError("The selected patient was not found.")
 
         # --- 1. Scoring Logic ---
-        # Keys corresponding to the 0-5 scoring fields
+        # Keys corresponding to the scored marriage fields (0-4 scale)
         score_keys = [
-            'score_age', 'score_education', 'score_job', 'score_income', 
-            'score_living_status', 'score_appearance', 'score_military', 
-            'score_demand', 'score_prev_marriage', 'score_housing', 
-            'score_social_class', 'score_family_view', 'score_general_criteria', 
-            'score_specific_criteria', 'score_expectations', 'score_health', 
-            'score_mmpi', 'score_neo', 'score_other_tests', 'score_special_cond', 
-            'score_religious', 'score_other_notes'
+            'score_age',
+            'score_education',
+            'score_job',
+            'score_income',
+            'score_military',
+            'score_acquaintance_mode',
+            'score_acquaintance_duration',
+            'score_marriage_history',
+            'score_housing',
+            'score_social_class',
+            'score_cultural_class',
+            'score_economic_class',
+            'score_family_opinion',
+            'score_education_view',
+            'score_job_view',
+            'score_genetic_history',
+            'score_health_history',
+            'score_mental_history',
+            'score_divorce_history',
+            'score_addiction_history',
+            'score_criminal_history',
+            'score_knowledge',
+            'score_test_results',
+            'score_belief_alignment',
+            'score_criteria_alignment',
+            'score_expectations',
         ]
 
         total_score = 0
-        # 22 items * max score of 5 = 110 (You can adjust this max if needed)
-        max_possible_score = len(score_keys) * 5 
+        # The paper form uses a fixed denominator of 130 for its percentage formula.
+        max_possible_score = 130
 
         for key in score_keys:
             val = data.get(key)
@@ -54,7 +73,7 @@ class MarriageAssessmentHandler(BaseFormHandler):
                     else:
                         int_val = int(val)
                     
-                    if 0 <= int_val <= 5:
+                    if 0 <= int_val <= 4:
                         total_score += int_val
                 except (ValueError, IndexError):
                     pass 
@@ -69,18 +88,18 @@ class MarriageAssessmentHandler(BaseFormHandler):
         
         ContextDefinition.objects.get_or_create(
             key=context_key,
-            defaults={'description': "Matchmaking Assessment Result"}
+            defaults={'description': "Marriage Counseling Assessment Result"}
         )
 
         final_data = {
-            "form_key": "MATCHMAKING_V1",
-            "form_title": "همسان‌گزینی",
+            "form_key": "MARRIAGE_V1",
+            "form_title": "مشاوره ازدواج",
             "submitted_by_doctor_id": user.id,
             "raw_scores": data,
             "calculated_total": total_score,
             "max_score": max_possible_score,
             "compatibility_percent": compatibility_percent,
-            "interpretation": f"{compatibility_percent}% Compatibility"
+            "interpretation": f"{compatibility_percent}% Compatibility",
         }
 
         entry = user_context_manager.add_entry(
@@ -91,7 +110,7 @@ class MarriageAssessmentHandler(BaseFormHandler):
             creator=user
         )
 
-        logger.info(f"Saved Matchmaking Form for Patient {patient.id}. Score: {compatibility_percent}%")
+        logger.info(f"Saved Marriage Form for Patient {patient.id}. Score: {compatibility_percent}%")
 
         return {
             "status": "success",

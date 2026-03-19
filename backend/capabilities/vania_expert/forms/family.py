@@ -1,43 +1,165 @@
+from .constants import OPTS_EDUCATION, OPTS_JOB_STATUS, OPTS_MARITAL_STATUS, OPTS_MILITARY
+
+
+FAMILY_MEMBER_COLUMNS = [
+    {"name": "full_name", "label": "نام و نام خانوادگی", "type": "text"},
+    {"name": "relation", "label": "نسبت", "type": "select", "options": ["همسر", "فرزند", "پدر", "مادر", "خواهر", "برادر", "سایر"]},
+    {"name": "age", "label": "سن", "type": "number"},
+    {"name": "education", "label": "تحصیلات", "type": "text"},
+    {"name": "job", "label": "شغل", "type": "text"},
+    {"name": "marital_status", "label": "تأهل", "type": "select", "options": ["مجرد", "متاهل", "مطلقه", "بیوه"]},
+    {"name": "notes", "label": "سایر توضیحات", "type": "text"},
+]
+
+
 FORM_FAMILY = {
     "key": "FAMILY_V1",
     "title": "فرم شماره ۲: مشاوره خانواده",
-    "description": "بررسی پویایی سیستم خانواده و مقایسه دیدگاه زوجین.",
+    "description": "بررسی پویایی خانواده، مقایسه دیدگاه زوجین و تدوین تشخیص و طرح کمکی.",
     "handler": "GenericFormHandler",
     "schema": [
-        {"name": "complaint_main", "label": "شکایت اصلی", "type": "textarea", "width": "full"},
-        
-        # --- Comparative Table (Simulated via Layout) ---
-        
-        # 1. Personality
-        {"name": "view_personality_husband", "label": "ویژگی‌های شخصیتی (نظر آقا)", "type": "textarea", "width": "half"},
-        {"name": "view_personality_wife", "label": "ویژگی‌های شخصیتی (نظر خانم)", "type": "textarea", "width": "half"},
-        
-        # 2. Communication
-        {"name": "view_comm_husband", "label": "مهارت‌های ارتباطی (نظر آقا)", "type": "textarea", "width": "half"},
-        {"name": "view_comm_wife", "label": "مهارت‌های ارتباطی (نظر خانم)", "type": "textarea", "width": "half"},
-        
-        # 3. Conflict
-        {"name": "view_conflict_husband", "label": "حل تعارض (نظر آقا)", "type": "textarea", "width": "half"},
-        {"name": "view_conflict_wife", "label": "حل تعارض (نظر خانم)", "type": "textarea", "width": "half"},
-        
-        # 4. Financial
-        {"name": "view_financial_husband", "label": "موضوعات مالی (نظر آقا)", "type": "textarea", "width": "half"},
-        {"name": "view_financial_wife", "label": "موضوعات مالی (نظر خانم)", "type": "textarea", "width": "half"},
-        
-        # 5. Sexual
-        {"name": "view_sexual_husband", "label": "روابط زناشویی (نظر آقا)", "type": "textarea", "width": "half"},
-        {"name": "view_sexual_wife", "label": "روابط زناشویی (نظر خانم)", "type": "textarea", "width": "half"},
-
-        # 6. Parenting
-        {"name": "view_parent_husband", "label": "تربیت فرزند (نظر آقا)", "type": "textarea", "width": "half"},
-        {"name": "view_parent_wife", "label": "تربیت فرزند (نظر خانم)", "type": "textarea", "width": "half"},
-
-        # 7. In-laws
-        {"name": "view_inlaws_husband", "label": "ارتباط با بستگان (نظر آقا)", "type": "textarea", "width": "half"},
-        {"name": "view_inlaws_wife", "label": "ارتباط با بستگان (نظر خانم)", "type": "textarea", "width": "half"},
-
-        # --- Analysis ---
-        {"name": "systemic_diagnosis", "label": "تشخیص سیستم معیوب خانواده", "type": "textarea", "width": "full"},
-        {"name": "intervention_plan", "label": "طرح درمان", "type": "textarea", "width": "full"},
-    ]
+        {
+            "type": "section",
+            "name": "family_case_context",
+            "title": "مشخصات همسر و بستر خانوادگی",
+            "description": "اطلاعات عمومی مراجع در پروفایل پایه ثبت می‌شود؛ این بخش برای جزئیات زوج و سایر اعضای خانواده است.",
+            "fields": [
+                {"name": "wife_full_name", "label": "نام و نام خانوادگی خانم", "type": "text", "width": "half"},
+                {"name": "husband_full_name", "label": "نام و نام خانوادگی آقا", "type": "text", "width": "half"},
+                {"name": "wife_national_id", "label": "شماره ملی خانم", "type": "text", "width": "half"},
+                {"name": "husband_national_id", "label": "شماره ملی آقا", "type": "text", "width": "half"},
+                {"name": "wife_birth_date", "label": "تاریخ تولد خانم", "type": "date", "width": "half"},
+                {"name": "husband_birth_date", "label": "تاریخ تولد آقا", "type": "date", "width": "half"},
+                {"name": "relationship_status", "label": "وضعیت فعلی رابطه", "type": "select", "options": OPTS_MARITAL_STATUS, "width": "half"},
+                {"name": "children_count", "label": "تعداد فرزندان", "type": "number", "width": "half"},
+                {"name": "wife_education_level", "label": "وضعیت تحصیلی خانم", "type": "select", "options": OPTS_EDUCATION, "width": "half"},
+                {"name": "husband_education_level", "label": "وضعیت تحصیلی آقا", "type": "select", "options": OPTS_EDUCATION, "width": "half"},
+                {"name": "wife_education_major", "label": "رشته تحصیلی و مقطع خانم", "type": "text", "width": "half"},
+                {"name": "husband_education_major", "label": "رشته تحصیلی و مقطع آقا", "type": "text", "width": "half"},
+                {"name": "husband_military_status", "label": "وضعیت نظام وظیفه آقا", "type": "select", "options": OPTS_MILITARY, "width": "half"},
+                {"name": "husband_military_notes", "label": "توضیح نظام وظیفه / علت معافیت", "type": "text", "width": "half"},
+                {"name": "wife_job_status", "label": "وضعیت اشتغال خانم", "type": "select", "options": OPTS_JOB_STATUS, "width": "half"},
+                {"name": "husband_job_status", "label": "وضعیت اشتغال آقا", "type": "select", "options": OPTS_JOB_STATUS, "width": "half"},
+                {"name": "wife_job_type", "label": "نوع شغل خانم", "type": "select", "options": ["آزاد", "دولتی", "سایر"], "width": "half"},
+                {"name": "husband_job_type", "label": "نوع شغل آقا", "type": "select", "options": ["آزاد", "دولتی", "سایر"], "width": "half"},
+                {"name": "wife_job_title", "label": "عنوان شغل خانم", "type": "text", "width": "half"},
+                {"name": "husband_job_title", "label": "عنوان شغل آقا", "type": "text", "width": "half"},
+                {"name": "wife_income_approx", "label": "درآمد تقریبی خانم", "type": "text", "width": "half"},
+                {"name": "husband_income_approx", "label": "درآمد تقریبی آقا", "type": "text", "width": "half"},
+            ],
+        },
+        {
+            "type": "section",
+            "name": "family_members",
+            "title": "ترکیب خانواده",
+            "description": "اعضای حاضر در خانواده فعلی و خانواده‌های اصلی زوجین را در سه جدول جدا وارد کنید.",
+            "fields": [
+                {
+                    "name": "household_members",
+                    "label": "۱۵. مشخصات سایر اعضای خانواده",
+                    "type": "datagrid",
+                    "width": "full",
+                    "columns": FAMILY_MEMBER_COLUMNS,
+                },
+                {
+                    "name": "wife_family_members",
+                    "label": "۱۶. اطلاعات اعضای خانواده خانم",
+                    "type": "datagrid",
+                    "width": "full",
+                    "columns": FAMILY_MEMBER_COLUMNS,
+                },
+                {
+                    "name": "husband_family_members",
+                    "label": "۱۷. اطلاعات اعضای خانواده آقا",
+                    "type": "datagrid",
+                    "width": "full",
+                    "columns": FAMILY_MEMBER_COLUMNS,
+                },
+            ],
+        },
+        {
+            "type": "section",
+            "name": "family_initial_assessment",
+            "title": "اطلاعات اولیه",
+            "description": "شرح مسئله، سابقه مشکلات و زمینه اجتماعی و فرهنگی زوج را ثبت کنید.",
+            "fields": [
+                {"name": "complaint_main", "label": "۱. شکایت اصلی", "type": "textarea", "width": "full"},
+                {"name": "current_problem_history", "label": "۲. سابقه مشکل فعلی", "type": "textarea", "width": "full"},
+                {"name": "past_problem_history", "label": "۳. سابقه مشکلات قبلی", "type": "textarea", "width": "full"},
+                {"name": "family_background_levels", "label": "۴. بررسی سطح فرهنگی، اجتماعی، اقتصادی و سایر ویژگی‌های خانواده‌های طرفین", "type": "textarea", "width": "full"},
+                {"name": "relationship_timeline", "label": "۵. شرح مختصر سوابق خانواده از زمان آشنایی اولیه، نامزدی، عقد و عروسی تا به حال", "type": "textarea", "width": "full"},
+            ],
+        },
+        {
+            "type": "section",
+            "name": "family_functioning",
+            "title": "عملکرد خانواده از دیدگاه زوجین",
+            "description": "برای هر محور، دیدگاه خانم و آقا را جداگانه ثبت کنید.",
+            "fields": [
+                {"name": "view_personality_wife", "label": "ویژگی‌های شخصیتی از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_personality_husband", "label": "ویژگی‌های شخصیتی از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "view_comm_wife", "label": "مهارت‌های ارتباطی از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_comm_husband", "label": "مهارت‌های ارتباطی از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "view_conflict_wife", "label": "مهارت‌های حل تعارض از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_conflict_husband", "label": "مهارت‌های حل تعارض از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "view_financial_wife", "label": "موضوعات مالی از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_financial_husband", "label": "موضوعات مالی از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "view_leisure_wife", "label": "فعالیت‌های مربوط به اوقات فراغت از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_leisure_husband", "label": "فعالیت‌های مربوط به اوقات فراغت از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "view_sexual_wife", "label": "روابط زناشویی از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_sexual_husband", "label": "روابط زناشویی از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "view_parent_wife", "label": "تصمیم‌گیری و تربیت فرزند از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_parent_husband", "label": "تصمیم‌گیری و تربیت فرزند از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "view_inlaws_wife", "label": "ارتباط با بستگان و دوستان از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_inlaws_husband", "label": "ارتباط با بستگان و دوستان از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "view_shared_roles_wife", "label": "نقش‌های زندگی مشترک از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_shared_roles_husband", "label": "نقش‌های زندگی مشترک از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "view_beliefs_wife", "label": "جهت‌گیری عقیدتی از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "view_beliefs_husband", "label": "جهت‌گیری عقیدتی از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "family_function_summary_husband", "label": "شرح کلی عملکرد خانواده از دیدگاه آقا", "type": "textarea", "width": "full"},
+                {"name": "family_function_summary_wife", "label": "شرح کلی عملکرد خانواده از دیدگاه خانم", "type": "textarea", "width": "full"},
+            ],
+        },
+        {
+            "type": "section",
+            "name": "family_current_expectations",
+            "title": "مشکلات فعلی، نیازها و انتظارات",
+            "description": "مشکلات جاری، معیارهای زندگی، انتظارات و نحوه ابراز عاطفه طرفین را ثبت کنید.",
+            "fields": [
+                {"name": "current_problems_husband", "label": "۱-۶. مشکلات فعلی و معیارهای زندگی آقا", "type": "textarea", "width": "half"},
+                {"name": "current_problems_wife", "label": "۲-۶. مشکلات فعلی و معیارهای زندگی خانم", "type": "textarea", "width": "half"},
+                {"name": "expectations_wife_from_husband", "label": "۱-۷. انتظارات خانم از آقا", "type": "textarea", "width": "half"},
+                {"name": "expectations_husband_from_wife", "label": "۲-۷. انتظارات آقا از خانم", "type": "textarea", "width": "half"},
+                {"name": "wife_needs_from_husband_view", "label": "۱-۸. نیازهای خانم از دیدگاه آقا", "type": "textarea", "width": "half"},
+                {"name": "husband_needs_from_wife_view", "label": "۲-۸. نیازهای آقا از دیدگاه خانم", "type": "textarea", "width": "half"},
+                {"name": "emotion_expression_wife", "label": "۱-۹. نحوه ابراز عواطف توسط خانم", "type": "textarea", "width": "half"},
+                {"name": "emotion_expression_husband", "label": "۲-۹. نحوه ابراز عواطف توسط آقا", "type": "textarea", "width": "half"},
+            ],
+        },
+        {
+            "type": "section",
+            "name": "family_problem_views_and_diagnosis",
+            "title": "دیدگاه اعضای خانواده، تشخیص و طرح کمکی",
+            "description": "برداشت اعضای خانواده از مشکل و جمع‌بندی تشخیصی مبتنی بر DSM-5 را کامل کنید.",
+            "fields": [
+                {"name": "problem_view_husband", "label": "۱-۱۰. شرح مشکل از دیدگاه شوهر", "type": "textarea", "width": "full"},
+                {"name": "problem_view_wife", "label": "۲-۱۰. شرح مشکل از دیدگاه همسر", "type": "textarea", "width": "full"},
+                {"name": "problem_view_children", "label": "۳-۱۰. شرح مشکل از دیدگاه فرزندان", "type": "textarea", "width": "full"},
+                {"name": "systemic_diagnosis", "label": "۱۱. تشریح سیستم معیوب خانواده و آزمون‌های ضروری برای تشخیص", "type": "textarea", "width": "full"},
+                {"name": "diagnosis_primary", "label": "۱-۱۱. تشخیص اصلی", "type": "text", "width": "half"},
+                {"name": "diagnosis_primary_code", "label": "کد تشخیص اصلی", "type": "text", "width": "half"},
+                {"name": "diagnosis_secondary", "label": "۲-۱۱. تشخیص دوم", "type": "text", "width": "half"},
+                {"name": "diagnosis_secondary_code", "label": "کد تشخیص دوم", "type": "text", "width": "half"},
+                {"name": "diagnosis_tertiary", "label": "۳-۱۱. تشخیص سوم", "type": "text", "width": "half"},
+                {"name": "diagnosis_tertiary_code", "label": "کد تشخیص سوم", "type": "text", "width": "half"},
+                {"name": "prognosis", "label": "۲-۱۱. پیش‌بینی (Prognosis)", "type": "textarea", "width": "full"},
+                {"name": "specifier_course", "label": "۳-۱۱. مسیر (خط سیر)", "type": "text", "width": "half"},
+                {"name": "specifier_severity", "label": "شدت", "type": "text", "width": "half"},
+                {"name": "specifier_frequency", "label": "فراوانی", "type": "text", "width": "half"},
+                {"name": "specifier_duration", "label": "مدت", "type": "text", "width": "half"},
+                {"name": "descriptive_features", "label": "ویژگی‌های توصیفی", "type": "textarea", "width": "full"},
+                {"name": "intervention_plan", "label": "۱۲. طرح کمکی و پیشنهادها", "type": "textarea", "width": "full"},
+            ],
+        },
+    ],
 }

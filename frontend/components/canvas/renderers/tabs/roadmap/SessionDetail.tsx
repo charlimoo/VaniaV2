@@ -16,11 +16,12 @@ interface Props {
   allSessionsHistory: any[]; 
   patientName: string;
   patientId: number;
+  caseId?: string;
   onBack: () => void;
   onUpdate: (data: any) => void;
 }
 
-export function SessionDetail({ session, allSessionsHistory, patientName, patientId, onBack, onUpdate }: Props) {
+export function SessionDetail({ session, allSessionsHistory, patientName, patientId, caseId, onBack, onUpdate }: Props) {
   
   // 1. Find the raw log entry
   const reportLog = session.status === 'COMPLETED' && session.doc_id
@@ -80,6 +81,7 @@ export function SessionDetail({ session, allSessionsHistory, patientName, patien
         <div className="flex gap-2">
             <ManualReportDialog 
                 patientId={patientId}
+                caseId={caseId}
                 sessionNumber={session.session_number}
                 sessionTitle={session.title}
                 initialData={initialFormState}

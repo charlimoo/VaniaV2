@@ -9,6 +9,7 @@ _VALIDATORS = {
     "mock_psychologist": MockPatternValidator(),
     "mock_psychiatrist": MockPatternValidator(),
     "mock_lawyer": MockPatternValidator(),
+    "mock_general_doctor": MockPatternValidator(),
 }
 
 

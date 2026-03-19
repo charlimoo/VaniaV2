@@ -143,3 +143,26 @@ class CulturalResource(BaseModel):
 class ThoughtAppendix(BaseModel):
     """The root model for the `thought_appendix_library` context key."""
     resources: List[CulturalResource] = Field(default_factory=list)
+
+# ==============================================================================
+# == PILLAR 5: MEDICATION PLAN
+# ==============================================================================
+
+class MedicationEntry(BaseModel):
+    """Represents a single prescribed medication entry inside a case."""
+    id: str
+    drug_name: str
+    dosage: str = ""
+    usage_instructions: str = ""
+    timing: str = ""
+    duration: str = ""
+    notes: str = ""
+    prescribed_at: str = Field(default_factory=lambda: datetime.now().isoformat())
+    doctor_id: Optional[int] = None
+    doctor_name: Optional[str] = None
+    case_id: Optional[str] = None
+
+
+class MedicationPlan(BaseModel):
+    """The root model for the case-scoped medication plan."""
+    medications: List[MedicationEntry] = Field(default_factory=list)

@@ -17,6 +17,9 @@ resource_context = ContextVar("resource_id", default=None)
 # Tracks the selected doctor context for scoped patient-facing data.
 selected_doctor_context = ContextVar("selected_doctor_id", default=None)
 
+# Tracks the selected case context for case-scoped patient/expert data.
+selected_case_context = ContextVar("selected_case_id", default=None)
+
 # [LEGACY ALIAS] Alias for Vania compatibility.
 # Existing Vania tools that import 'target_patient_context' will actually read 'resource_context'.
 target_patient_context = resource_context

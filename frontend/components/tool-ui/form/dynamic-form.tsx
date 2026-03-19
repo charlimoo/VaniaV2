@@ -1,9 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useForm, Controller, useFieldArray } from "react-hook-form"; // Import useFieldArray
 import { Loader2, Send, AlertCircle, Plus, Trash2 } from "lucide-react"; // Import Icons
-import { useAssistantRuntime } from "@assistant-ui/react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -33,15 +32,18 @@ import { PersianDatePicker } from "@/components/ui/persian-date-picker";
 
 // --- Types ---
 interface FormFieldDef {
-  name: string;
-  label: string;
-  type: "text" | "number" | "email" | "textarea" | "select" | "checkbox" | "date" | "datagrid" | "checkbox_group"; // Added datagrid
+  name?: string;
+  label?: string;
+  type: string;
   required?: boolean;
   options?: string[];
   placeholder?: string;
   help_text?: string;
-  width?: "full" | "half"; // Added simple layout control
-  columns?: FormFieldDef[]; // For datagrid
+  width?: "full" | "half";
+  columns?: FormFieldDef[];
+  fields?: FormFieldDef[];
+  title?: string;
+  description?: string;
 }
 
 interface DynamicFormProps {
@@ -52,12 +54,31 @@ interface DynamicFormProps {
   description?: string;
   onSuccess?: (data: Record<string, any>) => void;
   disabled?: boolean;
+  readOnly?: boolean;
+  hideSubmit?: boolean;
   patientId?: number; 
   sessionId?: string; 
+  caseId?: string;
+  submitOverride?: (data: Record<string, any>) => Promise<void> | void;
 }
 
+const readOnlyFieldClassName =
+  "disabled:opacity-100 disabled:text-foreground disabled:border-border disabled:bg-muted/10 disabled:cursor-default";
+
+const sectionCardClassName = "rounded-2xl border border-border/60 bg-background/60 p-4 sm:p-5";
+
 // --- Sub-Component for DataGrid ---
-function DataGridField({ control, fieldDef }: { control: any, fieldDef: FormFieldDef }) {
+function DataGridField({
+  control,
+  register,
+  fieldDef,
+  readOnly = false,
+}: {
+  control: any,
+  register: any,
+  fieldDef: FormFieldDef & { name: string },
+  readOnly?: boolean
+}) {
   const { fields, append, remove } = useFieldArray({
     control,
     name: fieldDef.name,
@@ -67,15 +88,17 @@ function DataGridField({ control, fieldDef }: { control: any, fieldDef: FormFiel
     <div className="border rounded-lg overflow-hidden my-2">
       <div className="bg-muted/30 px-3 py-2 border-b flex justify-between items-center">
         <span className="text-xs font-semibold text-muted-foreground">{fieldDef.label}</span>
-        <Button 
-          type="button" 
-          variant="ghost" 
-          size="sm" 
-          onClick={() => append({})} // Add empty row
-          className="h-6 text-[10px] gap-1 hover:bg-primary/10 hover:text-primary"
-        >
-          <Plus className="w-3 h-3" /> افزودن سطر
-        </Button>
+        {!readOnly && (
+          <Button 
+            type="button" 
+            variant="ghost" 
+            size="sm" 
+            onClick={() => append({})} // Add empty row
+            className="h-6 text-[10px] gap-1 hover:bg-primary/10 hover:text-primary"
+          >
+            <Plus className="w-3 h-3" /> افزودن سطر
+          </Button>
+        )}
       </div>
       <div className="overflow-x-auto">
         <Table dir="rtl">
@@ -99,7 +122,7 @@ function DataGridField({ control, fieldDef }: { control: any, fieldDef: FormFiel
                         name={`${fieldDef.name}.${index}.${col.name}`}
                         render={({ field }) => (
                           <Select onValueChange={field.onChange} value={field.value}>
-                            <SelectTrigger className="h-7 text-[11px]">
+                            <SelectTrigger className={cn("h-7 text-[11px]", readOnly && readOnlyFieldClassName)} disabled={readOnly}>
                               <SelectValue placeholder="-" />
                             </SelectTrigger>
                             <SelectContent dir="rtl">
@@ -112,23 +135,27 @@ function DataGridField({ control, fieldDef }: { control: any, fieldDef: FormFiel
                       />
                     ) : (
                       <Input 
-                        {...control.register(`${fieldDef.name}.${index}.${col.name}`)}
+                        {...register(`${fieldDef.name}.${index}.${col.name}`)}
                         type={col.type}
-                        className="h-7 text-[11px]"
+                        className={cn("h-7 text-[11px]", readOnly && readOnlyFieldClassName)}
+                        readOnly={readOnly}
+                        disabled={readOnly}
                       />
                     )}
                   </TableCell>
                 ))}
                 <TableCell className="p-2 text-center">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6 text-destructive/70 hover:text-destructive"
-                    onClick={() => remove(index)}
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </Button>
+                  {!readOnly && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-destructive/70 hover:text-destructive"
+                      onClick={() => remove(index)}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </Button>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
@@ -155,10 +182,13 @@ export function DynamicForm({
   description,
   onSuccess,
   disabled = false,
+  readOnly = false,
+  hideSubmit = false,
   patientId, 
   sessionId, 
+  caseId,
+  submitOverride,
 }: DynamicFormProps) {
-  const runtime = useAssistantRuntime();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -174,11 +204,175 @@ export function DynamicForm({
     defaultValues: prefill,
   });
 
+  const renderField = (field: FormFieldDef, keyPrefix = ""): ReactNode => {
+    const fieldName = field.name || `${keyPrefix}${field.title || "field"}`;
+    const key = `${keyPrefix}${field.name || field.title || "field"}`;
+    const isSection = field.type === "section";
+    const isFullWidth = field.width === "full" || field.type === "textarea" || field.type === "datagrid" || isSection || !field.width;
+    const fieldError = errors[fieldName as keyof typeof errors];
+
+    if (isSection) {
+      return (
+        <div key={key} className="col-span-1 md:col-span-2">
+          <section className={sectionCardClassName}>
+            <div className="mb-4 space-y-1">
+              <h3 className="text-sm font-semibold text-foreground">{field.title}</h3>
+              {field.description && (
+              <p className="text-xs leading-6 text-muted-foreground">{field.description}</p>
+              )}
+            </div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              {(field.fields || []).map((nestedField, index) => renderField(nestedField, `${key}-${index}-`))}
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    return (
+      <div key={key} className={cn("flex flex-col gap-1.5 group", isFullWidth ? "col-span-1 md:col-span-2" : "col-span-1")}>
+        {field.type !== "checkbox" && field.type !== "datagrid" && (
+          <Label
+            htmlFor={fieldName}
+            className={cn(
+              "text-xs font-medium text-muted-foreground group-focus-within:text-primary transition-colors",
+              fieldError && "text-destructive"
+            )}
+          >
+            {field.label} {field.required && <span className="text-destructive">*</span>}
+          </Label>
+        )}
+
+        {(field.type === "text" || field.type === "number" || field.type === "email") && (
+          <Input
+            id={fieldName}
+            type={field.type}
+            placeholder={field.placeholder}
+            className={cn("h-9 text-right w-full", readOnly && readOnlyFieldClassName)}
+            {...register(fieldName, { required: field.required })}
+            readOnly={readOnly}
+            disabled={disabled || readOnly}
+          />
+        )}
+
+        {field.type === "date" && (
+          <Controller
+            control={control}
+            name={fieldName}
+            rules={{ required: field.required }}
+            render={({ field: controlledField }) => (
+              <PersianDatePicker
+                value={controlledField.value}
+                onChange={controlledField.onChange}
+                placeholder={field.placeholder}
+                disabled={disabled || readOnly}
+              />
+            )}
+          />
+        )}
+
+        {field.type === "textarea" && (
+          <Textarea
+            id={fieldName}
+            placeholder={field.placeholder}
+            className={cn("min-h-[80px] text-right resize-y w-full", readOnly && readOnlyFieldClassName)}
+            {...register(fieldName, { required: field.required })}
+            readOnly={readOnly}
+            disabled={disabled || readOnly}
+          />
+        )}
+
+        {field.type === "select" && (
+          <Controller
+            control={control}
+            name={fieldName}
+            rules={{ required: field.required }}
+            render={({ field: fieldProps }) => (
+              <Select onValueChange={fieldProps.onChange} value={fieldProps.value} disabled={disabled || readOnly}>
+                <SelectTrigger className={cn("h-9 text-right w-full", readOnly && readOnlyFieldClassName)} dir="rtl">
+                  <SelectValue placeholder={field.placeholder || "انتخاب کنید..."} />
+                </SelectTrigger>
+                <SelectContent dir="rtl">
+                  {(field.options || []).map((opt) => (
+                    <SelectItem key={opt} value={opt} className="text-right cursor-pointer">
+                      {opt}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+          />
+        )}
+
+        {field.type === "datagrid" && (
+          <DataGridField control={control} register={register} fieldDef={{ ...field, name: fieldName }} readOnly={readOnly} />
+        )}
+
+        {field.type === "checkbox_group" && (
+          <div className="rounded-2xl border border-border/60 bg-muted/10 p-3">
+            <Label className="mb-2 block text-xs font-semibold text-muted-foreground">
+              {field.label}
+            </Label>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Controller
+                control={control}
+                name={fieldName}
+                defaultValue={Array.isArray(prefill?.[fieldName]) ? prefill[fieldName] : []}
+                render={({ field: controlledField }) => (
+                  <>
+                    {field.options?.map((option) => (
+                      <div key={option} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`${fieldName}-${option}`}
+                          checked={Array.isArray(controlledField.value) && controlledField.value.includes(option)}
+                          onCheckedChange={(checked) => {
+                            if (readOnly) return;
+                            const currentValues = Array.isArray(controlledField.value) ? controlledField.value : [];
+                            if (checked) {
+                              controlledField.onChange([...currentValues, option]);
+                              return;
+                            }
+                            controlledField.onChange(currentValues.filter((value: string) => value !== option));
+                          }}
+                          className="data-[state=checked]:bg-primary w-4 h-4 disabled:opacity-100"
+                          disabled={disabled || readOnly}
+                        />
+                        <label
+                          htmlFor={`${fieldName}-${option}`}
+                          className="text-[11px] cursor-pointer select-none font-medium"
+                        >
+                          {option}
+                        </label>
+                      </div>
+                    ))}
+                  </>
+                )}
+              />
+            </div>
+          </div>
+        )}
+
+        {fieldError && (
+          <span className="text-[10px] text-destructive font-medium">الزامی</span>
+        )}
+        {field.help_text && (
+          <span className="text-[10px] text-muted-foreground/70">{field.help_text}</span>
+        )}
+      </div>
+    );
+  };
+
   const onSubmit = async (data: any) => {
     setIsSubmitting(true);
     setError(null);
 
     try {
+      if (submitOverride) {
+        await submitOverride(data);
+        if (onSuccess) onSuccess(data);
+        return;
+      }
+
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
         ...getAuthHeaders(),
@@ -192,7 +386,10 @@ export function DynamicForm({
           form_handle: formHandle,
           session_id: sessionId,
           resource_id: effectivePatientId, 
-          data: data,
+          data: {
+            ...data,
+            ...(caseId ? { case_id: caseId } : {}),
+          },
         }),
       });
 
@@ -203,11 +400,6 @@ export function DynamicForm({
       
       if (onSuccess) onSuccess(data);
 
-      await runtime.thread.append({
-        role: "user",
-        content: [{ type: "text", text: `[System: Form '${formHandle}' Submitted.]` }],
-      });
-
     } catch (err: any) {
       console.error("Form Submission Error:", err);
       setError(err.message || "خطایی در ثبت اطلاعات رخ داد.");
@@ -217,7 +409,7 @@ export function DynamicForm({
   };
 
   return (
-    <div className="w-full mx-auto border rounded-xl p-5 bg-card shadow-sm transition-all" dir="rtl">
+    <div className="w-full mx-auto rounded-2xl bg-card/80 p-1 transition-all" dir="rtl">
 
       {error && (
         <div className="mb-4 p-3 bg-destructive/10 text-destructive rounded-lg flex items-center gap-2 text-sm">
@@ -227,152 +419,19 @@ export function DynamicForm({
       )}
       
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-        {/* Simple Layout Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {schema.map((field) => {
-            const isFullWidth = field.width === 'full' || field.type === 'textarea' || field.type === 'datagrid' || !field.width;
-            
-            return (
-              <div key={field.name} className={cn("flex flex-col gap-1.5 group", isFullWidth ? "col-span-1 md:col-span-2" : "col-span-1")}>
-                
-                {/* Standard Inputs */}
-                {field.type !== "checkbox" && field.type !== "datagrid" && (
-                  <Label 
-                    htmlFor={field.name} 
-                    className={cn(
-                      "text-xs font-medium text-muted-foreground group-focus-within:text-primary transition-colors",
-                      errors[field.name] && "text-destructive"
-                    )}
-                  >
-                    {field.label} {field.required && <span className="text-destructive">*</span>}
-                  </Label>
-                )}
-
-                {/* --- INPUT TYPES --- */}
-                {(field.type === "text" || field.type === "number" || field.type === "email") && (
-                  <Input
-                    id={field.name}
-                    type={field.type}
-                    placeholder={field.placeholder}
-                    className="h-9 text-right w-full"
-                    {...register(field.name, { required: field.required })}
-                  />
-                  
-                )}
-                {field.type === "date" && (
-                  <Controller
-                    control={control}
-                    name={field.name}
-                    rules={{ required: field.required }}
-                    render={({ field: { onChange, value } }) => (
-                      <PersianDatePicker
-                        value={value}
-                        onChange={onChange}
-                        placeholder={field.placeholder}
-                      />
-                    )}
-                  />
-                )}
-
-                {field.type === "textarea" && (
-                  <Textarea
-                    id={field.name}
-                    placeholder={field.placeholder}
-                    className="min-h-[80px] text-right resize-y w-full"
-                    {...register(field.name, { required: field.required })}
-                  />
-                )}
-
-                {field.type === "select" && (
-                  <Controller
-                    control={control}
-                    name={field.name}
-                    rules={{ required: field.required }}
-                    render={({ field: fieldProps }) => (
-                      <Select onValueChange={fieldProps.onChange} defaultValue={fieldProps.value}>
-                        <SelectTrigger className="h-9 text-right w-full" dir="rtl">
-                          <SelectValue placeholder={field.placeholder || "انتخاب کنید..."} />
-                        </SelectTrigger>
-                        <SelectContent dir="rtl">
-                          {(field.options || []).map((opt) => (
-                            <SelectItem key={opt} value={opt} className="text-right cursor-pointer">
-                              {opt}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                  />
-                )}
-
-                {/* --- DATA GRID (TABLE) --- */}
-                {field.type === "datagrid" && (
-                  <DataGridField control={control} fieldDef={field} />
-                )}
-
-                {/* --- CHECKBOX GROUP (Multi-Select) --- */}
-                {field.type === "checkbox_group" && (
-                  <div className="space-y-2 border rounded-md p-3 bg-muted/10">
-                    <Label className="text-xs font-semibold text-muted-foreground mb-2 block">
-                      {field.label}
-                    </Label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Controller
-                        control={control}
-                        name={field.name}
-                        // Initialize as empty array
-                        defaultValue={[]}
-                        render={({ field: { onChange, value } }) => (
-                          <>
-                            {field.options?.map((option) => (
-                              <div key={option} className="flex items-center gap-2">
-                                <Checkbox
-                                  id={`${field.name}-${option}`}
-                                  checked={Array.isArray(value) && value.includes(option)}
-                                  onCheckedChange={(checked) => {
-                                    const currentValues = Array.isArray(value) ? value : [];
-                                    if (checked) {
-                                      onChange([...currentValues, option]);
-                                    } else {
-                                      onChange(currentValues.filter((v: string) => v !== option));
-                                    }
-                                  }}
-                                  className="data-[state=checked]:bg-primary w-4 h-4"
-                                />
-                                <label
-                                  htmlFor={`${field.name}-${option}`}
-                                  className="text-[11px] cursor-pointer select-none font-medium"
-                                >
-                                  {option}
-                                </label>
-                              </div>
-                            ))}
-                          </>
-                        )}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Errors & Help Text */}
-                {errors[field.name] && (
-                  <span className="text-[10px] text-destructive font-medium">الزامی</span>
-                )}
-                {field.help_text && (
-                  <span className="text-[10px] text-muted-foreground/70">{field.help_text}</span>
-                )}
-              </div>
-            );
-          })}
+          {schema.map((field, index) => renderField(field, `${index}-`))}
         </div>
 
-        <Button type="submit" className="w-full mt-4 gap-2 font-bold shadow-sm" disabled={isSubmitting || disabled}>
-          {isSubmitting ? (
-            <><Loader2 className="w-4 h-4 animate-spin" /><span>در حال پردازش...</span></>
-          ) : (
-            <><Send className="w-4 h-4" /><span>ثبت اطلاعات</span></>
-          )}
-        </Button>
+        {!hideSubmit && (
+          <Button type="submit" className="w-full mt-4 gap-2 font-bold shadow-sm" disabled={isSubmitting || disabled || readOnly}>
+            {isSubmitting ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /><span>در حال پردازش...</span></>
+            ) : (
+              <><Send className="w-4 h-4" /><span>ثبت اطلاعات</span></>
+            )}
+          </Button>
+        )}
       </form>
     </div>
   );

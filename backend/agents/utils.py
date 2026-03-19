@@ -3,10 +3,11 @@ import uuid
 import base64
 import logging
 import json
-from typing import Any, Tuple, Optional, List
+from typing import Any, Tuple, Optional, List, Dict
 
 # --- Agno Imports ---
 from agno.media import Image, File as AgnoFile
+from agno.models.message import Message
 
 # --- AG-UI Imports ---
 from ag_ui.core import RunAgentInput
@@ -57,6 +58,67 @@ def safe_get(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, dict): 
         return obj.get(key, default)
     return getattr(obj, key, default)
+
+
+def extract_ui_attachment_metadata(input_data: RunAgentInput) -> List[Dict[str, str]]:
+    attachments: List[Dict[str, str]] = []
+    messages = input_data.messages or []
+    if not messages:
+        return attachments
+
+    last_message = messages[-1]
+    content = safe_get(last_message, "content")
+    image_previews: List[str] = []
+    if isinstance(content, list):
+        for item in content:
+            if safe_get(item, "type") != "binary":
+                continue
+            mime = str(safe_get(item, "mimeType") or "application/octet-stream")
+            data = safe_get(item, "data")
+            if not mime.startswith("image/") or not isinstance(data, str) or not data:
+                continue
+            image_previews.append(f"data:{mime};base64,{data}")
+
+    explicit_attachment_meta = safe_get(last_message, "attachmentsMeta")
+    if isinstance(explicit_attachment_meta, list) and explicit_attachment_meta:
+        image_index = 0
+        for item in explicit_attachment_meta:
+            attachment_type = str(safe_get(item, "type") or "file")
+            attachment: Dict[str, str] = {
+                "id": str(safe_get(item, "id") or ""),
+                "name": str(safe_get(item, "name") or f"upload_{uuid.uuid4().hex[:8]}"),
+                "content_type": str(safe_get(item, "contentType") or "application/octet-stream"),
+                "type": attachment_type,
+            }
+            if attachment_type == "image" and image_index < len(image_previews):
+                attachment["preview_image"] = image_previews[image_index]
+                image_index += 1
+            attachments.append(attachment)
+        return attachments
+
+    if not isinstance(content, list):
+        return attachments
+
+    image_index = 0
+    for item in content:
+        if safe_get(item, "type") != "binary":
+            continue
+
+        mime = safe_get(item, "mimeType") or "application/octet-stream"
+        filename = safe_get(item, "filename") or f"upload_{uuid.uuid4().hex[:8]}"
+        attachment_type = "image" if str(mime).startswith("image/") else "file"
+        attachment: Dict[str, str] = {
+            "id": str(safe_get(item, "id") or ""),
+            "name": str(filename),
+            "content_type": str(mime),
+            "type": attachment_type,
+        }
+        if attachment_type == "image" and image_index < len(image_previews):
+            attachment["preview_image"] = image_previews[image_index]
+            image_index += 1
+        attachments.append(attachment)
+
+    return attachments
 
 def is_image_content(data: bytes) -> bool:
     """
@@ -230,3 +292,77 @@ def extract_tool_info(chunk: Any) -> Tuple[Optional[str], Optional[str], Optiona
         logger.debug("   [Utils] Found args via tc.arguments")
 
     return tc_id, tc_name, tc_args
+
+
+def build_branch_history_messages(input_messages: List[Any]) -> List[Message]:
+    branch_messages: List[Message] = []
+
+    for raw_message in input_messages or []:
+        role = safe_get(raw_message, "role")
+        if role not in {"user", "assistant", "system"}:
+            continue
+
+        content = safe_get(raw_message, "content")
+        text_parts: List[str] = []
+
+        if isinstance(content, str):
+            if content.strip():
+                text_parts.append(content.strip())
+        elif isinstance(content, list):
+            for item in content:
+                if safe_get(item, "type") != "text":
+                    continue
+                text_value = safe_get(item, "text")
+                if text_value:
+                    text_parts.append(str(text_value).strip())
+
+        text_content = "\n".join(part for part in text_parts if part)
+        if not text_content:
+            continue
+
+        branch_messages.append(Message(role=role, content=text_content))
+
+    return branch_messages
+
+
+def build_branch_history_prompt(input_messages: List[Any]) -> str:
+    if not input_messages or len(input_messages) <= 1:
+        return ""
+
+    transcript_lines: List[str] = []
+    for raw_message in input_messages[:-1]:
+        role = safe_get(raw_message, "role")
+        if role not in {"user", "assistant"}:
+            continue
+
+        content = safe_get(raw_message, "content")
+        text_parts: List[str] = []
+
+        if isinstance(content, str):
+            if content.strip():
+                text_parts.append(content.strip())
+        elif isinstance(content, list):
+            for item in content:
+                if safe_get(item, "type") != "text":
+                    continue
+                text_value = safe_get(item, "text")
+                if text_value:
+                    text_parts.append(str(text_value).strip())
+
+        text_content = "\n".join(part for part in text_parts if part)
+        if not text_content:
+            continue
+
+        speaker = "User" if role == "user" else "Assistant"
+        transcript_lines.append(f"{speaker}: {text_content}")
+
+    if not transcript_lines:
+        return ""
+
+    return (
+        "<active_branch_history>\n"
+        "Use only this conversation branch as the prior chat history for the current turn.\n"
+        "Ignore messages from any sibling or edited-away branches.\n\n"
+        f"{chr(10).join(transcript_lines)}\n"
+        "</active_branch_history>"
+    )

@@ -3,6 +3,9 @@
 
 import { useEffect, useState, useRef, useCallback, Suspense, useMemo } from "react";
 import { useSearchParams, useRouter, usePathname } from "next/navigation"; 
+import { DateObject } from "react-multi-date-picker";
+import persian from "react-date-object/calendars/persian";
+import persian_fa from "react-date-object/locales/persian_fa";
 import { 
   Search, 
   Send, 
@@ -11,6 +14,7 @@ import {
   MessageSquare, 
   MoreVertical, 
   Phone, 
+  Video,
   User, 
   Paperclip,
   Mic,
@@ -27,6 +31,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { PersianDatePicker } from "@/components/ui/persian-date-picker";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -55,6 +62,7 @@ interface Conversation {
   last_message_date: string;
   unread_count: number;
   phone_number?: string; // [FIX] Added phone_number
+  email?: string | null;
 }
 
 // ... (formatDate and formatDuration helpers remain the same) ...
@@ -74,6 +82,39 @@ const formatDuration = (seconds: number) => {
   const secs = seconds % 60;
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 };
+
+const formatTimeInput = (date: Date) => {
+  const pad = (value: number) => value.toString().padStart(2, "0");
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
+const formatJalaliDate = (date: Date) =>
+  new DateObject({ date, calendar: persian, locale: persian_fa }).format("YYYY/MM/DD");
+
+const buildMeetIsoString = (jalaliDate: string, timeValue: string) => {
+  if (!jalaliDate || !timeValue) return null;
+
+  const [hoursRaw, minutesRaw] = timeValue.split(":");
+  const hours = Number(hoursRaw);
+  const minutes = Number(minutesRaw);
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+
+  const dateObject = new DateObject({
+    date: jalaliDate,
+    format: "YYYY/MM/DD",
+    calendar: persian,
+    locale: persian_fa,
+  });
+  dateObject.setHour(hours);
+  dateObject.setMinute(minutes);
+  dateObject.setSecond(0);
+  dateObject.setMillisecond(0);
+
+  const jsDate = dateObject.toDate();
+  return Number.isNaN(jsDate.getTime()) ? null : jsDate.toISOString();
+};
+
+const isValidEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
 function MessagesContent() {
   const router = useRouter();
@@ -111,6 +152,12 @@ function MessagesContent() {
   const [isLoadingInbox, setIsLoadingInbox] = useState(true);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  const [isCreatingMeet, setIsCreatingMeet] = useState(false);
+  const [isMeetMenuOpen, setIsMeetMenuOpen] = useState(false);
+  const [manualMeetEmail, setManualMeetEmail] = useState("");
+  const [selectedMeetEmails, setSelectedMeetEmails] = useState<string[]>([]);
+  const [meetScheduledDate, setMeetScheduledDate] = useState(() => formatJalaliDate(new Date()));
+  const [meetScheduledTime, setMeetScheduledTime] = useState(() => formatTimeInput(new Date()));
   const [mobileView, setMobileView] = useState<'LIST' | 'CHAT'>('LIST');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -315,6 +362,89 @@ function MessagesContent() {
     router.push(`/chat/${expertAgentSlug}/${newThreadId}?visitorId=${activeUser.user_id}`);
   };
 
+  const suggestedMeetEmails = useMemo(() => {
+    const values = [currentUser?.email, activeUser?.email]
+      .map((email) => (email || "").trim().toLowerCase())
+      .filter(Boolean);
+    return Array.from(new Set(values));
+  }, [currentUser?.email, activeUser?.email]);
+
+  useEffect(() => {
+    if (!isMeetMenuOpen) return;
+    setSelectedMeetEmails(suggestedMeetEmails);
+    setManualMeetEmail("");
+    const now = new Date();
+    setMeetScheduledDate(formatJalaliDate(now));
+    setMeetScheduledTime(formatTimeInput(now));
+  }, [isMeetMenuOpen, suggestedMeetEmails, activeConversationId]);
+
+  const toggleMeetEmail = (email: string) => {
+    setSelectedMeetEmails((prev) =>
+      prev.includes(email) ? prev.filter((item) => item !== email) : [...prev, email]
+    );
+  };
+
+  const handleAddManualMeetEmail = () => {
+    const normalized = manualMeetEmail.trim().toLowerCase();
+    if (!normalized) return;
+    if (!isValidEmail(normalized)) {
+      toast.error("ایمیل وارد شده معتبر نیست.");
+      return;
+    }
+    setSelectedMeetEmails((prev) => (prev.includes(normalized) ? prev : [...prev, normalized]));
+    setManualMeetEmail("");
+  };
+
+  const handleSetQuickMeetTime = (minutesFromNow: number) => {
+    const next = new Date();
+    next.setMinutes(next.getMinutes() + minutesFromNow);
+    setMeetScheduledDate(formatJalaliDate(next));
+    setMeetScheduledTime(formatTimeInput(next));
+  };
+
+  const handleSetTomorrowSameTime = () => {
+    const next = new Date();
+    next.setDate(next.getDate() + 1);
+    setMeetScheduledDate(formatJalaliDate(next));
+    setMeetScheduledTime(formatTimeInput(next));
+  };
+
+  const handleCreateMeet = async () => {
+    if (!activeConversationId || !activeUser || isCreatingMeet) return;
+
+    setIsCreatingMeet(true);
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/vania/messages/${activeConversationId}/create-meet/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...getAuthHeaders(),
+          },
+          body: JSON.stringify({
+            attendee_emails: selectedMeetEmails,
+            scheduled_at: buildMeetIsoString(meetScheduledDate, meetScheduledTime),
+          }),
+        }
+      );
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(data?.error || "ساخت لینک جلسه ناموفق بود.");
+      }
+
+      const prefillMessage = data?.prefill_message || "";
+      setInputText((prev) => prev.trim() ? `${prev.trim()}\n\n${prefillMessage}` : prefillMessage);
+      setIsMeetMenuOpen(false);
+      toast.success("لینک جلسه آماده شد و داخل متن پیام قرار گرفت.");
+    } catch (e: any) {
+      toast.error(e?.message || "ساخت لینک جلسه ناموفق بود.");
+    } finally {
+      setIsCreatingMeet(false);
+    }
+  };
+
   return (
     <div className="mx-auto mt-4 flex h-[calc(100vh-8rem)] w-full max-w-7xl overflow-hidden rounded-xl border border-border bg-card shadow-sm" dir="rtl">
       
@@ -452,6 +582,135 @@ function MessagesContent() {
                         >
                             <Phone className="h-4 w-4" />
                         </Button>
+
+                        {isDoctor && (
+                            <Popover open={isMeetMenuOpen} onOpenChange={setIsMeetMenuOpen}>
+                                <PopoverTrigger asChild>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="text-muted-foreground hover:text-foreground"
+                                        title="ساخت لینک گوگل میت"
+                                    >
+                                        {isCreatingMeet ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
+                                    </Button>
+                                </PopoverTrigger>
+                                <PopoverContent
+                                    align="end"
+                                    sideOffset={10}
+                                    className="w-[360px] rounded-2xl border-border/70 p-4 shadow-xl"
+                                    dir="rtl"
+                                >
+                                    <div className="space-y-4">
+                                        <div className="space-y-1">
+                                            <h4 className="text-sm font-semibold text-foreground">ساخت جلسه گوگل میت</h4>
+                                            <p className="text-xs leading-5 text-muted-foreground">
+                                                ایمیل‌های مهمان را انتخاب کنید، زمان جلسه را مشخص کنید و بعد لینک را داخل پیام قرار دهید.
+                                            </p>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-muted-foreground">ایمیل‌های پیشنهادی</Label>
+                                            <div className="flex flex-wrap gap-2">
+                                                {suggestedMeetEmails.length > 0 ? (
+                                                    suggestedMeetEmails.map((email) => {
+                                                        const selected = selectedMeetEmails.includes(email);
+                                                        return (
+                                                            <button
+                                                                key={email}
+                                                                type="button"
+                                                                onClick={() => toggleMeetEmail(email)}
+                                                                className={cn(
+                                                                    "rounded-full px-3 py-1.5 text-xs transition-colors",
+                                                                    selected
+                                                                        ? "bg-primary text-primary-foreground"
+                                                                        : "bg-muted text-muted-foreground hover:text-foreground"
+                                                                )}
+                                                            >
+                                                                {email}
+                                                            </button>
+                                                        );
+                                                    })
+                                                ) : (
+                                                    <p className="text-xs text-muted-foreground">ایمیل ذخیره‌شده‌ای برای این گفتگو پیدا نشد.</p>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label htmlFor="meet-manual-email" className="text-xs text-muted-foreground">
+                                                افزودن ایمیل دستی
+                                            </Label>
+                                            <div className="flex items-center gap-2">
+                                                <Input
+                                                    id="meet-manual-email"
+                                                    type="email"
+                                                    dir="ltr"
+                                                    value={manualMeetEmail}
+                                                    onChange={(e) => setManualMeetEmail(e.target.value)}
+                                                    placeholder="example@gmail.com"
+                                                    className="h-9 text-left"
+                                                />
+                                                <Button type="button" variant="outline" size="sm" onClick={handleAddManualMeetEmail}>
+                                                    افزودن
+                                                </Button>
+                                            </div>
+                                            {selectedMeetEmails.length > 0 && (
+                                                <div className="flex flex-wrap gap-2">
+                                                    {selectedMeetEmails.map((email) => (
+                                                        <button
+                                                            key={email}
+                                                            type="button"
+                                                            onClick={() => toggleMeetEmail(email)}
+                                                            className="rounded-full bg-primary/10 px-3 py-1 text-[11px] text-primary transition-colors hover:bg-primary/15"
+                                                        >
+                                                            {email}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-muted-foreground">زمان جلسه</Label>
+                                            <div className="flex flex-wrap gap-2">
+                                                <Button type="button" variant="outline" size="sm" onClick={() => handleSetQuickMeetTime(0)}>همین حالا</Button>
+                                                <Button type="button" variant="outline" size="sm" onClick={() => handleSetQuickMeetTime(30)}>۳۰ دقیقه بعد</Button>
+                                                <Button type="button" variant="outline" size="sm" onClick={() => handleSetQuickMeetTime(60)}>۱ ساعت بعد</Button>
+                                                <Button type="button" variant="outline" size="sm" onClick={handleSetTomorrowSameTime}>فردا همین ساعت</Button>
+                                            </div>
+                                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_120px]">
+                                                <PersianDatePicker
+                                                    value={meetScheduledDate}
+                                                    onChange={setMeetScheduledDate}
+                                                    placeholder="تاریخ جلسه را انتخاب کنید"
+                                                />
+                                                <Input
+                                                    type="time"
+                                                    value={meetScheduledTime}
+                                                    onChange={(e) => setMeetScheduledTime(e.target.value)}
+                                                    className="h-9 text-left"
+                                                    dir="ltr"
+                                                />
+                                            </div>
+                                            <p className="text-[11px] leading-5 text-muted-foreground">
+                                                مدت جلسه به‌صورت پیش‌فرض ۶۰ دقیقه در نظر گرفته می‌شود.
+                                            </p>
+                                        </div>
+
+                                        <div className="flex items-center justify-end gap-2 pt-1">
+                                            <Button type="button" variant="ghost" size="sm" onClick={() => setIsMeetMenuOpen(false)}>
+                                                انصراف
+                                            </Button>
+                                            <Button type="button" size="sm" onClick={handleCreateMeet} disabled={isCreatingMeet}>
+                                                {isCreatingMeet ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
+                                                ساخت لینک
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </PopoverContent>
+                            </Popover>
+                        )}
 
                         {/* Dropdown Menu [FIXED] */}
                         <DropdownMenu>

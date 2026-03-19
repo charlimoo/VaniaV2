@@ -187,6 +187,7 @@ class ConversationSerializer(serializers.Serializer):
     user_id = serializers.IntegerField()
     name = serializers.CharField()
     phone_number = serializers.CharField()
+    email = serializers.EmailField(allow_null=True, required=False)
     avatar = serializers.CharField(allow_null=True)
     role_label = serializers.CharField() 
     specialty = serializers.CharField(required=False, allow_blank=True)

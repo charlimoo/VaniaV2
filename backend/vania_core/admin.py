@@ -1,5 +1,8 @@
 # backend/vania_core/admin.py
 from django.contrib import admin
+from django.shortcuts import redirect
+from django.urls import reverse
+from django.utils.html import format_html
 from .models import (
     RoleVerificationRequest, 
     DoctorProfile, 
@@ -7,7 +10,9 @@ from .models import (
     PatientInvite,
     Notification,
     SecureMessage,
-    Location 
+    Location,
+    GoogleCalendarConnection,
+    ExpertMeetingLink,
 )
 
 @admin.register(RoleVerificationRequest)
@@ -92,3 +97,55 @@ class SecureMessageAdmin(admin.ModelAdmin):
     def short_content(self, obj):
         return (obj.content[:50] + '...') if len(obj.content) > 50 else obj.content
     short_content.short_description = "Content"
+
+
+@admin.register(GoogleCalendarConnection)
+class GoogleCalendarConnectionAdmin(admin.ModelAdmin):
+    list_display = ("client_id", "calendar_id", "is_connected", "updated_at")
+    readonly_fields = ("is_connected", "auth_link_display", "created_at", "updated_at")
+    fieldsets = (
+        ("Google OAuth", {
+            "fields": ("client_id", "client_secret", "calendar_id"),
+            "description": "Use a Google Cloud OAuth Web Application. This shared account is used for all platform-created Meet links.",
+        }),
+        ("Connection Status", {
+            "fields": ("is_connected", "auth_link_display"),
+        }),
+        ("Metadata", {
+            "fields": ("created_at", "updated_at"),
+        }),
+    )
+
+    def has_add_permission(self, request):
+        return not GoogleCalendarConnection.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def changelist_view(self, request, extra_context=None):
+        obj = GoogleCalendarConnection.get_solo()
+        return redirect(reverse("admin:vania_core_googlecalendarconnection_change", args=[obj.pk]))
+
+    def auth_link_display(self, obj):
+        if obj.client_id and obj.client_secret:
+            url = reverse("vania_core:google-calendar-login")
+            return format_html(
+                '<a class="button" href="{}" target="_blank" '
+                'style="background:#4285F4;color:white;padding:10px 15px;border-radius:4px;text-decoration:none;">'
+                'Authenticate with Google'
+                "</a>",
+                url,
+            )
+        return "Enter Client ID and Client Secret, then save to enable authentication."
+
+    auth_link_display.short_description = "Action Required"
+
+
+@admin.register(ExpertMeetingLink)
+class ExpertMeetingLinkAdmin(admin.ModelAdmin):
+    list_display = ("creator", "visitor", "started_at", "created_at")
+    search_fields = ("creator__phone_number", "visitor__phone_number", "meet_link", "google_event_id")
+    readonly_fields = ("creator", "visitor", "google_event_id", "meet_link", "attendee_emails", "started_at", "ends_at", "created_at")
+
+    def has_add_permission(self, request):
+        return False

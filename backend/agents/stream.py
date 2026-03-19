@@ -31,9 +31,18 @@ from ag_ui.core import (
 from ag_ui.encoder import EventEncoder
 
 # --- Local Module Imports ---
-from .utils import parse_multimodal_input, extract_tool_info, safe_serialize
+from .utils import (
+    parse_multimodal_input,
+    extract_tool_info,
+    extract_ui_attachment_metadata,
+    build_branch_history_prompt,
+    safe_get,
+    safe_serialize,
+)
 from .storage import get_storage, get_session_safe
 from agents.naming import title_generator
+from .session_metadata import apply_session_metadata_defaults, get_session_knowledge_flag, set_session_knowledge_metadata
+from services.rag_service import render_session_knowledge_context, session_knowledge_exists
 
 # Configure Logger
 logger = logging.getLogger(__name__)
@@ -114,6 +123,57 @@ async def background_naming_task(thread_id: str, user_id: str, agent_messages: l
         logger.error(f"❌ [Background] Naming failed: {e}")
 
 
+async def persist_ui_attachments(agent, thread_id: str, attachment_metadata: list[dict], message_id: str | None = None):
+    try:
+        storage = get_storage()
+        session = await sync_to_async(get_session_safe)(storage, thread_id, str(agent.user.id))
+        if not session:
+            return None
+
+        if not session.session_data:
+            session.session_data = {}
+
+        if attachment_metadata:
+            attachment_history = session.session_data.get("ui_attachments") or []
+            attachment_history.append({"message_id": message_id, "attachments": attachment_metadata})
+            session.session_data["ui_attachments"] = attachment_history
+
+            if hasattr(storage, "upsert_session"):
+                await sync_to_async(storage.upsert_session)(session=session)
+            else:
+                await sync_to_async(storage.upsert)(session=session)
+        return session
+    except Exception as e:
+        logger.error(f"❌ [Stream] Failed to persist UI attachment metadata: {e}", exc_info=True)
+        return None
+
+
+async def resolve_session_knowledge_flag(agent, thread_id: str, session=None) -> bool:
+    storage = get_storage()
+    current_session = session
+    if current_session is None:
+        current_session = await sync_to_async(get_session_safe)(storage, thread_id, str(agent.user.id))
+    if not current_session:
+        return False
+
+    knowledge_flag = get_session_knowledge_flag(current_session)
+    if knowledge_flag is not None:
+        return knowledge_flag
+
+    apply_session_metadata_defaults(current_session)
+    try:
+        has_knowledge = await sync_to_async(session_knowledge_exists)(thread_id)
+        set_session_knowledge_metadata(current_session, has_knowledge, 1 if has_knowledge else 0)
+        if hasattr(storage, "upsert_session"):
+            await sync_to_async(storage.upsert_session)(session=current_session)
+        else:
+            await sync_to_async(storage.upsert)(session=current_session)
+        return has_knowledge
+    except Exception as e:
+        logger.warning(f"⚠️ [Stream] Session knowledge backfill failed for {thread_id}: {e}")
+        return False
+
+
 async def agui_stream_generator(
     agent, 
     input_data: RunAgentInput, 
@@ -156,17 +216,59 @@ async def agui_stream_generator(
     async def run_agent_task():
         try:
             prompt, images, files = parse_multimodal_input(input_data)
-            
-            # Run the agent and put chunks into queue
-            # stream_events=True ensures we get Tool Calls, Content, and CustomEvents
-            async for chunk in agent.arun(
-                message=prompt,
-                images=images if images else None,
-                files=files if files else None,
-                stream=True, 
-                stream_events=True
-            ):
-                await output_queue.put(chunk)
+            branch_history_prompt = build_branch_history_prompt(input_data.messages or [])
+            ui_attachments = extract_ui_attachment_metadata(input_data)
+            last_message = (input_data.messages or [])[-1] if input_data.messages else None
+            last_message_id = safe_get(last_message, "id") if last_message else None
+            session = await persist_ui_attachments(
+                agent,
+                thread_id,
+                ui_attachments,
+                str(last_message_id) if last_message_id else None,
+            )
+
+            retrieved_file_context = ""
+            if prompt and await resolve_session_knowledge_flag(agent, thread_id, session):
+                retrieved_file_context = await sync_to_async(render_session_knowledge_context)(thread_id, prompt)
+
+            final_prompt = prompt
+            if branch_history_prompt:
+                final_prompt = f"{branch_history_prompt}\n\n<current_user_message>\n{prompt}\n</current_user_message>"
+
+            original_read_chat_history = getattr(agent, "read_chat_history", None)
+            original_add_history_to_context = getattr(agent, "add_history_to_context", None)
+            original_add_session_summary_to_context = getattr(agent, "add_session_summary_to_context", None)
+            original_num_history_runs = getattr(agent, "num_history_runs", None)
+            if original_read_chat_history is not None:
+                agent.read_chat_history = False
+            if original_add_history_to_context is not None:
+                agent.add_history_to_context = False
+            if original_add_session_summary_to_context is not None:
+                agent.add_session_summary_to_context = False
+            if original_num_history_runs is not None:
+                agent.num_history_runs = 0
+
+            try:
+                # Run the agent and put chunks into queue
+                # stream_events=True ensures we get Tool Calls, Content, and CustomEvents
+                async for chunk in agent.arun(
+                    message=final_prompt,
+                    images=images if images else None,
+                    files=files if files else None,
+                    retrieved_file_context=retrieved_file_context or None,
+                    stream=True, 
+                    stream_events=True
+                ):
+                    await output_queue.put(chunk)
+            finally:
+                if original_read_chat_history is not None:
+                    agent.read_chat_history = original_read_chat_history
+                if original_add_history_to_context is not None:
+                    agent.add_history_to_context = original_add_history_to_context
+                if original_add_session_summary_to_context is not None:
+                    agent.add_session_summary_to_context = original_add_session_summary_to_context
+                if original_num_history_runs is not None:
+                    agent.num_history_runs = original_num_history_runs
             
             # Signal completion
             await output_queue.put("DONE")

@@ -4,7 +4,8 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Command } from "lucide-react"
+import { Command, Share2 } from "lucide-react"
+import { toast } from "sonner"
 
 import {
   Sidebar,
@@ -29,6 +30,37 @@ export function DashboardSidebar({ ...props }: React.ComponentProps<typeof Sideb
   const pathname = usePathname()
   const { user, logout } = useUser()
   const { open } = useSidebar()
+
+  const handleSharePlatform = React.useCallback(async () => {
+    const shareUrl = window.location.origin
+    const shareTitle = `${APP_CONFIG.BRANDING.APP_NAME}`
+    const shareText = `سلام!
+
+من ${APP_CONFIG.BRANDING.APP_NAME} رو پیدا کردم؛ یه پلتفرم فارسی برای همکاری با دستیارهای هوش مصنوعی در کارها و گفتگوهای روزمره.
+
+اگر دوست داشتی، از اینجا ببینش:
+${shareUrl}`
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: shareTitle,
+          text: shareText,
+          url: shareUrl,
+        })
+        return
+      }
+
+      await navigator.clipboard.writeText(`${shareText}\n`)
+      toast.success("متن معرفی در حافظه کپی شد")
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        return
+      }
+
+      toast.error("اشتراک‌گذاری انجام نشد")
+    }
+  }, [])
 
   // --- CHANGED LOGIC START ---
   const navItems = APP_CONFIG.SIDEBAR.items.filter(item => {
@@ -148,6 +180,18 @@ export function DashboardSidebar({ ...props }: React.ComponentProps<typeof Sideb
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-0">
+        <SidebarMenu className="px-2 pt-2">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip="معرفی به دوستان"
+              onClick={handleSharePlatform}
+              className="w-full justify-start gap-3 px-3 py-2 h-10 transition-all duration-200 ease-in-out hover:bg-sidebar-accent/50"
+            >
+              <Share2 className="size-4 shrink-0 text-muted-foreground" />
+              {open && <span className="text-start">معرفی به دوستان</span>}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
         <UserProfileMenu user={user} onLogout={logout} />
       </SidebarFooter>
       

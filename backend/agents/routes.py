@@ -2,17 +2,16 @@ import logging
 import time
 import os
 import tempfile
-import math
 import uuid 
 import json 
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, JSONResponse
 from asgiref.sync import sync_to_async
 from openai import OpenAI
-from django.conf import settings
+from agno.media import File as AgnoFile
 
 # --- Agno Imports ---
 from agno.agent import AgentSession, Agent 
@@ -29,10 +28,13 @@ from billing.models import BillingConfig
 from .schemas import SessionCreate, SessionUpdate
 from .storage import get_storage, get_session_safe
 from .stream import agui_stream_generator
-from .utils import safe_serialize
+from .utils import safe_serialize, build_branch_history_messages
+from .session_metadata import adjust_session_knowledge_file_count, apply_session_metadata_defaults
 
 from services.access_service import access_service
 from services.models import AgentService, SharedLink 
+from core.ai_provider import get_openai_client_kwargs, get_transcription_model_id
+from services.rag_service import ingest_session_file, remove_session_file
 
 from enum import Enum
 class SessionType(str, Enum):
@@ -41,6 +43,10 @@ class SessionType(str, Enum):
 # --- Logging Setup ---
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024
+ATTACHMENT_ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/jpg"}
+ATTACHMENT_ALLOWED_DOC_TYPES = {"application/pdf"}
 
 
 def _normalize_session_state_aliases(session_state):
@@ -146,6 +152,7 @@ async def get_session_history(
             if 'session_data' in s_data:
                 session_data = s_data['session_data'] or {}
                 session_name = session_data.get('name', "New Conversation")
+                apply_session_metadata_defaults(session_data)
                 session_state = _normalize_session_state_aliases({
                     "agent_id": session_data.get("agent_id"),
                     "visitor_id": session_data.get("visitor_id"),
@@ -153,6 +160,11 @@ async def get_session_history(
                     "selected_expert_id": session_data.get("selected_expert_id"),
                     "selected_doctor_id": session_data.get("selected_doctor_id"),
                 })
+                attachment_history = session_data.get("ui_attachments") or []
+            else:
+                attachment_history = []
+        else:
+            attachment_history = []
 
         if not session: 
             return JSONResponse(content={
@@ -178,19 +190,60 @@ async def get_session_history(
         if not raw_messages and hasattr(session, 'get_messages'):
             raw_messages = session.get_messages()
 
+        serialized_messages = []
+        user_messages = []
+        attachment_history_by_message_id = {}
+        legacy_attachment_history = []
+        for entry in attachment_history:
+            if not isinstance(entry, dict):
+                continue
+            message_id = entry.get("message_id")
+            if message_id:
+                attachment_history_by_message_id[str(message_id)] = entry.get("attachments", []) or []
+            else:
+                legacy_attachment_history.append(entry)
+
         for msg in raw_messages:
             m_data = safe_serialize(msg)
-            if not isinstance(m_data, dict): continue
-            
+            if not isinstance(m_data, dict):
+                continue
+            serialized_messages.append(m_data)
             role = m_data.get('role')
-            if role == 'model': role = 'assistant'
-            if role == 'function': role = 'tool'
+            if role == 'user':
+                user_messages.append(m_data)
+
+        legacy_attachment_start_index = max(0, len(user_messages) - len(legacy_attachment_history))
+        legacy_attachment_index = 0
+        user_message_index = 0
+
+        for m_data in serialized_messages:
+            role = m_data.get('role')
+            if role == 'model':
+                role = 'assistant'
+            if role == 'function':
+                role = 'tool'
 
             item = {
                 "role": role,
                 "content": m_data.get('content'),
                 "created_at": m_data.get('created_at') or m_data.get('timestamp')
             }
+
+            if role == "user":
+                explicit_attachments = m_data.get("attachmentsMeta")
+                if isinstance(explicit_attachments, list) and explicit_attachments:
+                    item["attachments"] = explicit_attachments
+                else:
+                    message_id = m_data.get("id")
+                    if message_id and str(message_id) in attachment_history_by_message_id:
+                        item["attachments"] = attachment_history_by_message_id[str(message_id)]
+                    elif user_message_index >= legacy_attachment_start_index and legacy_attachment_index < len(legacy_attachment_history):
+                        attachment_entry = legacy_attachment_history[legacy_attachment_index]
+                        item["attachments"] = attachment_entry.get("attachments", []) if isinstance(attachment_entry, dict) else []
+                        legacy_attachment_index += 1
+                    else:
+                        item["attachments"] = []
+                user_message_index += 1
 
             if role == 'assistant':
                 item["tool_calls"] = m_data.get('tool_calls')
@@ -242,11 +295,11 @@ async def create_session(
         new_session = AgentSession(
             session_id=session_data.session_id,
             user_id=str(user.id),
-            session_data={
+            session_data=apply_session_metadata_defaults({
                 "name": session_data.session_name,
                 "agent_id": normalized_session_state.get("agent_id"),
                 **normalized_session_state
-            },
+            }),
             created_at=now,
             updated_at=now
         )
@@ -277,7 +330,9 @@ async def rename_session(
         session = await sync_to_async(get_session_safe)(storage, session_id, str(user.id))
         
         if session:
-            if not session.session_data: session.session_data = {}
+            if not session.session_data:
+                session.session_data = {}
+            apply_session_metadata_defaults(session)
             if update_data.session_name is not None:
                 session.session_data["name"] = update_data.session_name
             if update_data.session_state:
@@ -547,6 +602,20 @@ async def agui_chat_endpoint(
                 logger.warning(f"⛔ [AGUI] Access Denied for User {user.id} on {agent_id}: {reason}")
                 raise HTTPException(status_code=403, detail=reason)
 
+        storage = get_storage()
+        session = await sync_to_async(get_session_safe)(storage, thread_id, str(user.id))
+        if session and input_data.messages:
+            branch_messages = build_branch_history_messages(input_data.messages)
+            if branch_messages:
+                if hasattr(session, "memory") and session.memory is not None:
+                    session.memory.messages = branch_messages
+                else:
+                    session.messages = branch_messages
+                if hasattr(storage, "upsert_session"):
+                    await sync_to_async(storage.upsert_session)(session=session)
+                else:
+                    await sync_to_async(storage.upsert)(session=session)
+
         agent = await sync_to_async(create_agent_for_service)(
             user, agent_id, thread_id, request=request
         )
@@ -586,12 +655,12 @@ async def transcribe_audio(
             tmp.write(content)
             tmp_path = tmp.name
 
-        api_key = getattr(settings, "OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(**get_openai_client_kwargs())
+        transcription_model = get_transcription_model_id()
         
         with open(tmp_path, "rb") as audio_file:
             transcript_response = client.audio.transcriptions.create(
-                model="whisper-1", 
+                model=transcription_model,
                 file=audio_file,
                 language="fa",
                 response_format="verbose_json", 
@@ -636,3 +705,117 @@ async def transcribe_audio(
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+def _validate_attachment_file(filename: str | None, size: int, content_type: str | None) -> None:
+    if not filename:
+        raise HTTPException(status_code=400, detail="فایل نامعتبر است.")
+    if size <= 0 or size > ATTACHMENT_MAX_BYTES:
+        raise HTTPException(status_code=400, detail="حجم فایل مجاز نیست.")
+
+    content_type = content_type or "application/octet-stream"
+    lower_name = filename.lower()
+    if lower_name.endswith(".pdf"):
+        if content_type not in ATTACHMENT_ALLOWED_DOC_TYPES:
+            raise HTTPException(status_code=400, detail="فقط فایل PDF مجاز است.")
+        return
+
+    if content_type in ATTACHMENT_ALLOWED_IMAGE_TYPES:
+        return
+
+    raise HTTPException(status_code=400, detail="فقط تصویر و PDF مجاز است.")
+
+
+@router.post("/attachments/prepare")
+async def prepare_attachment(
+    thread_id: str = Form(...),
+    agent_id: str = Form(...),
+    attachment_id: str = Form(...),
+    file: UploadFile = File(...),
+    user: CustomUser = Depends(get_current_user),
+):
+    try:
+        storage = get_storage()
+        if hasattr(storage, "create"):
+            await sync_to_async(storage.create)()
+
+        session = await sync_to_async(get_session_safe)(storage, thread_id, str(user.id))
+        if not session:
+            now = int(time.time())
+            new_session = AgentSession(
+                session_id=thread_id,
+                user_id=str(user.id),
+                session_data=apply_session_metadata_defaults({"name": "New Conversation", "agent_id": agent_id}),
+                created_at=now,
+                updated_at=now,
+            )
+            try:
+                new_session.session_type = SessionType.AGENT
+            except Exception:
+                pass
+            if hasattr(storage, "upsert_session"):
+                await sync_to_async(storage.upsert_session)(session=new_session)
+            else:
+                await sync_to_async(storage.upsert)(session=new_session)
+
+        content = await file.read()
+        _validate_attachment_file(file.filename, len(content), file.content_type)
+        mime = file.content_type or "application/octet-stream"
+        lower_name = (file.filename or "").lower()
+
+        if lower_name.endswith(".pdf"):
+            agno_file = AgnoFile(
+                content=content,
+                file_type="pdf",
+                path=file.filename,
+                name=file.filename,
+            )
+            ok = await sync_to_async(ingest_session_file)(thread_id, agno_file, attachment_id)
+            if not ok:
+                raise HTTPException(status_code=500, detail="پردازش فایل انجام نشد.")
+            session = await sync_to_async(get_session_safe)(storage, thread_id, str(user.id))
+            if session:
+                adjust_session_knowledge_file_count(session, 1)
+                if hasattr(storage, "upsert_session"):
+                    await sync_to_async(storage.upsert_session)(session=session)
+                else:
+                    await sync_to_async(storage.upsert)(session=session)
+
+        return {
+            "attachment_id": attachment_id,
+            "name": file.filename,
+            "content_type": mime,
+            "kind": "image" if mime.startswith("image/") else "file",
+            "prepared": True,
+            "processed_on_server": lower_name.endswith(".pdf"),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ [AttachmentPrepare] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="آماده‌سازی فایل انجام نشد")
+
+
+@router.delete("/attachments/{attachment_id}")
+async def remove_prepared_attachment(
+    attachment_id: str,
+    thread_id: str = Query(...),
+    user: CustomUser = Depends(get_current_user),
+):
+    try:
+        storage = get_storage()
+        session = await sync_to_async(get_session_safe)(storage, thread_id, str(user.id))
+        if not session:
+            return {"status": "not_found"}
+
+        removed = await sync_to_async(remove_session_file)(thread_id, attachment_id)
+        if removed:
+            adjust_session_knowledge_file_count(session, -1)
+            if hasattr(storage, "upsert_session"):
+                await sync_to_async(storage.upsert_session)(session=session)
+            else:
+                await sync_to_async(storage.upsert)(session=session)
+        return {"status": "deleted" if removed else "not_found"}
+    except Exception as e:
+        logger.error(f"❌ [AttachmentDelete] Error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="حذف فایل آماده‌شده انجام نشد")

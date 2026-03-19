@@ -16,7 +16,7 @@ export const APP_CONFIG = {
   BRANDING: {
     APP_NAME: "وانیا اپ",
     APP_TAGLINE: "همراه هوشمند شما",
-    COMPANY_NAME: "وانیا",
+    COMPANY_NAME: "وانیا اپ",
   },
 
   // --- ASSETS & IMAGES ---

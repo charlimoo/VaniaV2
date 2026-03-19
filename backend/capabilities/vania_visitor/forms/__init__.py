@@ -1,0 +1,4 @@
+from .base_profile import FORM_BASE_PROFILE
+
+
+VISITOR_PROFILE_FORMS = [FORM_BASE_PROFILE]

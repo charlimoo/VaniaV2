@@ -7,7 +7,7 @@ from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.db import close_old_connections
 from users.models import CustomUser
-from .context import user_context, role_context, resource_context, selected_doctor_context
+from .context import user_context, role_context, resource_context, selected_doctor_context, selected_case_context
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,7 @@ async def django_auth_middleware(request: Request, call_next):
     role_reset = None
     resource_reset = None
     selected_doctor_reset = None
+    selected_case_reset = None
     user = None
 
     try:
@@ -97,6 +98,11 @@ async def django_auth_middleware(request: Request, call_next):
                 selected_doctor_reset = selected_doctor_context.set(selected_expert_id)
                 logger.debug(f"🩺 [Middleware] Context Locked to Expert ID: {selected_expert_id}")
 
+            selected_case_id = request.headers.get("X-Target-Case-ID")
+            if selected_case_id:
+                selected_case_reset = selected_case_context.set(selected_case_id)
+                logger.debug(f"📁 [Middleware] Context Locked to Case ID: {selected_case_id}")
+
         # 4. Process Request
         return await call_next(request)
     finally:
@@ -105,4 +111,5 @@ async def django_auth_middleware(request: Request, call_next):
         if role_reset: role_context.reset(role_reset)
         if resource_reset: resource_context.reset(resource_reset)
         if selected_doctor_reset: selected_doctor_context.reset(selected_doctor_reset)
+        if selected_case_reset: selected_case_context.reset(selected_case_reset)
         await sync_to_async(close_old_connections, thread_sensitive=True)()

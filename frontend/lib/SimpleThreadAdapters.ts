@@ -1,16 +1,22 @@
-// start of frontend/lib/SimpleThreadAdapters.ts
-import { ThreadMessage, AttachmentAdapter, PendingAttachment, CompleteAttachment } from "@assistant-ui/react";
+import { ThreadMessage, AttachmentAdapter, PendingAttachment, CompleteAttachment, Attachment } from "@assistant-ui/react";
 import { APP_CONFIG } from "@/lib/config";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 
+export const COMPOSER_ATTACHMENT_MAX_FILES = 5;
+export const COMPOSER_ATTACHMENT_ACCEPT = "image/*,.pdf,application/pdf";
+
 const tryParseJSON = (value: any) => {
   if (value === undefined || value === null) return null;
-  if (typeof value === 'object') return value;
-  
+  if (typeof value === "object") return value;
+
   try {
     const parsed = JSON.parse(value);
-    if (typeof parsed === 'string') {
-        try { return JSON.parse(parsed); } catch { return parsed; }
+    if (typeof parsed === "string") {
+      try {
+        return JSON.parse(parsed);
+      } catch {
+        return parsed;
+      }
     }
     return parsed;
   } catch {
@@ -22,7 +28,7 @@ const generateStableId = (content: string, role: string, index: number, timestam
   const safeContent = content || "";
   const safeTs = timestamp || "";
   const str = `${safeContent}-${role}-${index}-${safeTs}`;
-  
+
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
@@ -45,20 +51,40 @@ const compressImage = (file: File): Promise<string> => {
         const MAX_WIDTH = 800;
         const scaleSize = MAX_WIDTH / img.width;
         if (scaleSize < 1) {
-            canvas.width = MAX_WIDTH;
-            canvas.height = img.height * scaleSize;
+          canvas.width = MAX_WIDTH;
+          canvas.height = img.height * scaleSize;
         } else {
-            canvas.width = img.width;
-            canvas.height = img.height;
+          canvas.width = img.width;
+          canvas.height = img.height;
         }
         ctx?.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-        resolve(dataUrl);
+        resolve(canvas.toDataURL("image/jpeg", 0.7));
       };
       img.onerror = (err) => reject(err);
     };
     reader.onerror = (err) => reject(err);
   });
+};
+
+const getFileExtension = (file: File) => {
+  const match = /\.([^.]+)$/.exec(file.name);
+  return match?.[1]?.toLowerCase() ?? "";
+};
+
+const isPdfFile = (file: File) => file.type === "application/pdf" || getFileExtension(file) === "pdf";
+
+export const isSupportedComposerAttachment = (file: File) => file.type.startsWith("image/") || isPdfFile(file);
+
+const getAttachmentType = (file: File): PendingAttachment["type"] => (file.type.startsWith("image/") ? "image" : "file");
+
+type PreparedAttachmentData = {
+  id: string;
+  type: PendingAttachment["type"];
+  name: string;
+  contentType: string;
+  imageBase64?: string;
+  previewUrl?: string;
+  processedOnServer: boolean;
 };
 
 const normalizeId = (id: string | undefined) => {
@@ -75,43 +101,171 @@ const cleanContent = (text: string) => {
     .trim();
 };
 
-export const simpleAttachmentAdapter: AttachmentAdapter = {
-  accept: "image/*",
-  
-  async add({ file }: { file: File }): Promise<PendingAttachment> {
-    if (!file.type.startsWith("image/")) {
-       throw new Error("Only image files are allowed.");
-    }
+const buildHistoryAttachments = (attachments: any[] | undefined) => {
+  if (!Array.isArray(attachments) || attachments.length === 0) return [];
 
-    return {
-      id: crypto.randomUUID(),
-      file, 
-      type: "image", 
-      name: file.name,
-      contentType: file.type, 
-      status: { type: "requires-action", reason: "composer-send" }, 
-      content: [{ type: "image", image: URL.createObjectURL(file) }]
-    };
-  },
-  
-  async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
-    try {
-        const base64 = await compressImage(attachment.file);
+  return attachments.map((attachment: any, index: number) => ({
+    id: attachment.id || `history-attachment-${index}-${attachment.name || "file"}`,
+    type: (attachment.type === "image" ? "image" : "file") as "image" | "file",
+    name: attachment.name || "file",
+    contentType: attachment.contentType || attachment.content_type || "application/octet-stream",
+    status: { type: "complete" as const },
+    content:
+      attachment.type === "image" && attachment.preview_image
+        ? [{ type: "image" as const, image: attachment.preview_image }]
+        : [],
+  }));
+};
 
-        return { 
-            ...attachment, 
-            status: { type: "complete" }, 
-            content: [{ 
-                type: "image", 
-                image: base64,
-            }] 
+export const createSimpleAttachmentAdapter = ({
+  threadId,
+  agentId,
+  ensureThread,
+}: {
+  threadId: string;
+  agentId: string;
+  ensureThread: () => Promise<void>;
+}): AttachmentAdapter => {
+  const preparedAttachments = new Map<string, PreparedAttachmentData>();
+
+  return {
+    accept: COMPOSER_ATTACHMENT_ACCEPT,
+
+    async *add({ file }: { file: File }): AsyncGenerator<PendingAttachment, void> {
+      if (!isSupportedComposerAttachment(file)) {
+        throw new Error("Only image and PDF files are allowed.");
+      }
+
+      const id = crypto.randomUUID();
+      const type = getAttachmentType(file);
+      const contentType = file.type || "application/octet-stream";
+      const previewUrl = file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined;
+
+      let pendingAttachment: PendingAttachment = {
+        id,
+        file,
+        type,
+        name: file.name,
+        contentType,
+        status: { type: "running", reason: "uploading", progress: 5 },
+        content: previewUrl ? [{ type: "image", image: previewUrl }] : [],
+      };
+      yield pendingAttachment;
+
+      try {
+        if (file.type.startsWith("image/")) {
+          pendingAttachment = { ...pendingAttachment, status: { type: "running", reason: "uploading", progress: 45 } };
+          yield pendingAttachment;
+
+          const imageBase64 = await compressImage(file);
+          preparedAttachments.set(id, {
+            id,
+            type,
+            name: file.name,
+            contentType,
+            imageBase64,
+            previewUrl,
+            processedOnServer: false,
+          });
+        } else {
+          pendingAttachment = { ...pendingAttachment, status: { type: "running", reason: "uploading", progress: 15 } };
+          yield pendingAttachment;
+
+          await ensureThread();
+
+          pendingAttachment = { ...pendingAttachment, status: { type: "running", reason: "uploading", progress: 55 } };
+          yield pendingAttachment;
+
+          const formData = new FormData();
+          formData.append("thread_id", threadId);
+          formData.append("agent_id", agentId);
+          formData.append("attachment_id", id);
+          formData.append("file", file);
+
+          const response = await fetch(`${API_BASE_URL}/agent/attachments/prepare`, {
+            method: "POST",
+            headers: getAuthHeaders(),
+            body: formData,
+          });
+
+          if (!response.ok) {
+            throw new Error(await response.text());
+          }
+
+          preparedAttachments.set(id, {
+            id,
+            type,
+            name: file.name,
+            contentType,
+            processedOnServer: true,
+          });
+        }
+
+        pendingAttachment = {
+          ...pendingAttachment,
+          status: { type: "requires-action", reason: "composer-send" },
         };
-    } catch (e) {
-        console.error("Image processing failed", e);
-        return { ...attachment, status: { type: "complete" }, content: [] };
-    }
-  },
-  async remove() {},
+        yield pendingAttachment;
+      } catch (e) {
+        console.error("Attachment preparation failed", e);
+        pendingAttachment = {
+          ...pendingAttachment,
+          status: { type: "incomplete", reason: "error" },
+        };
+        yield pendingAttachment;
+      }
+    },
+
+    async send(attachment: PendingAttachment): Promise<CompleteAttachment> {
+      const prepared = preparedAttachments.get(attachment.id);
+      if (!prepared) {
+        throw new Error("Attachment not prepared");
+      }
+
+      preparedAttachments.delete(attachment.id);
+
+      if (prepared.type === "image" && prepared.imageBase64) {
+        if (prepared.previewUrl) {
+          URL.revokeObjectURL(prepared.previewUrl);
+        }
+        return {
+          ...attachment,
+          file: undefined,
+          status: { type: "complete" },
+          content: [{ type: "image", image: prepared.imageBase64 }],
+        };
+      }
+
+      return {
+        ...attachment,
+        file: undefined,
+        status: { type: "complete" },
+        content: [],
+      };
+    },
+
+    async remove(attachment: Attachment) {
+      const prepared = preparedAttachments.get(attachment.id);
+      const image = attachment.content?.find((part) => part.type === "image");
+      const previewUrl =
+        prepared?.previewUrl || (image?.type === "image" && image.image.startsWith("blob:") ? image.image : undefined);
+
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+
+      if (prepared?.processedOnServer) {
+        await fetch(`${API_BASE_URL}/agent/attachments/${attachment.id}?thread_id=${encodeURIComponent(threadId)}`, {
+          method: "DELETE",
+          headers: getAuthHeaders(),
+        }).catch((error) => {
+          console.error("Failed to delete prepared attachment", error);
+        });
+      }
+
+      preparedAttachments.delete(attachment.id);
+    },
+  };
 };
 
 export interface ThreadMetadata {
@@ -128,30 +282,29 @@ export const threadManager = {
   listThreads: async (token: string, agentId?: string, page = 1, limit = 50): Promise<any[]> => {
     try {
       const res = await fetch(`${API_BASE_URL}/agent/sessions?limit=${limit}&page=${page}`, {
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
       });
-      
+
       if (res.status === 401) throw new Error("UNAUTHORIZED");
       if (!res.ok) throw new Error(`Failed: ${res.status}`);
-      
+
       const data = await res.json();
-      const sessions = Array.isArray(data) ? data : (data.data || []);
-      
+      const sessions = Array.isArray(data) ? data : data.data || [];
+
       const threads = sessions.map((t: any) => ({
-        threadId: t.session_id, 
+        threadId: t.session_id,
         id: t.session_id,
         title: t.session_name || APP_CONFIG.TEXT.NEW_THREAD_TITLE,
         status: "regular",
         createdAt: t.created_at,
         isLocal: false,
-        agentId: t.agent_id
+        agentId: t.agent_id,
       }));
 
       if (agentId) {
-         return threads.filter((t: any) => t.agentId === agentId);
+        return threads.filter((t: any) => t.agentId === agentId);
       }
       return threads;
-
     } catch (e: any) {
       if (e.message === "UNAUTHORIZED") throw e;
       console.error("[Adapter] Error listing sessions:", e);
@@ -159,121 +312,120 @@ export const threadManager = {
     }
   },
 
-  getMessages: async (threadId: string, token: string): Promise<{ messages: ThreadMessage[], title?: string }> => {
+  getMessages: async (threadId: string, token: string): Promise<{ messages: ThreadMessage[]; title?: string }> => {
     if (!threadId || threadId === "main") return { messages: [] };
 
     try {
       const res = await fetch(`${API_BASE_URL}/agent/sessions/${threadId}`, {
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
       });
 
       if (res.status === 404) return { messages: [], title: APP_CONFIG.TEXT.NEW_THREAD_TITLE };
       if (res.status === 401) throw new Error("UNAUTHORIZED");
       if (!res.ok) return { messages: [] };
-      
+
       const data = await res.json();
       const rawHistory = data.chat_history || [];
       const title = data.session_name || APP_CONFIG.TEXT.NEW_THREAD_TITLE;
-      
+
       rawHistory.sort((a: any, b: any) => (a.created_at || 0) - (b.created_at || 0));
 
       const messages: ThreadMessage[] = [];
-      const toolCallResults = new Map<string, any>(); 
+      const toolCallResults = new Map<string, any>();
 
-      // --- PASS 1: Collect Tool Results ---
       rawHistory.forEach((msg: any) => {
         if ((msg.role === "tool" || msg.role === "function") && msg.tool_call_id) {
-            const parsedContent = tryParseJSON(msg.content);
-            toolCallResults.set(normalizeId(msg.tool_call_id), parsedContent);
+          const parsedContent = tryParseJSON(msg.content);
+          toolCallResults.set(normalizeId(msg.tool_call_id), parsedContent);
         }
       });
 
-      // --- PASS 2: Build Message Objects ---
       let currentAssistantMessage: any = null;
 
       rawHistory.forEach((msg: any, index: number) => {
-        const role = (msg.role === "model" ? "assistant" : msg.role);
-        
-        if (role === "system" || role === "tool" || role === "function") return; 
+        const role = msg.role === "model" ? "assistant" : msg.role;
+
+        if (role === "system" || role === "tool" || role === "function") return;
 
         const createdAt = msg.created_at ? new Date(msg.created_at * 1000) : new Date();
         const id = generateStableId(msg.content || "empty", role, index, msg.created_at);
 
         if (role === "user") {
-            if (currentAssistantMessage) {
-                messages.push(currentAssistantMessage);
-                currentAssistantMessage = null;
+          if (currentAssistantMessage) {
+            messages.push(currentAssistantMessage);
+            currentAssistantMessage = null;
+          }
+
+          const cleanedText = cleanContent(msg.content || "");
+          const historyAttachments = buildHistoryAttachments(msg.attachments);
+
+          messages.push({
+            id,
+            role: "user",
+            content: [{ type: "text", text: cleanedText }],
+            createdAt,
+            attachments: historyAttachments,
+            metadata: { custom: {} },
+          });
+        } else if (role === "assistant") {
+          const parts: any[] = [];
+
+          if (msg.content) {
+            parts.push({ type: "text", text: msg.content });
+          }
+
+          if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
+            for (const tc of msg.tool_calls) {
+              const rawId = tc.id || tc.tool_call_id;
+              const normalizedId = normalizeId(rawId);
+
+              let argsText = "{}";
+              let args = {};
+
+              if (typeof tc.function?.arguments === "string") {
+                argsText = tc.function.arguments;
+                try {
+                  args = JSON.parse(argsText);
+                } catch {}
+              } else if (tc.function?.arguments) {
+                args = tc.function.arguments;
+                argsText = JSON.stringify(args);
+              }
+
+              const result = toolCallResults.get(normalizedId);
+
+              parts.push({
+                type: "tool-call",
+                toolCallId: rawId,
+                toolCallName: tc.function?.name || tc.tool_name,
+                toolName: tc.function?.name || tc.tool_name,
+                argsText,
+                args,
+                result,
+              });
             }
+          }
 
-            const cleanedText = cleanContent(msg.content || "");
-
-            messages.push({
-                id,
-                role: "user",
-                content: [{ type: "text", text: cleanedText }],
-                createdAt,
-                attachments: [],
-                metadata: { custom: {} }
-            });
-        } 
-        else if (role === "assistant") {
-            const parts: any[] = [];
-            
-            if (msg.content) {
-                parts.push({ type: "text", text: msg.content });
-            }
-
-            if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-                for (const tc of msg.tool_calls) {
-                    const rawId = tc.id || tc.tool_call_id;
-                    const normalizedId = normalizeId(rawId);
-                    
-                    let argsText = "{}";
-                    let args = {};
-
-                    if (typeof tc.function?.arguments === 'string') {
-                        argsText = tc.function.arguments;
-                        try { args = JSON.parse(argsText); } catch {} 
-                    } else if (tc.function?.arguments) {
-                        args = tc.function.arguments; 
-                        argsText = JSON.stringify(args);
-                    }
-
-                    const result = toolCallResults.get(normalizedId);
-
-                    parts.push({
-                        type: "tool-call",
-                        toolCallId: rawId,
-                        toolCallName: tc.function?.name || tc.tool_name,
-                        toolName: tc.function?.name || tc.tool_name, 
-                        argsText,
-                        args,
-                        result: result 
-                    });
-                }
-            }
-
-            if (currentAssistantMessage) {
-                currentAssistantMessage.content.push(...parts);
-            } else {
-                currentAssistantMessage = {
-                    id,
-                    role: "assistant",
-                    content: parts,
-                    status: { type: "complete", reason: "unknown" },
-                    createdAt,
-                    metadata: { steps: [], unstable_annotations: [], unstable_data: [], unstable_state: null, custom: {} }
-                };
-            }
+          if (currentAssistantMessage) {
+            currentAssistantMessage.content.push(...parts);
+          } else {
+            currentAssistantMessage = {
+              id,
+              role: "assistant",
+              content: parts,
+              status: { type: "complete", reason: "unknown" },
+              createdAt,
+              metadata: { steps: [], unstable_annotations: [], unstable_data: [], unstable_state: null, custom: {} },
+            };
+          }
         }
       });
 
       if (currentAssistantMessage) {
-          messages.push(currentAssistantMessage);
+        messages.push(currentAssistantMessage);
       }
 
       return { messages, title };
-      
     } catch (e: any) {
       if (e.message === "UNAUTHORIZED") throw e;
       console.error("[Adapter] Fetch Error:", e);
@@ -284,11 +436,11 @@ export const threadManager = {
   getThreadMetadata: async (threadId: string, token: string): Promise<{ title: string | null }> => {
     try {
       const res = await fetch(`${API_BASE_URL}/agent/sessions/${threadId}`, {
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
       });
 
       if (!res.ok) return { title: null };
-      
+
       const data = await res.json();
       return { title: data.session_name };
     } catch (e) {
@@ -296,50 +448,48 @@ export const threadManager = {
       return { title: null };
     }
   },
-  
+
   createThreadOnBackend: async (
-      threadId: string, 
-      initialTitle: string | undefined, 
-      agentId: string, 
-      token: string, 
-      patientId?: number | null, // [NEW] Added optional patientId
-      doctorId?: number | null
+    threadId: string,
+    initialTitle: string | undefined,
+    agentId: string,
+    token: string,
+    patientId?: number | null,
+    doctorId?: number | null,
   ) => {
     try {
       const payload = {
-          session_id: threadId, 
-          session_name: initialTitle || "New Conversation",
-              session_state: { 
-                  agent_id: agentId,
-                  // [FIX] Save patient_id to session metadata for persistence
-              ...(patientId ? { visitor_id: patientId, patient_id: patientId } : {}),
-              ...(doctorId ? { selected_expert_id: doctorId, selected_doctor_id: doctorId } : {})
-          }
+        session_id: threadId,
+        session_name: initialTitle || "New Conversation",
+        session_state: {
+          agent_id: agentId,
+          ...(patientId ? { visitor_id: patientId, patient_id: patientId } : {}),
+          ...(doctorId ? { selected_expert_id: doctorId, selected_doctor_id: doctorId } : {}),
+        },
       };
 
       const headers: Record<string, string> = {
-          ...getAuthHeaders(),
-          "Content-Type": "application/json"
+        ...getAuthHeaders(),
+        "Content-Type": "application/json",
       };
 
-      // [FIX] Send Header as well
       if (patientId) {
-          headers["X-Target-Resource-ID"] = patientId.toString();
+        headers["X-Target-Resource-ID"] = patientId.toString();
       }
       if (doctorId) {
-          headers["X-Target-Expert-ID"] = doctorId.toString();
-          headers["X-Target-Doctor-ID"] = doctorId.toString();
+        headers["X-Target-Expert-ID"] = doctorId.toString();
+        headers["X-Target-Doctor-ID"] = doctorId.toString();
       }
 
       const res = await fetch(`${API_BASE_URL}/agent/sessions`, {
         method: "POST",
         headers,
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-          const errText = await res.text();
-          console.error(`[Adapter] Create thread failed: ${res.status} ${errText}`);
+        const errText = await res.text();
+        console.error(`[Adapter] Create thread failed: ${res.status} ${errText}`);
       }
     } catch (e) {
       console.error("Failed to create on backend", e);
@@ -347,28 +497,27 @@ export const threadManager = {
   },
 
   rename: async (threadId: string, newTitle: string, token: string) => {
-    if (!threadId) return; 
-    await fetch(`${API_BASE_URL}/agent/sessions/${threadId}`, { 
-        method: "PATCH",
-        headers: {
-            ...getAuthHeaders(),
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ session_name: newTitle }),
+    if (!threadId) return;
+    await fetch(`${API_BASE_URL}/agent/sessions/${threadId}`, {
+      method: "PATCH",
+      headers: {
+        ...getAuthHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ session_name: newTitle }),
     }).catch(console.error);
   },
 
   delete: async (threadId: string, token: string) => {
     if (!threadId) return;
     try {
-        const res = await fetch(`${API_BASE_URL}/agent/sessions/${threadId}`, { 
-            method: "DELETE",
-            headers: getAuthHeaders()
-        });
-        if (!res.ok) console.error(`Delete failed: ${res.status}`);
+      const res = await fetch(`${API_BASE_URL}/agent/sessions/${threadId}`, {
+        method: "DELETE",
+        headers: getAuthHeaders(),
+      });
+      if (!res.ok) console.error(`Delete failed: ${res.status}`);
     } catch (e) {
-        console.error("Delete error:", e);
+      console.error("Delete error:", e);
     }
-  }
+  },
 };
-// end of frontend/lib/SimpleThreadAdapters.ts

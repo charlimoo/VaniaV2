@@ -19,8 +19,11 @@ from .task_service import TaskService
 from .session_service import SessionService
 from .roadmap_service import RoadmapService
 from .appendix_service import AppendixService
+from .medication_service import MedicationService
 from .tests_service import ClinicalTestsService
-from .context_scope import migrate_legacy_to_scoped_once, build_scoped_key
+from .case_files_service import CaseFilesService
+from .context_scope import migrate_legacy_to_scoped_once, migrate_doctor_scoped_to_case_once, build_scoped_key
+from .case_service import build_case_scoped_key
 # Configure Logger for this module
 logger = logging.getLogger(__name__)
 
@@ -122,10 +125,18 @@ class ProfileService:
     FORMS_TESTS_ANALYSIS_KEY = "forms_tests_clinical_analysis"
 
     @staticmethod
-    def get_summary(patient: CustomUser, doctor_id: int | None = None) -> str:
+    def get_summary(patient: CustomUser, doctor_id: int | None = None, case_id: str | None = None) -> str:
         """ Retrieves the clinical summary text for a patient. """
         key = ProfileService.CONTEXT_KEY
-        if doctor_id:
+        if doctor_id and case_id:
+            entry = migrate_doctor_scoped_to_case_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                case_id=case_id,
+                base_key=ProfileService.CONTEXT_KEY,
+                default_factory=lambda: {"summary_text": ""},
+            )
+        elif doctor_id:
             entry = migrate_legacy_to_scoped_once(
                 patient=patient,
                 doctor_id=doctor_id,
@@ -138,9 +149,9 @@ class ProfileService:
         return entry.data.get("summary_text", "") if entry else ""
 
     @staticmethod
-    def update_summary(patient: CustomUser, summary_text: str, doctor_id: int | None = None):
+    def update_summary(patient: CustomUser, summary_text: str, doctor_id: int | None = None, case_id: str | None = None):
         """ Updates or creates the clinical summary for a patient. """
-        key = build_scoped_key(ProfileService.CONTEXT_KEY, doctor_id) if doctor_id else ProfileService.CONTEXT_KEY
+        key = build_case_scoped_key(ProfileService.CONTEXT_KEY, doctor_id, case_id) if doctor_id and case_id else build_scoped_key(ProfileService.CONTEXT_KEY, doctor_id) if doctor_id else ProfileService.CONTEXT_KEY
         user_context_manager.set_singleton_context(
             user=patient,
             key=key,
@@ -193,8 +204,16 @@ class ProfileService:
         )
 
     @staticmethod
-    def get_forms_tests_analysis(patient: CustomUser, doctor_id: int | None = None) -> str:
-        if doctor_id:
+    def get_forms_tests_analysis(patient: CustomUser, doctor_id: int | None = None, case_id: str | None = None) -> str:
+        if doctor_id and case_id:
+            entry = migrate_doctor_scoped_to_case_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                case_id=case_id,
+                base_key=ProfileService.FORMS_TESTS_ANALYSIS_KEY,
+                default_factory=lambda: {"analysis_text": ""},
+            )
+        elif doctor_id:
             entry = migrate_legacy_to_scoped_once(
                 patient=patient,
                 doctor_id=doctor_id,
@@ -206,8 +225,8 @@ class ProfileService:
         return entry.data.get("analysis_text", "") if entry else ""
 
     @staticmethod
-    def update_forms_tests_analysis(patient: CustomUser, analysis_text: str, doctor_id: int | None = None):
-        key = build_scoped_key(ProfileService.FORMS_TESTS_ANALYSIS_KEY, doctor_id) if doctor_id else ProfileService.FORMS_TESTS_ANALYSIS_KEY
+    def update_forms_tests_analysis(patient: CustomUser, analysis_text: str, doctor_id: int | None = None, case_id: str | None = None):
+        key = build_case_scoped_key(ProfileService.FORMS_TESTS_ANALYSIS_KEY, doctor_id, case_id) if doctor_id and case_id else build_scoped_key(ProfileService.FORMS_TESTS_ANALYSIS_KEY, doctor_id) if doctor_id else ProfileService.FORMS_TESTS_ANALYSIS_KEY
         user_context_manager.set_singleton_context(
             user=patient,
             key=key,

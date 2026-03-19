@@ -42,10 +42,11 @@ import {
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
-import { isExpertRoleSlug } from "@/lib/roles"
+import { isExpertRoleSlug, isVisitorRoleSlug } from "@/lib/roles"
 
 // [NEW] Import the Doctor Profile Modal
 import { DoctorProfileModal } from "@/components/settings/DoctorProfileModal"
+import { VisitorBaseProfileModal } from "@/components/settings/VisitorBaseProfileModal"
 
 export default function SettingsPage() {
   const { user, refreshUser } = useUser()
@@ -68,6 +69,10 @@ export default function SettingsPage() {
           {/* [NEW] Public Profile Section (Only visible to Doctors) */}
           <section id="doctor-profile">
             <DoctorPublicProfileSection user={user} />
+          </section>
+
+          <section id="visitor-profile">
+            <VisitorBaseProfileSection user={user} refreshUser={refreshUser} />
           </section>
 
           <section id="general" className="space-y-4">
@@ -136,6 +141,44 @@ function DoctorPublicProfileSection({ user }: { user: any }) {
       />
     </>
   )
+}
+
+function VisitorBaseProfileSection({ user, refreshUser }: { user: any, refreshUser: () => Promise<any> }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const isVisitor = isVisitorRoleSlug(user?.role_slug) || isVisitorRoleSlug(user?.role);
+
+  if (!isVisitor) return null;
+
+  return (
+    <>
+      <div className="rounded-xl border bg-card text-card-foreground shadow-sm transition-all overflow-hidden">
+        <button
+          onClick={() => setIsOpen(true)}
+          className="flex items-center justify-between w-full p-6 text-start hover:bg-muted/30 transition-colors group"
+        >
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-emerald-100 dark:bg-emerald-900/30 rounded-full text-emerald-600 dark:text-emerald-400">
+              <UserCog className="w-6 h-6" />
+            </div>
+            <div className="flex flex-col gap-1">
+              <h3 className="font-bold text-base text-foreground">پروفایل پایه مراجع</h3>
+              <p className="text-sm text-muted-foreground">
+                مشخصات اصلی، راه‌های ارتباطی و شبکه‌های اجتماعی خود را بدون ورود به پرونده‌ها مدیریت کنید.
+              </p>
+            </div>
+          </div>
+
+          <ChevronLeft className="w-5 h-5 text-muted-foreground group-hover:text-primary transition-colors" />
+        </button>
+      </div>
+
+      <VisitorBaseProfileModal
+        isOpen={isOpen}
+        onOpenChange={setIsOpen}
+        onUpdate={refreshUser}
+      />
+    </>
+  );
 }
 
 // --- SUB-COMPONENT: DOCTOR UPGRADE (Minimal & Expandable) ---
@@ -283,6 +326,11 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
           toast.error(lawyerCheck.message);
           return;
         }
+      }
+
+      if (selectedProfession === "general_doctor" && credentialCode.trim() !== "123456") {
+        toast.error("در حال حاضر برای پزشک عمومی فقط کد 123456 فعال است.");
+        return;
       }
 
       const res = await upgradeExpert(user?.full_name || "", selectedProfession, credentialCode)

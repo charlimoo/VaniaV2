@@ -19,6 +19,8 @@ from agno.models.message import Message
 # --- Project Imports ---
 from billing.services import process_usage_charge, calculate_credit_cost
 from billing.models import UserWallet, BillingConfig
+from core.ai_provider import get_agno_openai_kwargs
+from .session_metadata import apply_session_metadata_defaults
 
 try:
     from canvas.manager import canvas_manager
@@ -44,7 +46,8 @@ class ServiceAgent(Agent):
 
         db_to_use = storage or db
         target_model_id = service_config.model_id or "gpt-4o"
-        session_metadata = {"agent_id": service_config.slug}
+        injected_model = kwargs.pop("model", None)
+        session_metadata = apply_session_metadata_defaults({"agent_id": service_config.slug})
 
         # Check for Summary Manager
         summary_manager = kwargs.get('session_summary_manager')
@@ -53,7 +56,7 @@ class ServiceAgent(Agent):
         init_kwargs = {
             "name": service_config.name,
             "instructions": base_prompt,
-            "model": OpenAIChat(id=target_model_id),
+            "model": injected_model or OpenAIChat(id=target_model_id, **get_agno_openai_kwargs()),
             "user_id": str(user.id),
             "session_id": session_id,
             
@@ -62,7 +65,7 @@ class ServiceAgent(Agent):
             "add_history_to_context": True,
             
             # Reduced history window (relying on summary for older context)
-            "num_history_runs": 5, 
+            "num_history_runs": 3, 
             
             # Session Summaries
             "enable_session_summaries": has_summaries,
@@ -107,6 +110,7 @@ class ServiceAgent(Agent):
                 if existing_session:
                     if not existing_session.session_data:
                         existing_session.session_data = {}
+                    apply_session_metadata_defaults(existing_session)
                     if 'agent_id' not in existing_session.session_data:
                         existing_session.session_data.update(session_metadata)
                         db_to_use.upsert_session(existing_session)
@@ -130,7 +134,14 @@ class ServiceAgent(Agent):
             pass
         return {}
 
-    async def arun(self, message: str = None, images: Optional[List[Any]] = None, files: Optional[List[Any]] = None, **kwargs) -> AsyncGenerator:
+    async def arun(
+        self,
+        message: str = None,
+        images: Optional[List[Any]] = None,
+        files: Optional[List[Any]] = None,
+        retrieved_file_context: Optional[str] = None,
+        **kwargs,
+    ) -> AsyncGenerator:
         run_log = f"[Run {self.session_id}]"
         
         full_response_accumulator = ""
@@ -164,6 +175,11 @@ class ServiceAgent(Agent):
                 except Exception as e:
                     logger.error(f"{run_log} ⚠️ Canvas context error: {e}")
 
+            if retrieved_file_context:
+                additional_messages.append(
+                    Message(role="system", content=retrieved_file_context, add_to_agent_memory=False)
+                )
+
             if images: kwargs['images'] = images
             if files: kwargs['files'] = files
             kwargs['stream'] = True
@@ -172,31 +188,36 @@ class ServiceAgent(Agent):
             self._initial_session_metrics = self._snapshot_session_metrics()
 
             logger.info(f"{run_log} 🚀 Invoking LLM Stream...")
-            
-            # 3. Standard Execution
-            async for chunk in super().arun(message, additional_messages=additional_messages, **kwargs):
-                yield chunk
-                
-                # --- Metrics Capture ---
-                if isinstance(chunk, RunOutput) or (hasattr(chunk, 'metrics') and chunk.metrics):
-                    m = chunk.metrics
-                    if m:
-                        self._captured_run_metrics = m
-                        logger.debug(f"{run_log} 📦 Received Metrics Chunk: {m}")
 
-                if hasattr(chunk, 'usage') and chunk.usage:
-                     logger.debug(f"{run_log} 🔌 Raw OpenAI Usage Event: {chunk.usage}")
+            previous_additional_input = getattr(self, "additional_input", None)
+            self.additional_input = additional_messages or None
+            try:
+                # 3. Standard Execution
+                async for chunk in super().arun(message, **kwargs):
+                    yield chunk
 
-                # --- Content Accumulation ---
-                if hasattr(chunk, 'event') and chunk.event == RunEvent.run_content:
-                    if chunk.content: full_response_accumulator += str(chunk.content)
-                elif isinstance(chunk, str):
-                    full_response_accumulator += chunk
+                    # --- Metrics Capture ---
+                    if isinstance(chunk, RunOutput) or (hasattr(chunk, 'metrics') and chunk.metrics):
+                        m = chunk.metrics
+                        if m:
+                            self._captured_run_metrics = m
+                            logger.debug(f"{run_log} 📦 Received Metrics Chunk: {m}")
 
-                # --- Tool Logging ---
-                if hasattr(chunk, 'event') and chunk.event == RunEvent.tool_call_started:
-                     tool_name = getattr(chunk, 'tool_call', {}).get('function', {}).get('name', 'unknown')
-                     logger.info(f"{run_log} 🛠️  Model is calling Tool: {tool_name}")
+                    if hasattr(chunk, 'usage') and chunk.usage:
+                         logger.debug(f"{run_log} 🔌 Raw OpenAI Usage Event: {chunk.usage}")
+
+                    # --- Content Accumulation ---
+                    if hasattr(chunk, 'event') and chunk.event == RunEvent.run_content:
+                        if chunk.content: full_response_accumulator += str(chunk.content)
+                    elif isinstance(chunk, str):
+                        full_response_accumulator += chunk
+
+                    # --- Tool Logging ---
+                    if hasattr(chunk, 'event') and chunk.event == RunEvent.tool_call_started:
+                         tool_name = getattr(chunk, 'tool_call', {}).get('function', {}).get('name', 'unknown')
+                         logger.info(f"{run_log} 🛠️  Model is calling Tool: {tool_name}")
+            finally:
+                self.additional_input = previous_additional_input
 
         except GeneratorExit:
             logger.warning(f"{run_log} 🛑 Client Disconnected.")

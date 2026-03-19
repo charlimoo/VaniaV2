@@ -21,6 +21,7 @@ import { RescueTask, RescueDimension } from "@/lib/types/vania";
 interface Props {
   task: RescueTask;
   patientId: number;
+  caseId?: string;
   onSuccess: (updatedTask: RescueTask) => void;
 }
 
@@ -36,7 +37,7 @@ const DIMENSIONS: { key: RescueDimension; label: string }[] = [
   { key: "SOLITUDE", label: "مدیریت تنهایی" },
 ];
 
-export function EditTaskDialog({ task, patientId, onSuccess }: Props) {
+export function EditTaskDialog({ task, patientId, caseId, onSuccess }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({ 
@@ -58,6 +59,7 @@ export function EditTaskDialog({ task, patientId, onSuccess }: Props) {
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           patient_id: patientId,
+          case_id: caseId,
           text: formData.text,
           dimension: formData.dimension, // Note: Backend edit might not support dimension change yet, but UI allows it
           due_date: formData.due_date || null

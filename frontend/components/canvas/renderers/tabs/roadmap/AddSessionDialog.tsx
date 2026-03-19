@@ -23,11 +23,12 @@ import { RoadmapSession } from "@/lib/types/vania";
 // --- Props Interface ---
 interface Props {
   patientId: number;
+  caseId?: string;
   onSuccess: (session: RoadmapSession) => void; // [FIX] Updated signature
   trigger?: React.ReactNode;
 }
 
-export function AddSessionDialog({ patientId, onSuccess, trigger }: Props) {
+export function AddSessionDialog({ patientId, caseId, onSuccess, trigger }: Props) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({ title: "", instructions: "", scheduled_date: "" });
@@ -47,6 +48,7 @@ export function AddSessionDialog({ patientId, onSuccess, trigger }: Props) {
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
           patient_id: patientId,
+          case_id: caseId,
           title: formData.title,
           instructions: formData.instructions,
           scheduled_date: formData.scheduled_date || undefined,

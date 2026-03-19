@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useParams } from "next/navigation";
 import {
   FileText,
@@ -14,7 +14,9 @@ import {
   Trash2,
   Pencil,
   Loader2,
-  Link2,
+  Search,
+  ImageIcon,
+  X,
 } from "lucide-react";
 import {
   Dialog,
@@ -24,29 +26,16 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
 import { toast } from "sonner";
 import { DynamicForm } from "@/components/tool-ui/form/dynamic-form";
-import { FormDefinition, ClinicalTestCatalogItem, ClinicalTestEntry } from "@/lib/types/vania";
+import { FormDefinition, ClinicalTestAttachment, ClinicalTestCatalogItem, ClinicalTestEntry, TestMode } from "@/lib/types/vania";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-
 interface Props {
   forms: any[];
   tests: ClinicalTestEntry[];
@@ -55,6 +44,11 @@ interface Props {
   uiSignal?: { type: string; form?: FormDefinition; data?: any };
   onEdit: (delta: any) => void;
   patientId: number;
+  caseId?: string;
+  readOnly?: boolean;
+  formsEnabled?: boolean;
+  formHistoryVisible?: boolean;
+  testMode?: TestMode;
 }
 
 const HIDDEN_KEYS = new Set(["handler", "submitted_by_doctor_id", "submission_timestamp", "form_key", "form_title"]);
@@ -69,6 +63,11 @@ const toJalali = (isoDateString: string) => {
   }
 };
 
+const formatFileSize = (size: number) => {
+  if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(size / 1024))} KB`;
+};
+
 interface TestDraft {
   id?: string;
   catalog_id?: number | null;
@@ -77,19 +76,58 @@ interface TestDraft {
   result_summary: string;
 }
 
-export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal, onEdit, patientId }: Props) {
+const getTestAttachments = (test: ClinicalTestEntry): ClinicalTestAttachment[] => {
+  if (Array.isArray(test.attachments) && test.attachments.length > 0) {
+    return test.attachments;
+  }
+  if (test.file_name) {
+    return [{
+      id: "legacy-file",
+      file_name: test.file_name,
+      file_path: test.file_path,
+      file_uploaded_at: test.file_uploaded_at,
+      content_type: test.file_name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream",
+    }];
+  }
+  return [];
+};
+
+export function FormsTab({
+  forms,
+  tests,
+  testsCatalog,
+  availableForms,
+  uiSignal,
+  onEdit,
+  patientId,
+  caseId,
+  readOnly = false,
+  formsEnabled = true,
+  formHistoryVisible = true,
+  testMode = "full_catalog",
+}: Props) {
   const params = useParams();
   const threadId = params.threadId as string;
 
   const [activeModalForm, setActiveModalForm] = useState<FormDefinition | null>(null);
   const [draftData, setDraftData] = useState<any>(null);
+  const [viewingFormEntry, setViewingFormEntry] = useState<any | null>(null);
+  const [formPickerOpen, setFormPickerOpen] = useState(false);
+  const [formSearch, setFormSearch] = useState("");
 
   const [testModalOpen, setTestModalOpen] = useState(false);
   const [testSaving, setTestSaving] = useState(false);
   const [testUploading, setTestUploading] = useState(false);
+  const [testPickerOpen, setTestPickerOpen] = useState(false);
   const [testDraft, setTestDraft] = useState<TestDraft>({ title: "", url: "", result_summary: "", catalog_id: null });
-  const [testCatalogQuery, setTestCatalogQuery] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [selectedFilePreviews, setSelectedFilePreviews] = useState<Record<string, string>>({});
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const onEditRef = useRef(onEdit);
+
+  useEffect(() => {
+    onEditRef.current = onEdit;
+  }, [onEdit]);
 
   const catalogMap = useMemo(() => {
     const m = new Map<number, ClinicalTestCatalogItem>();
@@ -98,28 +136,48 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
   }, [testsCatalog]);
 
   const filteredTestsCatalog = useMemo(() => {
-    const q = testCatalogQuery.trim().toLowerCase();
+    if (testMode !== "full_catalog") return [];
+    const q = testDraft.title.trim().toLowerCase();
     if (!q) return testsCatalog || [];
     return (testsCatalog || []).filter((item) =>
       `${item.id} ${item.title} ${item.url}`.toLowerCase().includes(q)
     );
-  }, [testsCatalog, testCatalogQuery]);
+  }, [testsCatalog, testDraft.title, testMode]);
 
-  const getFieldLabel = (entry: any, fieldKey: string) => {
-    if (entry.form_key) {
-      const def = availableForms?.find((f) => f.key === entry.form_key);
-      if (def) {
-        const field = def.schema.find((s: any) => s.name === fieldKey);
-        if (field) return field.label;
+  const filteredForms = useMemo(() => {
+    const q = formSearch.trim().toLowerCase();
+    if (!q) return availableForms || [];
+    return (availableForms || []).filter((item) =>
+      `${item.key} ${item.title} ${item.description}`.toLowerCase().includes(q)
+    );
+  }, [availableForms, formSearch]);
+
+  const viewingFormDefinition = useMemo(() => {
+    const formKey = viewingFormEntry?.form_key || viewingFormEntry?.data?.form_key;
+    return (availableForms || []).find((f) => f.key === formKey) || null;
+  }, [availableForms, viewingFormEntry]);
+
+  const activeTestAttachments = useMemo(() => {
+    if (!testDraft.id) return [];
+    const activeTest = (tests || []).find((item) => item.id === testDraft.id);
+    return activeTest ? getTestAttachments(activeTest) : [];
+  }, [testDraft.id, tests]);
+
+  useEffect(() => {
+    const nextPreviews: Record<string, string> = {};
+
+    selectedFiles.forEach((file) => {
+      if (file.type.startsWith("image/")) {
+        nextPreviews[`${file.name}-${file.size}-${file.lastModified}`] = URL.createObjectURL(file);
       }
-    }
-    const defByTitle = availableForms?.find((f) => f.title === entry.type);
-    if (defByTitle) {
-      const field = defByTitle.schema.find((s: any) => s.name === fieldKey);
-      if (field) return field.label;
-    }
-    return fieldKey;
-  };
+    });
+
+    setSelectedFilePreviews(nextPreviews);
+
+    return () => {
+      Object.values(nextPreviews).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [selectedFiles]);
 
   useEffect(() => {
     if (!uiSignal) return;
@@ -136,46 +194,47 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
     }
 
     if (shouldClearSignal) {
-      setTimeout(() => onEdit({ ui_signal: undefined }), 300);
+      setTimeout(() => onEditRef.current({ ui_signal: undefined }), 300);
     }
-  }, [uiSignal, onEdit]);
+  }, [uiSignal]);
 
   const handleFormSuccess = (formData: any) => {
     if (!activeModalForm) return;
 
     toast.success(`فرم «${activeModalForm.title}» با موفقیت ثبت شد.`);
     setActiveModalForm(null);
+    setFormPickerOpen(false);
 
     const newEntry = {
       id: "temp-" + Date.now(),
       type: activeModalForm.title,
       date: new Date().toISOString(),
       form_key: activeModalForm.key,
+      case_id: caseId,
       data: {
         ...formData,
         form_key: activeModalForm.key,
         form_title: activeModalForm.title,
+        case_id: caseId,
       },
     };
     onEdit({ forms: [newEntry, ...(forms || [])] });
   };
 
   const openNewTestModal = () => {
-    setSelectedFile(null);
-    setTestCatalogQuery("");
+    setSelectedFiles([]);
     setTestDraft({ title: "", url: "", result_summary: "", catalog_id: null });
     setTestModalOpen(true);
   };
 
   const openEditTestModal = (test: ClinicalTestEntry) => {
-    setSelectedFile(null);
-    setTestCatalogQuery("");
+    setSelectedFiles([]);
     setTestDraft({
       id: test.id,
       catalog_id: test.catalog_id || null,
       title: test.title || "",
       url: test.url || "",
-      result_summary: test.result_summary || "",
+      result_summary: test.result_text || test.result_summary || "",
     });
     setTestModalOpen(true);
   };
@@ -185,6 +244,44 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
     const item = catalogMap.get(id);
     if (!item) return;
     setTestDraft((prev) => ({ ...prev, catalog_id: id, title: item.title, url: item.url }));
+    setTestPickerOpen(false);
+  };
+
+  const handleTestTitleChange = (value: string) => {
+    setTestDraft((prev) => ({ ...prev, title: value, catalog_id: null, url: "" }));
+    setTestPickerOpen(testMode === "full_catalog" && !!value.trim());
+  };
+
+  const clearLinkedCatalog = () => {
+    setTestDraft((prev) => ({ ...prev, catalog_id: null, url: "" }));
+  };
+
+  const addSelectedFiles = (incomingFiles: File[]) => {
+    if (incomingFiles.length === 0) return;
+
+    setSelectedFiles((prev) => {
+      const seen = new Set(prev.map((file) => `${file.name}-${file.size}-${file.lastModified}`));
+      const next = [...prev];
+
+      incomingFiles.forEach((file) => {
+        const key = `${file.name}-${file.size}-${file.lastModified}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          next.push(file);
+        }
+      });
+
+      return next;
+    });
+  };
+
+  const removeSelectedFile = (targetFile: File) => {
+    setSelectedFiles((prev) =>
+      prev.filter(
+        (file) =>
+          !(file.name === targetFile.name && file.size === targetFile.size && file.lastModified === targetFile.lastModified)
+      )
+    );
   };
 
   const upsertTest = async () => {
@@ -204,9 +301,11 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             patient_id: patientId,
-            catalog_id: testDraft.catalog_id || undefined,
+            case_id: caseId,
+            catalog_id: testMode === "full_catalog" ? testDraft.catalog_id || undefined : undefined,
             title: testDraft.title,
-            url: testDraft.url,
+            url: testMode === "full_catalog" ? testDraft.url : "",
+            result_text: testDraft.result_summary,
             result_summary: testDraft.result_summary,
           }),
         });
@@ -220,9 +319,11 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
           body: JSON.stringify({
             patient_id: patientId,
-            catalog_id: testDraft.catalog_id || undefined,
+            case_id: caseId,
+            catalog_id: testMode === "full_catalog" ? testDraft.catalog_id || undefined : undefined,
             title: testDraft.title,
-            url: testDraft.url,
+            url: testMode === "full_catalog" ? testDraft.url : "",
+            result_text: testDraft.result_summary,
             result_summary: testDraft.result_summary,
           }),
         });
@@ -231,23 +332,25 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
         updatedTests = updatedTests.map((t) => (t.id === testId ? updated : t));
       }
 
-      if (selectedFile && testId) {
+      if (selectedFiles.length > 0 && testId) {
         setTestUploading(true);
-        const fd = new FormData();
-        fd.append("patient_id", String(patientId));
-        fd.append("file", selectedFile);
-        fd.append("result_summary", testDraft.result_summary || "");
-        fd.append("auto_summarize", "true");
+        let latestTest = updatedTests.find((t) => t.id === testId) || null;
+        for (const file of selectedFiles) {
+          const fd = new FormData();
+          fd.append("patient_id", String(patientId));
+          if (caseId) fd.append("case_id", String(caseId));
+          fd.append("file", file);
 
-        const uploadRes = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/file/`, {
-          method: "POST",
-          headers: { ...getAuthHeaders() },
-          body: fd,
-        });
+          const uploadRes = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/file/`, {
+            method: "POST",
+            headers: { ...getAuthHeaders() },
+            body: fd,
+          });
+          if (!uploadRes.ok) throw new Error(`آپلود فایل «${file.name}» ناموفق بود.`);
+          latestTest = await uploadRes.json();
+          updatedTests = updatedTests.map((t) => (t.id === testId ? latestTest! : t));
+        }
         setTestUploading(false);
-        if (!uploadRes.ok) throw new Error("آپلود فایل تست ناموفق بود.");
-        const uploaded = await uploadRes.json();
-        updatedTests = updatedTests.map((t) => (t.id === testId ? uploaded : t));
       }
 
       onEdit({ tests: updatedTests });
@@ -268,7 +371,7 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
     try {
       const res = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/?patient_id=${patientId}`, {
         method: "DELETE",
-        headers: { ...getAuthHeaders() },
+        headers: { ...getAuthHeaders(), ...(caseId ? { "X-Target-Case-ID": String(caseId) } : {}) },
       });
       if (!res.ok) throw new Error("حذف تست ناموفق بود.");
       onEdit({ tests: (tests || []).filter((t) => t.id !== testId) });
@@ -278,16 +381,26 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
     }
   };
 
-  const deleteTestFile = async (testId: string) => {
+  const deleteTestFile = async (testId: string, attachmentId?: string) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/file/delete/?patient_id=${patientId}`, {
+      const query = new URLSearchParams({ patient_id: String(patientId) });
+      if (attachmentId) query.set("attachment_id", attachmentId);
+      const res = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/file/delete/?${query.toString()}`, {
         method: "DELETE",
-        headers: { ...getAuthHeaders() },
+        headers: { ...getAuthHeaders(), ...(caseId ? { "X-Target-Case-ID": String(caseId) } : {}) },
       });
       if (!res.ok) throw new Error("حذف فایل ناموفق بود.");
       onEdit({
         tests: (tests || []).map((t) =>
-          t.id === testId ? { ...t, file_name: null, file_path: null, file_uploaded_at: null } : t
+          t.id === testId
+            ? {
+                ...t,
+                attachments: getTestAttachments(t).filter((item) => item.id !== attachmentId),
+                file_name: null,
+                file_path: null,
+                file_uploaded_at: null,
+              }
+            : t
         ),
       });
       toast.success("فایل تست حذف شد.");
@@ -296,11 +409,13 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
     }
   };
 
-  const downloadTestFile = async (testId: string, fallbackName?: string | null) => {
+  const downloadTestFile = async (testId: string, attachmentId?: string, fallbackName?: string | null) => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/file/download/?patient_id=${patientId}`, {
+      const query = new URLSearchParams({ patient_id: String(patientId) });
+      if (attachmentId) query.set("attachment_id", attachmentId);
+      const res = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/file/download/?${query.toString()}`, {
         method: "GET",
-        headers: { ...getAuthHeaders() },
+        headers: { ...getAuthHeaders(), ...(caseId ? { "X-Target-Case-ID": String(caseId) } : {}) },
       });
       if (!res.ok) throw new Error("دانلود فایل ناموفق بود.");
 
@@ -319,201 +434,185 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
   };
 
   return (
-    <div className="space-y-8 pb-10 animate-in fade-in slide-in-from-right-2 duration-300">
-      <section>
-        <h3 className="text-xs font-bold text-muted-foreground mb-3 flex items-center gap-2">
-          <Plus className="w-4 h-4" /> ثبت ارزیابی جدید (فرم)
-        </h3>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {(availableForms || []).map((form) => (
-            <button
-              key={form.key}
-              onClick={() => setActiveModalForm(form)}
-              className="flex flex-col items-start p-3 rounded-xl border bg-card hover:border-primary/50 hover:bg-primary/5 transition-all text-right group h-full shadow-sm"
-            >
-              <span className="font-bold text-xs group-hover:text-primary transition-colors">{form.title}</span>
-              <span className="text-[10px] text-muted-foreground mt-1 line-clamp-2 text-start opacity-80">{form.description}</span>
-            </button>
-          ))}
+    <div className="space-y-6 pb-10 animate-in fade-in slide-in-from-right-2 duration-300">
+      {formsEnabled || formHistoryVisible ? (
+      <section className="rounded-2xl border border-border/60 bg-background/70 p-4">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold">فرم‌ها و ارزیابی‌ها</h3>
+            <p className="mt-1 text-[11px] text-muted-foreground">افزودن فرم‌های جدید و مرور تاریخچه ثبت‌شده.</p>
+          </div>
+          {!readOnly && formsEnabled ? <Button size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setFormPickerOpen(true)}>
+            <Plus className="w-3.5 h-3.5" />
+            افزودن فرم جدید
+          </Button> : null}
         </div>
-      </section>
 
-      <section>
+        {formHistoryVisible ? (
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-xs font-bold text-muted-foreground flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4" /> تاریخچه فرم‌ها
+          </h4>
+          <Badge variant="outline" className="text-[10px] font-normal">{forms?.length || 0} مورد</Badge>
+        </div>
+        ) : null}
+
+        {formHistoryVisible ? ((forms?.length || 0) === 0 ? (
+          <div className="text-center py-8 text-muted-foreground bg-muted/10 rounded-xl border border-dashed text-xs italic">
+            هنوز فرمی تکمیل نشده است.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {forms.map((entry, idx) => (
+              <div key={entry.id || idx} className="flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 shadow-sm">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileText className="w-3.5 h-3.5 text-primary opacity-70" />
+                    <span className="truncate text-sm font-semibold">{entry.data?.form_title || entry.type || entry.form_key}</span>
+                  </div>
+                  <div className="mt-1 text-[10px] text-muted-foreground">
+                    {toJalali(entry.date)}
+                  </div>
+                </div>
+                <Button type="button" variant="ghost" size="sm" className="gap-1.5 text-xs" onClick={() => setViewingFormEntry(entry)}>
+                  <FileText className="w-3.5 h-3.5" />
+                  مشاهده فرم
+                </Button>
+              </div>
+            ))}
+          </div>
+        )) : (
+          <div className="text-center py-8 text-muted-foreground bg-muted/10 rounded-xl border border-dashed text-xs italic">
+            این نقش به فرم‌های پرونده دسترسی ندارد.
+          </div>
+        )}
+      </section>
+      ) : null}
+
+      {testMode !== "disabled" ? (
+      <section className="rounded-2xl border border-border/60 bg-background/70 p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-xs font-bold text-muted-foreground flex items-center gap-2">
-            <FlaskConical className="w-4 h-4" /> تست ها ({tests?.length || 0})
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+            <FlaskConical className="w-4 h-4 text-primary" /> {testMode === "exams_only" ? "آزمایش ها" : "تست ها و ازمایش ها"}
           </h3>
-          <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5" onClick={openNewTestModal}>
-            <Plus className="w-3.5 h-3.5" /> افزودن تست
-          </Button>
+          {!readOnly ? <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" onClick={openNewTestModal}>
+            <Plus className="w-3.5 h-3.5" /> {testMode === "exams_only" ? "افزودن آزمایش" : "افزودن تست یا ازمایش"}
+          </Button> : null}
         </div>
 
         {(tests?.length || 0) === 0 ? (
           <div className="text-center py-8 text-muted-foreground bg-muted/10 rounded-xl border border-dashed text-xs italic">
-            هنوز تستی ثبت نشده است.
+            هنوز تست یا ازمایشی ثبت نشده است.
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {tests.map((test) => {
-              const missingSummary = !test.result_summary?.trim();
-              const missingFile = !test.file_name;
+              const attachments = getTestAttachments(test);
+              const resultText = test.result_text || test.result_summary || "";
+              const missingSummary = !resultText.trim();
+              const missingFile = attachments.length === 0;
               const isTodo = missingSummary || missingFile;
 
               return (
-              <div key={test.id} className="rounded-xl border bg-card p-3 shadow-sm space-y-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 space-y-1">
-                    <div className="truncate text-xs font-bold flex items-center gap-2">
-                      <span className="truncate">{test.title}</span>
-                      {isTodo && (
-                        <Badge variant="secondary" className="text-[10px]">
-                          در انتظار تکمیل
-                        </Badge>
-                      )}
+                <div key={test.id} className="rounded-xl border bg-card p-3 shadow-sm space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 space-y-1">
+                      <div className="truncate text-xs font-bold flex items-center gap-2">
+                        <span className="truncate">{test.title}</span>
+                        {isTodo && <Badge variant="secondary" className="text-[10px]">در انتظار تکمیل</Badge>}
+                      </div>
+                      <div className="text-[10px] text-muted-foreground">{toJalali(test.created_at || "")}</div>
                     </div>
-                    <div className="text-[10px] text-muted-foreground">{toJalali(test.created_at || "")}</div>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEditTestModal(test)}>
-                      <Pencil className="w-3.5 h-3.5" />
-                    </Button>
-                    <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteTest(test.id)}>
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  </div>
-                </div>
-
-                {test.url && (
-                  <a href={test.url} target="_blank" rel="noreferrer" className="text-[11px] text-primary inline-flex items-center gap-1.5 break-all">
-                    <Link2 className="w-3 h-3" /> لینک تست
-                  </a>
-                )}
-
-                <div className="text-[11px] text-foreground/80 leading-relaxed bg-muted/20 rounded p-2 min-h-[56px]">
-                  {test.result_summary || "خلاصه نتیجه ثبت نشده است."}
-                </div>
-
-                <div className="flex items-center justify-between gap-2 pt-1">
-                  <div className="min-w-0 break-all text-[10px] text-muted-foreground">
-                    {test.file_name ? `فایل: ${test.file_name}` : "بدون فایل"}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {test.file_name && (
-                      <>
-                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => downloadTestFile(test.id, test.file_name)}>
-                          <Download className="w-3.5 h-3.5" />
+                    <div className="flex items-center gap-1">
+                      {!readOnly ? <>
+                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEditTestModal(test)}>
+                          <Pencil className="w-3.5 h-3.5" />
                         </Button>
-                        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteTestFile(test.id)}>
+                        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteTest(test.id)}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
-                      </>
+                      </> : null}
+                    </div>
+                  </div>
+
+                  <div className="text-[11px] text-foreground/80 leading-relaxed bg-muted/20 rounded p-2 min-h-[56px] whitespace-pre-wrap">
+                    {resultText || "متن نتیجه ثبت نشده است."}
+                  </div>
+
+                  <div className="space-y-2 pt-1">
+                    <div className="text-[10px] text-muted-foreground">فایل‌ها: {attachments.length}</div>
+                    {attachments.length > 0 ? (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {attachments.map((attachment) => (
+                          <div key={attachment.id} className="rounded-xl border border-border/60 bg-muted/10 px-3 py-2.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0 text-[10px] text-muted-foreground">
+                                <div className="truncate font-medium text-foreground">{attachment.file_name}</div>
+                                <div className="mt-1">{toJalali(attachment.file_uploaded_at || "")}</div>
+                                <div className="mt-1">{attachment.content_type?.includes("pdf") ? "PDF" : "تصویر"}</div>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => downloadTestFile(test.id, attachment.id, attachment.file_name)}>
+                                  <Download className="w-3.5 h-3.5" />
+                                </Button>
+                                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteTestFile(test.id, attachment.id)}>
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-muted-foreground">هنوز فایلی ثبت نشده است.</div>
                     )}
                   </div>
                 </div>
-              </div>
               );
             })}
           </div>
         )}
       </section>
+      ) : null}
 
-      <section>
-        <h3 className="text-xs font-bold text-muted-foreground mb-3 flex items-center gap-2">
-          <CheckCircle2 className="w-4 h-4" /> تاریخچه فرم ها ({forms?.length || 0})
-        </h3>
+      <Dialog open={formsEnabled && formPickerOpen} onOpenChange={setFormPickerOpen}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-2xl" dir="rtl">
+          <DialogHeader className="text-right">
+            <DialogTitle>انتخاب فرم جدید</DialogTitle>
+            <DialogDescription>فرم مورد نیاز این پرونده را انتخاب کنید.</DialogDescription>
+          </DialogHeader>
 
-        {(forms?.length || 0) === 0 ? (
-          <div className="text-center py-8 text-muted-foreground bg-muted/10 rounded-xl border border-dashed text-xs italic">
-            هنوز فرمی تکمیل نشده است.
+          <div className="space-y-4">
+            <div className="relative">
+              <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={formSearch} onChange={(e) => setFormSearch(e.target.value)} placeholder="جستجوی فرم..." className="pr-9" />
+            </div>
+            <div className="grid max-h-[50vh] gap-3 overflow-y-auto pr-1 sm:grid-cols-2">
+              {filteredForms.map((form) => (
+                <button
+                  key={form.key}
+                  onClick={() => {
+                    setActiveModalForm(form);
+                    setDraftData(null);
+                    setFormPickerOpen(false);
+                  }}
+                  className="flex flex-col items-start rounded-xl border bg-card p-3 text-right transition hover:border-primary/40 hover:bg-primary/5"
+                >
+                  <span className="text-sm font-semibold">{form.title}</span>
+                  <span className="mt-1 text-[11px] text-muted-foreground line-clamp-3">{form.description}</span>
+                </button>
+              ))}
+              {filteredForms.length === 0 && (
+                <div className="col-span-full rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+                  فرمی با این عبارت پیدا نشد.
+                </div>
+              )}
+            </div>
           </div>
-        ) : (
-          <Accordion type="single" collapsible className="w-full space-y-2">
-            {forms.map((entry, idx) => (
-              <AccordionItem key={entry.id || idx} value={entry.id || String(idx)} className="border rounded-lg bg-card px-0 shadow-sm">
-                <AccordionTrigger className="px-4 py-3 hover:no-underline text-xs">
-                  <div className="ml-2 flex w-full items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <FileText className="w-3.5 h-3.5 text-primary opacity-70" />
-                      <span className="truncate font-semibold">{entry.data?.form_title || entry.type || entry.form_key}</span>
-                    </div>
-                    <span className="text-[10px] text-muted-foreground font-mono bg-muted px-1.5 py-0.5 rounded">{toJalali(entry.date)}</span>
-                  </div>
-                </AccordionTrigger>
+        </DialogContent>
+      </Dialog>
 
-                <AccordionContent className="px-4 pb-4 pt-0 border-t border-dashed border-border/50 mt-2">
-                  <div className="grid grid-cols-1 gap-2 pt-3">
-                    {Object.entries(entry.data)
-                      .filter(([key]) => !HIDDEN_KEYS.has(key))
-                      .map(([key, value]) => {
-                        if (value === null || value === undefined || value === "") return null;
-
-                        const label = getFieldLabel(entry, key);
-
-                        if (Array.isArray(value) && value.length > 0 && typeof value[0] === "object") {
-                          return (
-                            <div key={key} className="flex flex-col text-[11px] border-b border-border/30 pb-2 gap-2 mt-2">
-                              <span className="text-muted-foreground font-medium">{label}:</span>
-                              <div className="border rounded-md overflow-hidden">
-                                <table className="w-full text-right bg-muted/10">
-                                  <thead className="bg-muted/20">
-                                    <tr>
-                                      {Object.keys(value[0]).map((h) => (
-                                        <th key={h} className="p-1.5 font-semibold text-[10px] text-muted-foreground border-b">
-                                          {h}
-                                        </th>
-                                      ))}
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {value.map((row: any, i: number) => (
-                                      <tr key={i} className="border-b last:border-0 hover:bg-card">
-                                        {Object.values(row).map((val: any, j) => (
-                                          <td key={j} className="p-1.5 text-foreground">
-                                            {String(val)}
-                                          </td>
-                                        ))}
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
-                          );
-                        }
-
-                        let displayValue = "";
-                        if (typeof value === "object" && !Array.isArray(value)) {
-                          displayValue = Object.entries(value)
-                            .map(([subKey, subVal]) => `${subKey}: ${subVal}`)
-                            .join("\n");
-                        } else if (Array.isArray(value)) {
-                          displayValue = value.join("، ");
-                        } else {
-                          if (key.includes("date") || key === "birth_date" || key === "file_date") {
-                            displayValue = toJalali(String(value));
-                          } else {
-                            displayValue = String(value);
-                          }
-                        }
-
-                        if (!displayValue || displayValue === "null") return null;
-
-                        return (
-                          <div key={key} className="flex flex-col sm:flex-row sm:justify-between text-[11px] border-b border-border/30 pb-1.5 last:border-0 gap-1 sm:gap-4">
-                            <span className="text-muted-foreground font-medium shrink-0">{label}:</span>
-                            <span className="font-medium text-foreground text-left whitespace-pre-wrap">{displayValue}</span>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </AccordionContent>
-              </AccordionItem>
-            ))}
-          </Accordion>
-        )}
-      </section>
-
-      <Dialog open={!!activeModalForm} onOpenChange={(o) => !o && setActiveModalForm(null)}>
+      <Dialog open={formsEnabled && !!activeModalForm} onOpenChange={(o) => !o && setActiveModalForm(null)}>
         <DialogContent className="w-[calc(100vw-2rem)] max-w-4xl max-h-[85vh] overflow-y-auto" dir="rtl">
           <DialogHeader className="text-right">
             <DialogTitle className="flex items-center gap-2">
@@ -550,83 +649,267 @@ export function FormsTab({ forms, tests, testsCatalog, availableForms, uiSignal,
                 onSuccess={handleFormSuccess}
                 patientId={patientId}
                 sessionId={threadId}
+                caseId={caseId}
               />
             </div>
           )}
         </DialogContent>
       </Dialog>
 
-      <Dialog open={testModalOpen} onOpenChange={setTestModalOpen}>
-        <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-xl">
+      <Dialog open={!!viewingFormEntry} onOpenChange={(open) => !open && setViewingFormEntry(null)}>
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-4xl max-h-[85vh] overflow-y-auto" dir="rtl">
           <DialogHeader className="text-right">
-            <DialogTitle>{testDraft.id ? "ویرایش تست" : "افزودن تست"}</DialogTitle>
+            <DialogTitle>{viewingFormEntry?.data?.form_title || viewingFormEntry?.type || viewingFormEntry?.form_key || "فرم ثبت‌شده"}</DialogTitle>
             <DialogDescription>
-              می توانید تست را فقط با عنوان ثبت کنید و بعدا خلاصه نتیجه یا فایل PDF را اضافه کنید.
+              {viewingFormEntry?.date ? `تاریخ ثبت: ${toJalali(viewingFormEntry.date)}` : "نمایش اطلاعات ثبت‌شده فرم"}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
+          {viewingFormEntry && viewingFormDefinition ? (
+            <DynamicForm
+              formHandle={viewingFormDefinition.handler}
+              schema={viewingFormDefinition.schema}
+              prefill={viewingFormEntry.data || {}}
+              title={viewingFormDefinition.title}
+              description={viewingFormDefinition.description}
+              disabled
+              readOnly
+              hideSubmit
+            />
+          ) : (
+            <div className="text-sm text-muted-foreground">تعریف این فرم برای نمایش پیدا نشد.</div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={testModalOpen} onOpenChange={setTestModalOpen}>
+        <DialogContent dir="rtl" className="flex max-h-[85vh] w-[calc(100vw-2rem)] max-w-xl flex-col overflow-hidden">
+          <DialogHeader className="text-right">
+            <DialogTitle>{testDraft.id ? (testMode === "exams_only" ? "ویرایش آزمایش" : "ویرایش تست یا ازمایش") : (testMode === "exams_only" ? "افزودن آزمایش" : "افزودن تست یا ازمایش")}</DialogTitle>
+            <DialogDescription>
+              {testMode === "exams_only"
+                ? "عنوان آزمایش را وارد کنید و نتیجه یا فایل‌های مربوط را ثبت کنید."
+                : "عنوان را وارد کنید. اگر موردی از فهرست شناخته شود، به صورت خودکار به تست مربوط متصل می شود."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 space-y-4 overflow-y-auto pr-1">
             <div className="grid gap-1.5">
-              <Label className="text-xs">انتخاب از لیست تست ها</Label>
-              <Select
-                value={testDraft.catalog_id ? String(testDraft.catalog_id) : undefined}
-                onValueChange={handleCatalogChange}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="یک تست انتخاب کنید" />
-                </SelectTrigger>
-                <SelectContent>
-                  <div className="sticky top-0 z-10 bg-popover p-2 border-b">
-                    <Input
-                      value={testCatalogQuery}
-                      onChange={(e) => setTestCatalogQuery(e.target.value)}
-                      onKeyDownCapture={(e) => e.stopPropagation()}
-                      placeholder="جستجو..."
-                    />
+              <Label className="text-xs">{testMode === "exams_only" ? "عنوان آزمایش" : "عنوان تست یا ازمایش"}</Label>
+              <div className="space-y-2">
+                <Popover open={testMode === "full_catalog" && testPickerOpen && !!testDraft.title.trim() && filteredTestsCatalog.length > 0} onOpenChange={setTestPickerOpen}>
+                  <PopoverAnchor asChild>
+                    <div className="relative">
+                      <Input
+                        value={testDraft.title}
+                        onChange={(e) => handleTestTitleChange(e.target.value)}
+                        placeholder={testMode === "exams_only" ? "نام آزمایش را وارد کنید" : "نام تست یا ازمایش را جستجو یا وارد کنید"}
+                        onFocus={() => {
+                          if (testMode === "full_catalog") {
+                            setTestPickerOpen(!!testDraft.title.trim() && filteredTestsCatalog.length > 0);
+                          }
+                        }}
+                      />
+                    </div>
+                  </PopoverAnchor>
+                  <PopoverContent align="start" sideOffset={6} className="w-[var(--radix-popover-trigger-width)] rounded-xl p-2">
+                    <div className="mb-1 px-1 text-[10px] text-muted-foreground">نتایج مشابه</div>
+                    <div className="grid gap-1">
+                      {filteredTestsCatalog.slice(0, 6).map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleCatalogChange(String(item.id))}
+                          className="rounded-lg px-3 py-2 text-right text-xs transition hover:bg-muted"
+                        >
+                          {item.title}
+                        </button>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                {testMode === "full_catalog" && testDraft.catalog_id ? (
+                  <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-900">
+                    <div className="min-w-0">
+                      <div className="font-medium">تست انتخاب شده از فهرست</div>
+                      <div className="truncate text-[11px] opacity-80">{testDraft.title}</div>
+                    </div>
+                    <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={clearLinkedCatalog}>
+                      <X className="h-3.5 w-3.5" />
+                      حذف اتصال
+                    </Button>
                   </div>
-                  {filteredTestsCatalog.map((item) => (
-                    <SelectItem key={item.id} value={String(item.id)}>
-                      {item.id}. {item.title}
-                    </SelectItem>
-                  ))}
-                  {filteredTestsCatalog.length === 0 && (
-                    <div className="px-3 py-2 text-xs text-muted-foreground">موردی پیدا نشد.</div>
-                  )}
-                </SelectContent>
-              </Select>
+                ) : testMode === "full_catalog" ? (
+                  <div className="text-[10px] text-muted-foreground">
+                    می‌توانید عنوان را آزادانه وارد کنید یا یکی از موارد مشابه را انتخاب کنید.
+                  </div>
+                ) : null}
+              </div>
             </div>
 
             <div className="grid gap-1.5">
-              <Label className="text-xs">عنوان تست</Label>
-              <Input value={testDraft.title} onChange={(e) => setTestDraft((p) => ({ ...p, title: e.target.value }))} />
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label className="text-xs">لینک تست</Label>
-              <Input value={testDraft.url} onChange={(e) => setTestDraft((p) => ({ ...p, url: e.target.value }))} dir="ltr" />
-            </div>
-
-            <div className="grid gap-1.5">
-              <Label className="text-xs">خلاصه نتیجه</Label>
+              <Label className="text-xs">متن نتیجه</Label>
               <Textarea
                 value={testDraft.result_summary}
                 onChange={(e) => setTestDraft((p) => ({ ...p, result_summary: e.target.value }))}
-                placeholder="در صورت خالی بودن، بعد از آپلود PDF خلاصه به صورت خودکار تولید می شود."
+                placeholder="نتیجه متنی تست را اینجا ثبت کنید."
                 className="min-h-[110px]"
               />
             </div>
 
             <div className="grid gap-1.5">
-              <Label className="text-xs">فایل نتیجه (PDF)</Label>
-              <Input type="file" accept="application/pdf" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} />
-              {selectedFile && <div className="text-[10px] text-muted-foreground">{selectedFile.name}</div>}
+              <div className="flex items-center justify-between gap-3">
+                <Label className="text-xs">فایل‌های نتیجه</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 text-xs"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  افزودن فایل
+                </Button>
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="application/pdf,image/*"
+                className="hidden"
+                onChange={(e) => {
+                  addSelectedFiles(Array.from(e.target.files || []));
+                  e.target.value = "";
+                }}
+              />
+
+              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                  <span>PDF یا تصویر اضافه کنید. می‌توانید چند فایل را باهم انتخاب کنید.</span>
+                  <span>{activeTestAttachments.length + selectedFiles.length} فایل</span>
+                </div>
+
+                {activeTestAttachments.length === 0 && selectedFiles.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-muted-foreground">
+                    هنوز فایلی برای این تست ثبت نشده است.
+                  </div>
+                ) : (
+                  <div className="mt-3 max-h-[340px] overflow-y-auto pr-1">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                    {activeTestAttachments.map((attachment) => {
+                      const isPdf = attachment.content_type?.includes("pdf");
+
+                      return (
+                        <div key={attachment.id} className="overflow-hidden rounded-2xl border border-border/60 bg-background/60">
+                          <div className="flex h-28 items-center justify-center bg-muted/20">
+                            {isPdf ? (
+                              <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                                <FileText className="h-8 w-8" />
+                                <span className="text-[10px]">PDF</span>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                                <ImageIcon className="h-8 w-8" />
+                                <span className="text-[10px]">تصویر</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="space-y-3 p-3">
+                            <div className="space-y-1 text-right">
+                              <div className="truncate text-xs font-medium text-foreground">{attachment.file_name}</div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {toJalali(attachment.file_uploaded_at || "")}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between gap-2">
+                              <Badge variant="outline" className="text-[10px] font-normal">
+                                ثبت شده
+                              </Badge>
+                              <div className="flex items-center gap-1">
+                                <Button
+                                  type="button"
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-8 w-8"
+                                  onClick={() => downloadTestFile(testDraft.id!, attachment.id, attachment.file_name)}
+                                >
+                                  <Download className="h-3.5 w-3.5" />
+                                </Button>
+                                {!readOnly ? (
+                                  <Button
+                                    type="button"
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-8 w-8 text-destructive"
+                                    onClick={() => deleteTestFile(testDraft.id!, attachment.id)}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {selectedFiles.map((file) => {
+                      const key = `${file.name}-${file.size}-${file.lastModified}`;
+                      const previewUrl = selectedFilePreviews[key];
+                      const isImage = file.type.startsWith("image/");
+
+                      return (
+                        <div key={key} className="overflow-hidden rounded-2xl border border-primary/20 bg-primary/5">
+                          <div className="relative flex h-28 items-center justify-center overflow-hidden bg-background/70">
+                            {isImage && previewUrl ? (
+                              <img src={previewUrl} alt={file.name} className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                                {file.type.includes("pdf") ? <FileText className="h-8 w-8" /> : <ImageIcon className="h-8 w-8" />}
+                                <span className="text-[10px]">{file.type.includes("pdf") ? "PDF" : "تصویر"}</span>
+                              </div>
+                            )}
+
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="secondary"
+                              className="absolute left-2 top-2 h-7 w-7"
+                              onClick={() => removeSelectedFile(file)}
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+
+                          <div className="space-y-2 p-3">
+                            <div className="space-y-1 text-right">
+                              <div className="truncate text-xs font-medium text-foreground">{file.name}</div>
+                              <div className="text-[10px] text-muted-foreground">
+                                {formatFileSize(file.size)}
+                              </div>
+                            </div>
+                            <Badge variant="secondary" className="text-[10px] font-normal">
+                              آماده آپلود
+                            </Badge>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
-          <DialogFooter>
-            <Button onClick={upsertTest} disabled={testSaving || testUploading} className="w-full gap-2 sm:w-auto">
+          <DialogFooter className="border-t border-border/60 pt-4">
+            <Button onClick={upsertTest} disabled={readOnly || testSaving || testUploading} className="w-full gap-2 sm:w-auto">
               {testSaving || testUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              {testUploading ? "در حال آپلود و خلاصه سازی..." : "ذخیره تست"}
+              {testUploading ? "در حال آپلود فایل..." : testMode === "exams_only" ? "ذخیره آزمایش" : "ذخیره تست"}
             </Button>
           </DialogFooter>
         </DialogContent>

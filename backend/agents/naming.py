@@ -3,6 +3,7 @@ import logging
 from agno.agent import Agent, RunOutput
 from agno.models.openai import OpenAIChat
 from billing.services import process_usage_charge
+from core.ai_provider import get_agno_openai_kwargs
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +11,7 @@ class TitleGenerator:
     def __init__(self):
         # We use gpt-4o-mini for speed and cost-efficiency
         self.agent = Agent(
-            model=OpenAIChat(id="gpt-4o"), # Suggest changing to gpt-4o-mini for cheaper titles
+            model=OpenAIChat(id="gpt-4o", **get_agno_openai_kwargs()), # Suggest changing to gpt-4o-mini for cheaper titles
             description="You are a specialized assistant that generates short Persian titles.",
             instructions="Generate a concise Persian title (max 4 words) for the provided conversation context. Do not use quotes. Do not include 'Title:'. Just the Persian text. focus on the user intention rather than the instructions and results.",
             markdown=False, 

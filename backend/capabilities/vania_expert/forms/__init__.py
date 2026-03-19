@@ -1,6 +1,6 @@
 # backend/capabilities/vania_doctor/forms/__init__.py
 
-from .base_profile import FORM_BASE_PROFILE
+from capabilities.vania_visitor.forms import FORM_BASE_PROFILE
 from .psychology import FORM_PSYCHOLOGY
 from .family import FORM_FAMILY
 from .marriage import FORM_MARRIAGE

@@ -15,11 +15,13 @@ interface Task {
   status: "PENDING" | "DONE";
   due_date?: string;
   doctor_id?: number;
+  case_id?: string | null;
 }
 
 interface Props {
   tasks: Task[];
   selectedDoctorId?: number | null;
+  selectedCaseId?: string;
   onEdit: (delta: any) => void;
 }
 
@@ -36,7 +38,7 @@ const DIMENSIONS: Record<string, { label: string; color: string }> = {
   "SOLITUDE": { label: "مدیریت تنهایی", color: "text-orange-400 bg-muted-50 border-muted-100" },
 };
 
-export function PatientRescueNetTab({ tasks, selectedDoctorId, onEdit }: Props) {
+export function PatientRescueNetTab({ tasks, selectedDoctorId, selectedCaseId, onEdit }: Props) {
   // Track loading state for individual task IDs to prevent double-clicks
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
 
@@ -61,7 +63,8 @@ export function PatientRescueNetTab({ tasks, selectedDoctorId, onEdit }: Props) 
           ...getAuthHeaders()
         },
         body: JSON.stringify({
-          doctor_id: selectedDoctorId || task.doctor_id || null
+          doctor_id: selectedDoctorId || task.doctor_id || null,
+          case_id: selectedCaseId || task.case_id || null
         })
       });
 

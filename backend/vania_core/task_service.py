@@ -6,7 +6,8 @@ from django.db import transaction
 from users.services import user_context_manager
 from users.models import UserContextEntry
 from .models import Notification, TreatmentConnection
-from .context_scope import migrate_legacy_to_scoped_once, build_scoped_key
+from .context_scope import migrate_legacy_to_scoped_once, migrate_doctor_scoped_to_case_once, build_scoped_key
+from .case_service import build_case_scoped_key
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,15 @@ class TaskService:
     CONTEXT_KEY = "patient_tasks"
 
     @staticmethod
-    def _get_or_create_task_list_entry(patient, doctor_id=None) -> UserContextEntry:
+    def _get_or_create_task_list_entry(patient, doctor_id=None, case_id=None) -> UserContextEntry:
+        if doctor_id and case_id:
+            return migrate_doctor_scoped_to_case_once(
+                patient=patient,
+                doctor_id=doctor_id,
+                case_id=case_id,
+                base_key=TaskService.CONTEXT_KEY,
+                default_factory=lambda: {"tasks": []},
+            )
         if doctor_id:
             return migrate_legacy_to_scoped_once(
                 patient=patient,
@@ -44,14 +53,14 @@ class TaskService:
         )
 
     @staticmethod
-    def assign_task(patient, doctor, text: str, due_date: str = None, dimension: str = "PERSONAL", doctor_id=None) -> dict:
+    def assign_task(patient, doctor, text: str, due_date: str = None, dimension: str = "PERSONAL", doctor_id=None, case_id=None) -> dict:
         """
         Assigns a new task to the patient.
         Triggers a notification for the patient.
         """
         with transaction.atomic():
             entry = UserContextEntry.objects.select_for_update().get(
-                pk=TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id).pk
+                pk=TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id, case_id=case_id).pk
             )
             
             current_data = entry.data
@@ -69,6 +78,8 @@ class TaskService:
                 "completed_at": None,
                 "due_date": due_date
             }
+            if case_id:
+                new_task["case_id"] = case_id
 
             current_data["tasks"].insert(0, new_task)
             entry.data = current_data
@@ -90,14 +101,14 @@ class TaskService:
             return new_task
 
     @staticmethod
-    def update_task_status(patient, task_id: str, status: str, reflection: str = None, doctor_id=None) -> bool:
+    def update_task_status(patient, task_id: str, status: str, reflection: str = None, doctor_id=None, case_id=None) -> bool:
         """
         Updates the status of a task (e.g. PENDING -> DONE).
         If status is DONE, it sends a notification to the assigned doctor.
         """
         with transaction.atomic():
             entry = UserContextEntry.objects.select_for_update().get(
-                pk=TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id).pk
+                pk=TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id, case_id=case_id).pk
             )
 
             tasks = entry.data.get("tasks", [])
@@ -163,10 +174,10 @@ class TaskService:
             return False
 
     @staticmethod
-    def edit_task(patient, task_id: str, text: str = None, due_date: str = None, doctor_id=None) -> bool:
+    def edit_task(patient, task_id: str, text: str = None, due_date: str = None, doctor_id=None, case_id=None) -> bool:
         with transaction.atomic():
             entry = UserContextEntry.objects.select_for_update().get(
-                pk=TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id).pk
+                pk=TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id, case_id=case_id).pk
             )
             tasks = entry.data.get("tasks", [])
             updated = False
@@ -184,10 +195,10 @@ class TaskService:
             return False
 
     @staticmethod
-    def delete_task(patient, task_id: str, doctor_id=None) -> bool:
+    def delete_task(patient, task_id: str, doctor_id=None, case_id=None) -> bool:
         with transaction.atomic():
             entry = UserContextEntry.objects.select_for_update().get(
-                pk=TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id).pk
+                pk=TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id, case_id=case_id).pk
             )
             
             original_count = len(entry.data.get("tasks", []))
@@ -199,6 +210,6 @@ class TaskService:
             return False
 
     @staticmethod
-    def get_patient_tasks(patient, doctor_id=None) -> list:
-        entry = TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id)
+    def get_patient_tasks(patient, doctor_id=None, case_id=None) -> list:
+        entry = TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id, case_id=case_id)
         return entry.data.get("tasks", [])

@@ -2,6 +2,7 @@
 from rest_framework import permissions
 from .models import TreatmentConnection
 from users.roles import is_expert
+from .case_service import CaseService
 
 class VaniaAccessControl:
     """
@@ -31,6 +32,26 @@ class VaniaAccessControl:
         Symmetric to doctor access, but semantic separation allows future divergence.
         """
         return VaniaAccessControl.verify_doctor_access(doctor, patient)
+
+    @staticmethod
+    def verify_expert_case_access(expert, patient, case_id: str) -> bool:
+        if not expert or not patient or not case_id:
+            return False
+        if not is_expert(expert):
+            return False
+        if not VaniaAccessControl.verify_doctor_access(expert, patient):
+            return False
+        return CaseService.expert_can_view_case(patient, expert, case_id)
+
+    @staticmethod
+    def verify_expert_case_edit_access(expert, patient, case_id: str) -> bool:
+        if not expert or not patient:
+            return False
+        if not is_expert(expert):
+            return False
+        if not VaniaAccessControl.verify_doctor_access(expert, patient):
+            return False
+        return CaseService.expert_can_edit_case(patient, expert, case_id)
 
 
 # --- DRF Permission Classes (For API Views) ---

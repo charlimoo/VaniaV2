@@ -39,6 +39,10 @@ PSYCHOLOGIST_AGENT_SLUGS = [
     "vania-expert-assistant",
 ]
 
+GENERAL_DOCTOR_AGENT_SLUGS = [
+    "vania-expert-assistant",
+]
+
 # --- 1. Subscription Plans ---
 # These define the tiers. Agents are linked here by their slugs.
 PLANS = [
@@ -170,6 +174,39 @@ PLANS = [
         included_agent_slugs=PSYCHOLOGIST_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["psychologist"],
+    ),
+    PlanDef(
+        slug="expert-general-doctor-30d",
+        name="اشتراک پزشکان عمومی ۳۰ روزه",
+        description="پلن پایه پزشکان عمومی با دسترسی به دستیار تخصصی پرونده.",
+        price=790000,
+        duration_days=30,
+        monthly_credits=1400,
+        included_agent_slugs=GENERAL_DOCTOR_AGENT_SLUGS,
+        audience="EXPERT",
+        eligible_expert_professions=["general_doctor"],
+    ),
+    PlanDef(
+        slug="expert-general-doctor-90d",
+        name="اشتراک پزشکان عمومی ۹۰ روزه",
+        description="پلن اقتصادی پزشکان عمومی برای استفاده سه‌ماهه.",
+        price=2090000,
+        duration_days=90,
+        monthly_credits=1700,
+        included_agent_slugs=GENERAL_DOCTOR_AGENT_SLUGS,
+        audience="EXPERT",
+        eligible_expert_professions=["general_doctor"],
+    ),
+    PlanDef(
+        slug="expert-general-doctor-365d",
+        name="اشتراک پزشکان عمومی سالانه",
+        description="پلن کامل پزشکان عمومی با صرفه اقتصادی سالانه.",
+        price=7590000,
+        duration_days=365,
+        monthly_credits=2200,
+        included_agent_slugs=GENERAL_DOCTOR_AGENT_SLUGS,
+        audience="EXPERT",
+        eligible_expert_professions=["general_doctor"],
     ),
 ]
 

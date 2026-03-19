@@ -26,6 +26,7 @@ interface CanvasState {
   // [FIX] New State to track the active patient context for API calls
   contextResourceId: string | null;
   contextDoctorId: string | null;
+  contextCaseId: string | null;
 
   // ... (Existing Actions)
   setInstances: (canvases: CanvasData[]) => void;
@@ -45,6 +46,7 @@ interface CanvasState {
   // [FIX] New Action
   setContextResourceId: (id: string | null) => void;
   setContextDoctorId: (id: string | null) => void;
+  setContextCaseId: (id: string | null) => void;
 }
 
 // --- Utility: Deep Merge ---
@@ -88,9 +90,11 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   // [FIX] Initialize as null
   contextResourceId: null,
   contextDoctorId: null,
+  contextCaseId: null,
 
   setContextResourceId: (id) => set({ contextResourceId: id }),
   setContextDoctorId: (id) => set({ contextDoctorId: id }),
+  setContextCaseId: (id) => set({ contextCaseId: id }),
 
   setInstances: (canvases) => {
     console.log(`[CanvasStore] 🌊 Hydrating ${canvases?.length || 0} instances from backend.`);
@@ -142,6 +146,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     
     set((state) => {
       const existing = state.instances[id];
+      const nextCaseId =
+        typeof delta?.selected_case_id === "string"
+          ? delta.selected_case_id
+          : typeof delta?.selected_case?.id === "string"
+            ? delta.selected_case.id
+            : state.contextCaseId;
       
       // SCENARIO 1: New Instance Creation (Self-Healing)
       if (!existing) {
@@ -160,11 +170,12 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
            console.log("3. New Instance State:", newInstance);
            console.groupEnd();
 
-           return {
+          return {
              instances: { ...state.instances, [id]: newInstance },
              orderedIds: [...state.orderedIds, id],
              activeTabId: forceFocus ? id : (state.activeTabId || id),
-             isPanelOpen: forceFocus ? true : state.isPanelOpen
+             isPanelOpen: forceFocus ? true : state.isPanelOpen,
+             contextCaseId: nextCaseId,
            };
         } else {
            console.warn("2. ⚠️ Warning: Missing instance and no metadata provided. Update ignored.");
@@ -200,6 +211,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         instances: updatedInstances,
         activeTabId: forceFocus ? id : state.activeTabId,
         isPanelOpen: forceFocus ? true : state.isPanelOpen,
+        contextCaseId: nextCaseId,
       };
     });
 
@@ -211,6 +223,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       // Get the resource ID from store state
       const resourceId = get().contextResourceId;
       const doctorId = get().contextDoctorId;
+      const caseId = get().contextCaseId;
 
       if (token) {
         const headers: Record<string, string> = {
@@ -225,6 +238,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         if (doctorId) {
             headers["X-Target-Expert-ID"] = doctorId;
             headers["X-Target-Doctor-ID"] = doctorId;
+        }
+        if (caseId) {
+            headers["X-Target-Case-ID"] = caseId;
         }
 
         fetch(`${API_BASE}/agent/canvas/instance/${id}`, {
@@ -264,7 +280,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         isPanelOpen: false,
         isLocked: false,
         contextResourceId: null,
-        contextDoctorId: null
+        contextDoctorId: null,
+        contextCaseId: null
     });
   },
   

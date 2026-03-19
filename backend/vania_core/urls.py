@@ -14,11 +14,15 @@ from .views import (
     MarkAllNotificationsReadView,
     ConversationListView,
     MessageThreadView,
+    CreateMeetLinkView,
     RoleVerificationRequestView,
     CompleteTaskView,
     DoctorRespondToRequestView,
     DoctorUpdatePatientStatusView,
     DoctorProfileView,
+    MyBaseProfileView,
+    CaseShareOptionsView,
+    CaseShareGrantView,
     TaskManagementView, 
     SessionManagementView,
     LocationListView,
@@ -33,11 +37,18 @@ from .views import (
     ClinicalTestFileUploadView,
     ClinicalTestFileDeleteView,
     ClinicalTestFileDownloadView,
+    CaseFilesView,
+    CaseFileDownloadView,
+    google_calendar_login,
+    google_calendar_callback,
 )
 
 app_name = 'vania_core'
 
 urlpatterns = [
+    path('google-calendar/login/', google_calendar_login, name='google-calendar-login'),
+    path('google-calendar/callback/', google_calendar_callback, name='google-calendar-callback'),
+
     # --- Existing Endpoints (Maintained for backward compatibility and other features) ---
     path('doctors/', PublicDoctorListView.as_view(), name='public-doctor-list'),
     path('experts/', PublicDoctorListView.as_view(), name='public-expert-list'),
@@ -56,6 +67,7 @@ urlpatterns = [
     path('notifications/read-all/', MarkAllNotificationsReadView.as_view(), name='notification-mark-all-read'),
     path('messages/inbox/', ConversationListView.as_view(), name='message-inbox'),
     path('messages/<int:other_user_id>/', MessageThreadView.as_view(), name='message-thread'),
+    path('messages/<int:other_user_id>/create-meet/', CreateMeetLinkView.as_view(), name='message-create-meet'),
     path('role-verification/', RoleVerificationRequestView.as_view(), name='role-verification-request'),
     path('my-tasks/<str:task_id>/complete/', CompleteTaskView.as_view(), name='complete-my-task'),
     path('my-patients/requests/<int:connection_id>/respond/', DoctorRespondToRequestView.as_view(), name='doctor-respond-to-request'),
@@ -63,6 +75,10 @@ urlpatterns = [
     path('my-patients/<int:connection_id>/status/', DoctorUpdatePatientStatusView.as_view(), name='doctor-update-patient-status'),
     path('my-visitors/<int:connection_id>/status/', DoctorUpdatePatientStatusView.as_view(), name='expert-update-visitor-status'),
     path('my-profile/', DoctorProfileView.as_view(), name='doctor-my-profile'),
+    path('my-base-profile/', MyBaseProfileView.as_view(), name='visitor-my-base-profile'),
+    path('cases/<str:case_id>/share-options/', CaseShareOptionsView.as_view(), name='case-share-options'),
+    path('cases/<str:case_id>/shares/', CaseShareGrantView.as_view(), name='case-share-grant'),
+    path('cases/<str:case_id>/shares/<int:expert_id>/', CaseShareGrantView.as_view(), name='case-share-revoke'),
     path('tasks/manage/', TaskManagementView.as_view(), name='task-create'),
     path('tasks/manage/<str:task_id>/', TaskManagementView.as_view(), name='task-update-delete'),
     path('sessions/manage/', SessionManagementView.as_view(), name='session-create'),
@@ -91,4 +107,7 @@ urlpatterns = [
     path('tests/<str:test_id>/file/', ClinicalTestFileUploadView.as_view(), name='clinical-test-file-upload'),
     path('tests/<str:test_id>/file/delete/', ClinicalTestFileDeleteView.as_view(), name='clinical-test-file-delete'),
     path('tests/<str:test_id>/file/download/', ClinicalTestFileDownloadView.as_view(), name='clinical-test-file-download'),
+    path('case-files/', CaseFilesView.as_view(), name='case-files'),
+    path('case-files/<str:file_id>/', CaseFilesView.as_view(), name='case-file-delete'),
+    path('case-files/<str:file_id>/download/', CaseFileDownloadView.as_view(), name='case-file-download'),
 ]

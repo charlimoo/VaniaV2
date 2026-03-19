@@ -7,11 +7,34 @@ import { Badge } from "@/components/ui/badge";
 interface Props {
   greeting: string;
   activeGoals: string[];
+  clinicalSummary?: string;
   formsTestsAnalysis: string;
+  forms?: any[];
+  tests?: any[];
+  showClinicalSummary?: boolean;
+  showFormsTestsAnalysis?: boolean;
+  showForms?: boolean;
+  showTests?: boolean;
 }
 
-export function PatientHomeTab({ greeting, activeGoals, formsTestsAnalysis }: Props) {
-  
+export function PatientHomeTab({
+  greeting,
+  activeGoals,
+  clinicalSummary = "",
+  formsTestsAnalysis,
+  forms = [],
+  tests = [],
+  showClinicalSummary = false,
+  showFormsTestsAnalysis = true,
+  showForms = true,
+  showTests = true,
+}: Props) {
+  const visibleForms = (forms || []).filter((form) => {
+    const formKey = form?.form_key || form?.data?.form_key;
+    return formKey !== "BASE_PROFILE_V1";
+  });
+  const visibleTests = showTests ? tests || [] : [];
+
   return (
     <div className="space-y-6 pb-10 animate-in fade-in slide-in-from-right-2 duration-300 font-sans">
       
@@ -66,7 +89,20 @@ export function PatientHomeTab({ greeting, activeGoals, formsTestsAnalysis }: Pr
         )}
       </section>
 
-      {formsTestsAnalysis?.trim() && (
+      {showClinicalSummary && clinicalSummary?.trim() && (
+        <section>
+          <div className="flex items-center justify-between mb-3 px-1">
+            <h3 className="text-sm font-bold text-foreground">علت مراجع و مشاهدات</h3>
+          </div>
+          <Card className="border-muted-100 shadow-sm">
+            <CardContent className="p-4 text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
+              {clinicalSummary}
+            </CardContent>
+          </Card>
+        </section>
+      )}
+
+      {showFormsTestsAnalysis && formsTestsAnalysis?.trim() && (
         <section>
           <div className="flex items-center justify-between mb-3 px-1">
             <h3 className="text-sm font-bold text-foreground">تحلیل بالینی تست ها و فرم ها</h3>
@@ -78,6 +114,52 @@ export function PatientHomeTab({ greeting, activeGoals, formsTestsAnalysis }: Pr
           </Card>
         </section>
       )}
+
+      {(showForms || showTests) ? (
+      <section>
+        <div className="flex items-center justify-between mb-3 px-1">
+          <h3 className="text-sm font-bold text-foreground">
+            {showForms && showTests ? "فرم‌ها و تست‌ها" : showForms ? "فرم‌ها" : "آزمایش‌ها"}
+          </h3>
+          <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
+            {((showForms ? visibleForms?.length : 0) || 0) + (visibleTests?.length || 0)} مورد
+          </Badge>
+        </div>
+        <div className="grid gap-3">
+          {showForms ? visibleForms.map((form, index) => (
+            <Card key={`form-${form.id || index}`} className="border-muted-100 shadow-sm">
+              <CardContent className="p-4">
+                <div className="text-xs font-bold">{form.data?.form_title || form.type || form.form_key}</div>
+                <div className="mt-2 text-[11px] text-muted-foreground whitespace-pre-wrap">
+                  {Object.entries(form.data || {})
+                    .filter(([key]) => !["form_key", "form_title", "handler", "submitted_by_doctor_id", "submission_timestamp", "case_id", "visibility_scope"].includes(key))
+                    .slice(0, 4)
+                    .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join("، ") : String(value)}`)
+                    .join("\n")}
+                </div>
+              </CardContent>
+            </Card>
+          )) : null}
+          {visibleTests.map((test) => (
+            <Card key={`test-${test.id}`} className="border-muted-100 shadow-sm">
+              <CardContent className="p-4">
+                <div className="text-xs font-bold">{test.title}</div>
+                <div className="mt-2 text-[11px] text-muted-foreground whitespace-pre-wrap">
+                  {test.result_text || test.result_summary || "متن نتیجه هنوز ثبت نشده است."}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+          {((showForms ? visibleForms?.length : 0) || 0) === 0 && (visibleTests?.length || 0) === 0 && (
+            <div className="flex flex-col items-center justify-center py-10 bg-muted/10 rounded-2xl border border-dashed border-muted-foreground/20 text-center">
+              <p className="text-xs text-muted-foreground">
+                {showForms && showTests ? "هنوز فرم یا تستی برای این بخش ثبت نشده است." : showForms ? "هنوز فرمی برای این بخش ثبت نشده است." : "هنوز آزمایشی برای این بخش ثبت نشده است."}
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+      ) : null}
 
     </div>
   );

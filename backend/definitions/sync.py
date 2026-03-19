@@ -290,6 +290,19 @@ class DefinitionSync:
                     "sample_code": "LAW-44556",
                 },
             },
+            {
+                "slug": "general_doctor",
+                "name": "پزشک عمومی",
+                "description": "پزشک عمومی",
+                "validation_kind": "mock_general_doctor",
+                "validation_config": {
+                    "accepted_codes": ["123456"],
+                    "credential_label": "کد اعتبارسنجی پزشک عمومی",
+                    "credential_placeholder": "فعلا کد 123456 را وارد کنید",
+                    "credential_help": "تا زمان اتصال به اعتبارسنجی اصلی، برای پزشک عمومی از کد 123456 استفاده کنید.",
+                    "sample_code": "123456",
+                },
+            },
         ]
         for item in professions:
             ExpertProfession.objects.update_or_create(

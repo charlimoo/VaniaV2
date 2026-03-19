@@ -18,24 +18,21 @@ class PatientManagerCanvas(BaseCanvas):
     @classmethod
     def get_default_state(cls) -> Dict[str, Any]:
         return {
-            # UI Control
-            "is_active": False,        # True only when a patient is selected in chat
-            "active_tab": "OVERVIEW",  # Options: OVERVIEW, HISTORY, FORMS, TASKS
-            
-            # Patient Identity
-            "patient_profile": None,   # { id, name, phone, age, avatar_url }
-            
-            # Clinical Data
-            "sessions": [],            # List of session log objects
-            "tasks": [],               # List of active homework/tasks
-            "forms": [],               # List of filled forms meta-data
-            "tests": [],               # List of prescribed psychology tests
+            "is_active": False,
+            "active_view": "CASES",
+            "active_tab": "CASE_OVERVIEW",
+            "patient_profile": None,
+            "base_profile": {
+                "form": {},
+                "forms": [],
+                "tests": [],
+            },
+            "cases": [],
+            "selected_case_id": None,
+            "selected_case": None,
             "tests_catalog": [],       # Static catalog used to prescribe tests
-            "forms_tests_analysis": "",
-            
-            # UX Hints
-            "last_update": None,       # Timestamp of last sync
-            "notification": None       # Ephemeral messages (e.g. "Task Added")
+            "available_forms": [],
+            "ui_signal": None,
         }
 
     @classmethod
@@ -45,9 +42,11 @@ class PatientManagerCanvas(BaseCanvas):
             "properties": {
                 "active_tab": {
                     "type": "string", 
-                    "enum": ["OVERVIEW", "HISTORY", "FORMS", "TASKS"]
+                    "enum": ["CASE_OVERVIEW", "ROADMAP", "RESCUENET", "MEDICATIONS", "APPENDIX", "FILES"]
                 },
                 "is_active": {"type": "boolean"},
+                "active_view": {"type": "string"},
+                "selected_case_id": {"type": ["string", "null"]},
                 "patient_profile": {
                     "type": "object",
                     "properties": {

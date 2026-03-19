@@ -13,14 +13,19 @@ from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.qdrant import Qdrant
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.models.openai import OpenAIChat
-from agno.session.summary import SessionSummaryManager
 
 # --- Service Imports ---
 from services.models import AgentService
 from services.tool_factory import ToolFactory
-from services.rag_service import get_sanitized_table_name
+from services.rag_service import get_sanitized_table_name, get_session_knowledge, session_knowledge_exists
 from services.models_canvas import CanvasType, CanvasInstance
 from services.access_service import access_service
+from core.ai_provider import get_agno_openai_kwargs
+from users.roles import is_expert
+from vania_core.profile_snapshots import (
+    format_expert_profile_context,
+    format_visitor_profile_context,
+)
 
 # --- Capability System ---
 from capabilities.registry import CapabilityRegistry
@@ -30,6 +35,8 @@ from .context import resource_context
 
 # --- Agent Import ---
 from .service_agent import ServiceAgent
+from .session_metadata import apply_session_metadata_defaults, get_session_knowledge_flag, set_session_knowledge_metadata
+from .session_summary import TimedSessionSummaryManager
 from fastapi import Request
 
 # Configure Logger
@@ -43,6 +50,7 @@ NATIVE_REASONING_MODELS = {
 }
 
 NONE_EFFORT_MODELS = {"gpt-5.1", "gpt-5.2", "gpt5.1", "gpt5.2", "gpt-5", "gpt5"}
+
 
 def create_agent_for_service(user, service_slug: str, session_id: str, request: Optional[Request] = None ) -> ServiceAgent:
     """
@@ -145,6 +153,9 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
         user_display_name = u_real_name if u_real_name else u_phone
         
         user_context_prompt = [f"User Name: {user_display_name}", f"User Phone: {u_phone}"]
+        user_context_prompt.extend(format_expert_profile_context(user))
+        if not is_expert(user):
+            user_context_prompt.extend(format_visitor_profile_context(user))
         if user_context_prompt:
             context_block = "\n### USER CONTEXT (System Injected)\n" + "\n".join([f"- {line}" for line in user_context_prompt])
             dynamic_instructions.append(context_block)
@@ -174,7 +185,7 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
     model_id_lower = (target_model_id or "gpt-4o").lower()
     is_native_reasoning = any(m in model_id_lower for m in NATIVE_REASONING_MODELS)
     
-    llm_kwargs = {"id": target_model_id}
+    llm_kwargs = {"id": target_model_id, **get_agno_openai_kwargs()}
     
     user_effort_override = request.headers.get("x-reasoning-effort") if request else None
     user_reasoning_override = request.headers.get("x-enable-reasoning") if request else None
@@ -198,25 +209,7 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
     llm_model = OpenAIChat(**llm_kwargs)
 
     # =========================================================================
-    # 6. Knowledge Base (RAG)
-    # =========================================================================
-    agent_knowledge = None
-    kb = service.knowledge_bases.first()
-    if kb:
-        try:
-            table_name = get_sanitized_table_name(kb.name)
-            vector_db = Qdrant(
-                collection=table_name,
-                url=settings.QDRANT_URL,
-                api_key=settings.QDRANT_API_KEY,
-                embedder=OpenAIEmbedder(id="text-embedding-3-small"),
-            )
-            agent_knowledge = Knowledge(vector_db=vector_db)
-        except Exception as e:
-            logger.error(f"❌ [Factory] Knowledge initialization failed: {e}")
-
-    # =========================================================================
-    # 7. Storage Engine
+    # 6. Storage Engine
     # =========================================================================
     if "sqlite" in settings.DATABASE_CONNECTION_STRING:
         storage_instance = SqliteDb(
@@ -230,12 +223,65 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
         )
 
     # =========================================================================
+    # 7. Knowledge Base (RAG)
+    # =========================================================================
+    agent_knowledge = None
+    has_session_knowledge = False
+    try:
+        session = get_session_safe(storage_instance, session_id, str(user.id))
+    except Exception as e:
+        session = None
+        logger.warning(f"⚠️ [Factory] Session lookup failed for {session_id}: {e}")
+
+    if session:
+        knowledge_flag = get_session_knowledge_flag(session)
+        apply_session_metadata_defaults(session)
+        if knowledge_flag is None:
+            try:
+                has_session_knowledge = session_knowledge_exists(session_id)
+                set_session_knowledge_metadata(session, has_session_knowledge, 1 if has_session_knowledge else 0)
+                if hasattr(storage_instance, "upsert_session"):
+                    storage_instance.upsert_session(session=session)
+                else:
+                    storage_instance.upsert(session=session)
+            except Exception as e:
+                logger.warning(f"⚠️ [Factory] Session knowledge backfill failed for {session_id}: {e}")
+        else:
+            has_session_knowledge = knowledge_flag
+
+    if has_session_knowledge:
+        try:
+            agent_knowledge = get_session_knowledge(session_id)
+            dynamic_instructions.append(
+                "### ATTACHED FILE KNOWLEDGE (System Injected)\n"
+                "If the user asks about an uploaded or attached file in this thread, you must use the "
+                "`search_knowledge_base` tool before answering."
+            )
+        except Exception as e:
+            logger.error(f"❌ [Factory] Session knowledge initialization failed: {e}")
+    else:
+        kb = service.knowledge_bases.first()
+        if kb:
+            try:
+                table_name = get_sanitized_table_name(kb.name)
+                vector_db = Qdrant(
+                    collection=table_name,
+                    url=settings.QDRANT_URL,
+                    api_key=settings.QDRANT_API_KEY,
+                    embedder=OpenAIEmbedder(id="text-embedding-3-small", **get_agno_openai_kwargs()),
+                )
+                agent_knowledge = Knowledge(vector_db=vector_db)
+            except Exception as e:
+                logger.error(f"❌ [Factory] Knowledge initialization failed: {e}")
+
+    # =========================================================================
     # 7.5 Session Summary Manager
     # =========================================================================
     summary_manager = None
     if getattr(service, 'enable_session_summaries', False):
-        summary_manager = SessionSummaryManager(
-            model=OpenAIChat(id="gpt-4o-mini")
+        summary_manager = TimedSessionSummaryManager(
+            model=OpenAIChat(id="gpt-4o-mini", **get_agno_openai_kwargs()),
+            log_prefix=f"[Run {session_id}]",
         )
         logger.debug(f"   [Factory] 🧠 Session Summaries enabled for {session_id}")
 

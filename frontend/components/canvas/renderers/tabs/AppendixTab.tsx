@@ -11,7 +11,9 @@ import { AppendixDownloadButton } from "./appendix/AppendixDownloadButton";
 interface Props {
   library: ThoughtAppendix;
   patientId: number;
+  caseId?: string;
   onEdit: (delta: any) => void;
+  readOnly?: boolean;
 }
 
 const CONFIG: Record<ResourceType, { icon: any, label: string, color: string }> = {
@@ -20,7 +22,7 @@ const CONFIG: Record<ResourceType, { icon: any, label: string, color: string }> 
   "POEM": { icon: Feather, label: "شعر", color: "text-purple-600 bg-purple-100 border-purple-200" }
 };
 
-export function AppendixTab({ library, patientId, onEdit }: Props) {
+export function AppendixTab({ library, patientId, caseId, onEdit, readOnly = false }: Props) {
   
   const resources = library?.resources || [];
 
@@ -46,15 +48,16 @@ export function AppendixTab({ library, patientId, onEdit }: Props) {
             </p>
         </div>
         
-        <AddResourceDialog 
+        {!readOnly ? <AddResourceDialog 
             patientId={patientId}
+            caseId={caseId}
             onSuccess={handleResourceAdded}
             trigger={
                 <Button variant="outline" className="gap-2">
                     <Plus className="w-4 h-4" /> افزودن اولین منبع
                 </Button>
             }
-        />
+        /> : null}
         <AppendixDownloadButton library={library} patientId={patientId} />
       </div>
     );
@@ -66,10 +69,11 @@ export function AppendixTab({ library, patientId, onEdit }: Props) {
       {/* Header Action */}
       <div className="mb-2 flex flex-wrap justify-end gap-2">
          <AppendixDownloadButton library={library} patientId={patientId} />
-         <AddResourceDialog 
+         {!readOnly ? <AddResourceDialog 
             patientId={patientId}
+            caseId={caseId}
             onSuccess={handleResourceAdded}
-         />
+         /> : null}
       </div>
 
       {resources.map((res) => {

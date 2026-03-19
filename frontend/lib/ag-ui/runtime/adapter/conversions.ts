@@ -9,6 +9,7 @@ export type AgUiBinaryInput = {
   data?: string; 
   url?: string; 
   id?: string;
+  filename?: string;
 };
 
 export type AgUiMessage =
@@ -17,6 +18,12 @@ export type AgUiMessage =
       role: "user";
       content: string | Array<AgUiTextInput | AgUiBinaryInput>;
       name?: string;
+      attachmentsMeta?: Array<{
+        id: string;
+        name: string;
+        contentType: string;
+        type: "image" | "document" | "file";
+      }>;
     }
   | {
       id: string;
@@ -92,8 +99,9 @@ export const toAgUiMessages = (
            if (part.image) {
              parts.push({ 
                type: "binary", 
-               mimeType: "image/jpeg", // Defaulting to jpeg for base64
-               data: part.image.split(',')[1] || part.image // Remove data:image/... prefix if present
+                mimeType: "image/jpeg", // Defaulting to jpeg for base64
+               data: part.image.split(',')[1] || part.image, // Remove data:image/... prefix if present
+               filename: message.attachments?.[0]?.file?.name,
              });
            }
         }
@@ -112,7 +120,8 @@ export const toAgUiMessages = (
                  parts.push({ 
                    type: "binary", 
                    mimeType: attachment.file?.type || "image/jpeg",
-                   data: contentPart.image.split(',')[1] || contentPart.image 
+                   data: contentPart.image.split(',')[1] || contentPart.image,
+                   filename: attachment.file?.name,
                  });
             }
             
@@ -127,10 +136,7 @@ export const toAgUiMessages = (
                         mimeType: attachment.file.type || "application/octet-stream",
                         // Strip Data URL prefix if present (e.g. "data:text/csv;base64,...")
                         data: rawBase64.includes(',') ? rawBase64.split(',')[1] : rawBase64,
-                        // Pass filename so the Agent knows what it is
-                        // Note: You might need to update AgUiBinaryInput type definition to include 'filename'
-                        // or pass it in a metadata field if strict.
-                        // For now, let's assume protocol accepts generic fields or uses mime.
+                        filename: attachment.file.name,
                     });
                 }
             }
@@ -207,6 +213,16 @@ export const toAgUiMessages = (
       role: role as "user" | "system",
       content: finalContent, // Can be string or Array<Input>
       ...(message.name ? { name: message.name } : {}),
+      ...(role === "user" && message.attachments?.length
+        ? {
+            attachmentsMeta: message.attachments.map((attachment: any) => ({
+              id: attachment.id,
+              name: attachment.name,
+              contentType: attachment.contentType,
+              type: attachment.type,
+            })),
+          }
+        : {}),
     });
   }
 

@@ -1,13 +1,12 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileText, Save, Loader2, CheckCircle, BrainCircuit } from "lucide-react";
+import { FileText, Loader2, BrainCircuit, Expand, Save } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
-import { PatientManagerState } from "@/lib/types/vania";
 import { useAssistantRuntime } from "@assistant-ui/react";
 
 interface PatientProfile {
@@ -22,9 +21,19 @@ interface ProfileTabProps {
   formsTestsAnalysis: string;
   forms: any[];
   tests: any[];
-  onEdit: (delta: Partial<PatientManagerState>) => void;
+  onEdit: (delta: any) => void;
   isLocked: boolean;
+  showClinicalSummary?: boolean;
+  showFormsTestsAnalysis?: boolean;
 }
+
+type ModalType = "summary" | "analysis" | null;
+
+const previewText = (value: string, placeholder: string) => {
+  const text = (value || "").trim();
+  if (!text) return placeholder;
+  return text.length > 180 ? `${text.slice(0, 180)}...` : text;
+};
 
 export function ProfileTab({
   patientProfile,
@@ -34,11 +43,14 @@ export function ProfileTab({
   tests,
   onEdit,
   isLocked,
+  showClinicalSummary = true,
+  showFormsTestsAnalysis = true,
 }: ProfileTabProps) {
   const runtime = useAssistantRuntime();
 
   const [summary, setSummary] = useState(clinicalSummary || "");
   const [analysis, setAnalysis] = useState(formsTestsAnalysis || "");
+  const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -52,31 +64,36 @@ export function ProfileTab({
 
   const isSummaryDirty = summary !== (clinicalSummary || "");
   const isAnalysisDirty = analysis !== (formsTestsAnalysis || "");
-  const isDirty = isSummaryDirty || isAnalysisDirty;
+  const canGenerateAnalysis = showFormsTestsAnalysis && (forms?.length || 0) > 0 && (tests?.length || 0) > 0;
 
-  const canGenerateAnalysis = (forms?.length || 0) > 0 && (tests?.length || 0) > 0;
-
-  const handleSave = () => {
-    if (!isDirty || isLocked) return;
-
+  const saveSummary = () => {
+    if (!isSummaryDirty || isLocked) return;
     setIsSaving(true);
-    const updatePayload: Partial<PatientManagerState> = {};
-
-    if (isSummaryDirty) {
-      updatePayload.clinical_summary = summary;
-    }
-    if (isAnalysisDirty) {
-      updatePayload.forms_tests_analysis = analysis;
-    }
-
     toast.promise(
       new Promise<void>((resolve) => {
-        onEdit(updatePayload);
+        onEdit({ clinical_summary: summary });
         setTimeout(() => resolve(), 700);
       }),
       {
-        loading: "در حال ذخیره تغییرات...",
-        success: "پرونده مراجع با موفقیت به روزرسانی شد.",
+        loading: "در حال ذخیره متن...",
+        success: "متن پرونده ذخیره شد.",
+        error: "خطا در ذخیره سازی.",
+        finally: () => setIsSaving(false),
+      }
+    );
+  };
+
+  const saveAnalysis = () => {
+    if (!isAnalysisDirty || isLocked) return;
+    setIsSaving(true);
+    toast.promise(
+      new Promise<void>((resolve) => {
+        onEdit({ forms_tests_analysis: analysis });
+        setTimeout(() => resolve(), 700);
+      }),
+      {
+        loading: "در حال ذخیره تحلیل...",
+        success: "تحلیل بالینی ذخیره شد.",
         error: "خطا در ذخیره سازی.",
         finally: () => setIsSaving(false),
       }
@@ -155,34 +172,105 @@ export function ProfileTab({
   };
 
   return (
-    <div className="space-y-8 pb-20 animate-in fade-in slide-in-from-right-2 duration-300 sm:pb-10">
-      <section>
-        <div className="grid gap-2">
-          <Label htmlFor="clinical-summary" className="text-xs font-bold text-muted-foreground flex items-center gap-2">
-            <FileText className="w-4 h-4" /> علت مراجع و مشاهدات
-          </Label>
+    <div className="space-y-4 animate-in fade-in slide-in-from-right-2 duration-300">
+      <div className="flex items-center justify-between">
+        <div className="text-sm font-semibold">خلاصه پرونده</div>
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+          <Badge variant="outline">{forms?.length || 0} فرم</Badge>
+          <Badge variant="outline">{tests?.length || 0} تست</Badge>
+          <span>{patientProfile.name}</span>
+        </div>
+      </div>
+
+      <div className={`grid gap-4 ${showClinicalSummary && showFormsTestsAnalysis ? "xl:grid-cols-2" : ""}`}>
+        {showClinicalSummary ? (
+        <section className="rounded-2xl border border-border/60 bg-background/70 p-4">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-bold text-muted-foreground">
+                <FileText className="w-4 h-4" />
+                علت مراجع و مشاهدات
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setActiveModal("summary")}>
+              <Expand className="w-3.5 h-3.5" />
+              مشاهده و ویرایش
+            </Button>
+          </div>
+
+          <div className="min-h-[132px] rounded-xl border border-border/50 bg-muted/10 p-4 text-sm leading-7 text-foreground/85">
+            {previewText(summary, "هنوز متنی برای شرح حال و مشاهدات ثبت نشده است.")}
+          </div>
+        </section>
+        ) : null}
+
+        {showFormsTestsAnalysis ? (
+        <section className="rounded-2xl border border-border/60 bg-background/70 p-4">
+          <div className="mb-3 flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-bold text-muted-foreground">
+                <BrainCircuit className="w-4 h-4" />
+                تحلیل بالینی تست‌ها و فرم‌ها
+              </div>
+            </div>
+            <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs" onClick={() => setActiveModal("analysis")}>
+              <Expand className="w-3.5 h-3.5" />
+              مشاهده و ویرایش
+            </Button>
+          </div>
+
+          <div className="min-h-[132px] rounded-xl border border-border/50 bg-muted/10 p-4 text-sm leading-7 text-foreground/85">
+            {previewText(
+              analysis,
+              canGenerateAnalysis
+                ? "هنوز تحلیلی ثبت نشده است."
+                : "برای تولید تحلیل، حداقل یک فرم و یک تست لازم است."
+            )}
+          </div>
+        </section>
+        ) : null}
+      </div>
+
+      <Dialog open={showClinicalSummary && activeModal === "summary"} onOpenChange={(open) => !open && setActiveModal(null)}>
+        <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>علت مراجع و مشاهدات</DialogTitle>
+            <DialogDescription>شرح حال، مشاهده‌ها، و فرمول‌بندی اولیه مسئله را در این بخش ثبت کنید.</DialogDescription>
+          </DialogHeader>
 
           <Textarea
-            id="clinical-summary"
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
-            placeholder="شرح حال، شکایت اصلی، مشاهدات و فرمول بندی مشکل را در اینجا وارد کنید..."
-            className="min-h-[220px] text-sm leading-relaxed"
+            placeholder="شرح حال، شکایت اصلی، و مشاهدات بالینی..."
+            className="min-h-[360px] resize-y text-sm leading-7"
             disabled={isLocked || isSaving}
           />
-        </div>
-      </section>
 
-      <section>
-        <div className="grid gap-2">
-          <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
-            <Label htmlFor="forms-tests-analysis" className="text-xs font-bold text-muted-foreground flex items-center gap-2">
-              <BrainCircuit className="w-4 h-4" /> تحلیل بالینی تست ها و فرم ها
-            </Label>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setActiveModal(null)}>بستن</Button>
+            <Button onClick={saveSummary} disabled={!isSummaryDirty || isLocked || isSaving}>
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              ذخیره
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showFormsTestsAnalysis && activeModal === "analysis"} onOpenChange={(open) => !open && setActiveModal(null)}>
+        <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-4xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>تحلیل بالینی تست‌ها و فرم‌ها</DialogTitle>
+            <DialogDescription>تحلیل یکپارچه فرم‌ها و تست‌ها را در این بخش ویرایش یا با کمک هوش مصنوعی تولید کنید.</DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-[11px] text-muted-foreground">
+              {canGenerateAnalysis ? "امکان تولید تحلیل خودکار فعال است." : "برای تولید تحلیل، حداقل یک فرم و یک تست لازم است."}
+            </div>
             <Button
               type="button"
               variant="outline"
-              className="h-8 w-full text-xs gap-1.5 sm:w-auto"
+              className="h-8 text-xs gap-1.5"
               onClick={handleGenerateAnalysisByAgent}
               disabled={!canGenerateAnalysis || isLocked || isGenerating}
             >
@@ -192,36 +280,22 @@ export function ProfileTab({
           </div>
 
           <Textarea
-            id="forms-tests-analysis"
             value={analysis}
             onChange={(e) => setAnalysis(e.target.value)}
-            placeholder={
-              canGenerateAnalysis
-                ? "تحلیل بالینی ترکیبی فرم ها و تست ها در اینجا ذخیره می شود..."
-                : "برای تولید تحلیل، حداقل یک فرم و یک تست لازم است."
-            }
-            className="min-h-[200px] text-sm leading-relaxed"
+            placeholder="تحلیل بالینی ترکیبی فرم‌ها و تست‌ها..."
+            className="min-h-[360px] resize-y text-sm leading-7"
             disabled={isLocked || isSaving}
           />
-        </div>
-      </section>
 
-      <div className="sticky bottom-0 z-10 -mx-3 flex flex-wrap items-center justify-between gap-2 border-t bg-background/90 px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] backdrop-blur-sm sm:-mx-6 sm:gap-3 sm:px-6">
-        <div
-          className={cn(
-            "flex items-center gap-1.5 text-xs transition-opacity duration-300",
-            isDirty ? "text-amber-600" : "text-emerald-600",
-            isLocked && "opacity-50"
-          )}
-        >
-          {isDirty ? <>تغییرات ذخیره نشده</> : <><CheckCircle className="w-3.5 h-3.5" /> ذخیره شده</>}
-        </div>
-
-        <Button className="h-9 w-full text-xs gap-1.5 sm:w-auto" onClick={handleSave} disabled={isSaving || isLocked || !isDirty}>
-          {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          ذخیره تغییرات
-        </Button>
-      </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setActiveModal(null)}>بستن</Button>
+            <Button onClick={saveAnalysis} disabled={!isAnalysisDirty || isLocked || isSaving}>
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              ذخیره
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

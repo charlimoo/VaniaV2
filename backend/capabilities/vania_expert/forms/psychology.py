@@ -72,7 +72,7 @@ FORM_PSYCHOLOGY = {
         
         {"name": "sleep_status", "label": "وضعیت و کیفیت خواب", "type": "text"},
         {"name": "sexual_status", "label": "رابطه جنسی و کیفیت آن", "type": "text"},
-        {"name": "appetite_weight", "label": "تغذیه و وزن", "type": "text"},
+        {"name": "appetite_height_weight", "label": "تغذیه و قد و وزن", "type": "text"},
 
         {"name": "dsm5_diagnosis", "label": "تشخیص نهایی (DSM-5)", "type": "text"},
         {"name": "dsm5_code", "label": "کد تشخیص", "type": "text"},

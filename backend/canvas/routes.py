@@ -12,8 +12,11 @@ from users.models import CustomUser
 from services.models import AgentService
 from services.models_canvas import CanvasInstance
 from canvas.manager import canvas_manager
-from agents.context import resource_context, selected_doctor_context
+from agents.context import resource_context, selected_doctor_context, selected_case_context
 from vania_core.services import ProfileService 
+from vania_core.case_service import CaseService
+from vania_core.medication_service import MedicationService
+from users.roles import is_expert
 # [FIX] Import Registry to use in sync helper
 from agents.factory import CapabilityRegistry, CanvasType
 
@@ -66,11 +69,12 @@ def get_instance_for_update(instance_id: str, user_id: int) -> Optional[CanvasIn
 
 # [FIX] New Sync Helper for Hydration Logic
 @sync_to_async
-def perform_hydration(agent_id: str, session_id: str, resource_id: str, selected_doctor_id: str, user: CustomUser):
+def perform_hydration(agent_id: str, session_id: str, resource_id: str, selected_doctor_id: str, selected_case_id: str, user: CustomUser):
     """
     Executes the hydration logic synchronously (DB safe) and returns nothing.
     """
     doctor_token = None
+    case_token = None
     try:
         logger.info(
             f"🧪 [CanvasRoutes] perform_hydration session={session_id} agent={agent_id} "
@@ -78,6 +82,8 @@ def perform_hydration(agent_id: str, session_id: str, resource_id: str, selected
         )
         if selected_doctor_id:
             doctor_token = selected_doctor_context.set(selected_doctor_id)
+        if selected_case_id:
+            case_token = selected_case_context.set(selected_case_id)
         service = AgentService.objects.get(slug=agent_id)
         if not service:
             return
@@ -131,6 +137,8 @@ def perform_hydration(agent_id: str, session_id: str, resource_id: str, selected
     finally:
         if doctor_token:
             selected_doctor_context.reset(doctor_token)
+        if case_token:
+            selected_case_context.reset(case_token)
 
 # ==========================================
 # 3. ENDPOINTS
@@ -154,8 +162,10 @@ async def get_canvas_state(
     
     header_val = request.headers.get("X-Target-Resource-ID")
     header_doctor = request.headers.get("X-Target-Expert-ID") or request.headers.get("X-Target-Doctor-ID")
+    header_case = request.headers.get("X-Target-Case-ID")
     logger.info(f"   [Debug] Header X-Target-Resource-ID: {header_val}")
     logger.info(f"   [Debug] Header X-Target-Doctor-ID: {header_doctor}")
+    logger.info(f"   [Debug] Header X-Target-Case-ID: {header_case}")
     logger.info(f"   [Debug] Query patient_id: {patient_id}")
     logger.info(f"   [Debug] Query visitor_id: {visitor_id}")
     logger.info(f"   [Debug] Query doctor_id: {doctor_id}")
@@ -163,6 +173,7 @@ async def get_canvas_state(
     
     resource_id = header_val
     scoped_doctor_id = header_doctor
+    scoped_case_id = header_case or request.query_params.get("case_id")
     if not resource_id and (visitor_id or patient_id):
         resource_id = visitor_id or patient_id
     if not scoped_doctor_id and (expert_id or doctor_id):
@@ -174,6 +185,9 @@ async def get_canvas_state(
     if scoped_doctor_id:
         logger.info(f"   -> Context Doctor ID Set: {scoped_doctor_id}")
         doctor_token = selected_doctor_context.set(scoped_doctor_id)
+    if scoped_case_id:
+        logger.info(f"   -> Context Case ID Set: {scoped_case_id}")
+        case_token = selected_case_context.set(scoped_case_id)
     
     try:
         canvases_data = await fetch_session_canvases(session_id)
@@ -187,17 +201,29 @@ async def get_canvas_state(
                 if not state.get('is_active'):
                     logger.info("   -> Existing canvas is inactive/empty. Re-triggering hydration.")
                     should_hydrate = True
-        if canvases_data and scoped_doctor_id:
+                elif scoped_case_id and state.get("selected_case_id") != scoped_case_id:
+                    logger.info("   -> Case scope changed for patient manager. Re-triggering hydration.")
+                    should_hydrate = True
+        if canvases_data:
             pj_canvas = next((c for c in canvases_data if c['component_key'] == 'VANIA_PATIENT_JOURNEY'), None)
             if pj_canvas:
-                logger.info("   -> Doctor scope provided for patient journey. Forcing re-hydration.")
-                should_hydrate = True
+                state = pj_canvas.get("current_state", {}) or {}
+                cases = state.get("cases") or []
+                if not state.get("is_active") or not isinstance(cases, list) or len(cases) == 0:
+                    logger.info("   -> Patient journey canvas is empty/inactive. Re-triggering hydration.")
+                    should_hydrate = True
+                elif scoped_doctor_id and state.get("selected_doctor_id") != int(scoped_doctor_id):
+                    logger.info("   -> Doctor scope provided for patient journey. Forcing re-hydration.")
+                    should_hydrate = True
+                elif scoped_case_id and state.get("selected_case_id") != scoped_case_id:
+                    logger.info("   -> Case scope changed for patient journey. Re-triggering hydration.")
+                    should_hydrate = True
 
         if should_hydrate and agent_id:
             logger.info(f"🎨 [CanvasRoutes] Auto-hydration triggered for Agent: {agent_id}")
             try:
                 # [FIX] Call the sync helper instead of running inline logic
-                await perform_hydration(agent_id, session_id, resource_id, scoped_doctor_id, user)
+                await perform_hydration(agent_id, session_id, resource_id, scoped_doctor_id, scoped_case_id, user)
                 
                 logger.info(f"✅ [CanvasRoutes] Hydration/Update complete.")
                 canvases_data = await fetch_session_canvases(session_id)
@@ -224,6 +250,8 @@ async def get_canvas_state(
             resource_context.reset(token)
         if scoped_doctor_id and 'doctor_token' in locals():
             selected_doctor_context.reset(doctor_token)
+        if scoped_case_id and 'case_token' in locals():
+            selected_case_context.reset(case_token)
 
 @router.patch("/instance/{instance_id}")
 async def update_canvas_instance(
@@ -242,28 +270,48 @@ async def update_canvas_instance(
         # we save them to the permanent DB tables, not just the canvas JSON.
         
         delta = payload.delta
+        selected_case_delta = delta.get("selected_case") if isinstance(delta.get("selected_case"), dict) else {}
         
         # 1. Identify the patient linked to this session
         # (This relies on the fact that Vania doctor sessions are mapped to 1 patient)
         # We get the patient_id from the context set by middleware
         patient_id = resource_context.get()
         selected_doctor_id = selected_doctor_context.get()
+        selected_case_id = selected_case_context.get()
         
         if patient_id:
             try:
                 patient = await CustomUser.objects.aget(pk=patient_id)
+                user_is_expert = await sync_to_async(is_expert)(user)
+                if user_is_expert and selected_case_id:
+                    can_edit = await sync_to_async(CaseService.expert_can_edit_case)(patient, user, selected_case_id)
+                    if not can_edit:
+                        raise HTTPException(status_code=403, detail="This case is read-only for you.")
                 
                 # A. Permanent Summary Update
-                if "clinical_summary" in delta:
-                    await sync_to_async(ProfileService.update_summary)(patient, delta["clinical_summary"], int(selected_doctor_id) if selected_doctor_id else None)
+                clinical_summary = delta.get("clinical_summary", selected_case_delta.get("clinical_summary"))
+                if clinical_summary is not None:
+                    await sync_to_async(ProfileService.update_summary)(patient, clinical_summary, int(selected_doctor_id) if selected_doctor_id else None, selected_case_id)
                 
                 # B. Permanent Demographics Update
                 if "patient_profile" in delta:
                     await sync_to_async(ProfileService.update_demographics)(patient, delta["patient_profile"], int(selected_doctor_id) if selected_doctor_id else None)
 
                 # C. Permanent Forms+Tests Clinical Analysis
-                if "forms_tests_analysis" in delta:
-                    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, delta["forms_tests_analysis"], int(selected_doctor_id) if selected_doctor_id else None)
+                analysis_text = delta.get("forms_tests_analysis", selected_case_delta.get("forms_tests_analysis"))
+                if analysis_text is not None:
+                    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, analysis_text, int(selected_doctor_id) if selected_doctor_id else None, selected_case_id)
+                medication_items = delta.get("medications", selected_case_delta.get("medications"))
+                if medication_items is not None and selected_case_id:
+                    await sync_to_async(MedicationService.save_plan)(
+                        patient,
+                        medication_items,
+                        user,
+                        int(selected_doctor_id) if selected_doctor_id else None,
+                        selected_case_id,
+                    )
+                if "cases" in delta and selected_doctor_id:
+                    await sync_to_async(CaseService.save_cases)(patient, int(selected_doctor_id), delta["cases"], creator=user)
                     
             except CustomUser.DoesNotExist:
                 pass

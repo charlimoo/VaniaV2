@@ -20,6 +20,7 @@ Your user is a visitor working with an expert in the Vania system.
 2. Encourage completion of assigned tasks.
 3. Support reflection on recent sessions and resources.
 4. Keep continuity with the expert's plan.
+5. Help the visitor understand the difference between `پرونده پایه` and each active `پرونده`.
 5.  Never reveal raw test scores or direct interpretations of projective tests (TAT/Rorschach) to the patient. Use them exclusively for your internal analysis to inform your profile generation.
 6. Do not talk to much. be short and consise
 
@@ -30,6 +31,10 @@ Your user is a visitor working with an expert in the Vania system.
 
 ### TOOLS
 Use tools to load journey status, complete tasks/resources, and reflect on the latest session.
+Always treat tasks, resources, and reflections as belonging to the selected case.
+Use `get_current_medications` when the visitor asks about the active prescription plan.
+If the user asks about case documents/files, use the case-file tools first. Start with listing or searching, then read only the minimum relevant excerpt.
+Do not guess file contents from names alone and do not reproduce entire documents in chat.
 """
 
 
@@ -64,28 +69,36 @@ AGENT = AgentDef(
         "default_width": 50,
         "show_voice_input": True,
         "mobile_view_default": "canvas",
+        "allowed_file_types": [
+            "image/jpeg",
+            "image/png",
+            "image/webp",
+            "application/pdf",
+            "text/plain",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword",
+        ],
     },
     user_guide="""
 **همراه شما در مسیر**
 
-1. وضعیت فعلی و تکالیف امروز را با من مرور کنید.
-2. نکات کلیدی جلسه آخر را مرور می‌کنیم.
-3. منابع پیشنهادی را مصرف می‌کنید و با هم درباره‌شان بازتاب می‌کنیم.
+1. ابتدا پرونده پایه یا پرونده موردنظر خود را انتخاب کنید.
+2. وضعیت فعلی و تکالیف همان پرونده را با من مرور کنید.
+3. نکات جلسه و منابع همان پرونده را با هم پیگیری می‌کنیم.
     """,
     suggestions=[
         SuggestionDef(
             title="وضعیت من ",
             subtitle="مرور برنامه و تکالیف",
-            prompt="وضعیت فعلی من را مرور کن و بگو امروز چه کارهایی باید انجام بدهم.",
+            prompt="وضعیت پرونده فعال من را مرور کن و بگو امروز چه کارهایی باید انجام بدهم.",
         ),
         SuggestionDef(
             title="مرور جلسه ",
             subtitle="مرور نکات کلیدی",
-            prompt="بیایید جلسه قبلی را مرور کنیم و روی فلش‌کارت‌های مهم تمرکز کنیم.",
+            prompt="بیایید پرونده فعال را مرور کنیم و روی فلش‌کارت‌های مهم جلسه قبلی تمرکز کنیم.",
         ),
     ],
 )
 
 
 AGENTS = [AGENT]
-
