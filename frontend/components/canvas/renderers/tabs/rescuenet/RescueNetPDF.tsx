@@ -24,8 +24,11 @@ const normalizePersianText = (input: any): string => {
 
 const toFaDate = (value?: string) => {
   if (!value) return "-";
+  if (value.includes("/")) return value;
   try {
-    return new Date(value).toLocaleDateString("fa-IR");
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString("fa-IR");
   } catch {
     return value;
   }
@@ -155,4 +158,3 @@ export const RescueNetPDF = ({ tasks, patientId }: Props) => {
     </Document>
   );
 };
-

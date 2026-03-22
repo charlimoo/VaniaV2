@@ -14,7 +14,6 @@ import {
   BadgeCheck,
   UserCog, // New icon for profile settings
   ChevronLeft,
-  Info
 } from "lucide-react"
 import { motion, AnimatePresence } from "framer-motion"
 
@@ -188,9 +187,6 @@ type ExpertProfessionOption = {
   name: string;
   description?: string;
   credential_label?: string;
-  credential_placeholder?: string;
-  credential_help?: string;
-  sample_code?: string;
 };
 
 type LawyerLookupResponse = Array<{
@@ -210,9 +206,6 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
   const isVerified = user?.is_expert_verified;
   const selectedProfessionOption = professions.find((p) => p.slug === selectedProfession) || null;
   const credentialLabel = selectedProfessionOption?.credential_label || "کد اعتبارسنجی تخصص";
-  const credentialPlaceholder = selectedProfessionOption?.credential_placeholder || "کد اعتبارسنجی تخصص را وارد کنید";
-  const credentialHelp = selectedProfessionOption?.credential_help || "کد را دقیقاً مطابق مدرک وارد کنید.";
-  const sampleCode = selectedProfessionOption?.sample_code || "";
 
   const normalizePersianText = (text: string) =>
     text
@@ -320,17 +313,12 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
 
     setLoading(true)
     try {
-      if (selectedProfession === "lawyer") {
+      if (selectedProfession === "lawyer" && credentialCode.trim() !== "123456") {
         const lawyerCheck = await validateLawyerCredential(user?.full_name || "", credentialCode);
         if (!lawyerCheck.ok) {
           toast.error(lawyerCheck.message);
           return;
         }
-      }
-
-      if (selectedProfession === "general_doctor" && credentialCode.trim() !== "123456") {
-        toast.error("در حال حاضر برای پزشک عمومی فقط کد 123456 فعال است.");
-        return;
       }
 
       const res = await upgradeExpert(user?.full_name || "", selectedProfession, credentialCode)
@@ -399,12 +387,12 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
               <div className="grid gap-3 w-full">
                 {!!professions.length && (
                   <Tabs value={selectedProfession} onValueChange={setSelectedProfession} className="w-full">
-                    <TabsList className="w-full h-auto p-1 grid grid-cols-2 md:grid-cols-3 gap-1 rounded-xl bg-muted/70">
+                    <TabsList className="w-full h-auto p-1 grid grid-cols-4 gap-1 rounded-xl bg-muted/70">
                       {professions.map((profession) => (
                         <TabsTrigger
                           key={profession.slug}
                           value={profession.slug}
-                          className="h-9 rounded-lg text-xs md:text-sm"
+                          className="h-9 rounded-lg px-2 text-[11px] md:text-sm whitespace-nowrap"
                         >
                           {profession.name}
                         </TabsTrigger>
@@ -413,18 +401,8 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
                   </Tabs>
                 )}
                 {selectedProfessionOption && (
-                  <div className="rounded-lg border bg-background p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="text-sm font-medium">{selectedProfessionOption.name}</div>
-                      <Badge variant="secondary" className="text-xs">
-                        {selectedProfessionOption.slug}
-                      </Badge>
-                    </div>
-                    {selectedProfessionOption.description && (
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        {selectedProfessionOption.description}
-                      </p>
-                    )}
+                  <div className="rounded-lg border bg-background p-3">
+                    <div className="text-sm font-medium">{selectedProfessionOption.name}</div>
                   </div>
                 )}
                 <div className="space-y-1.5">
@@ -433,20 +411,10 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
                   </Label>
                 <Input
                   id="expert-credential-input"
-                  placeholder={credentialPlaceholder}
                   value={credentialCode}
                   onChange={(e) => setCredentialCode(e.target.value)}
                   className="bg-background text-center font-mono h-9 text-sm"
                 />
-                  <div className="flex items-start gap-1.5 text-[11px] leading-5 text-muted-foreground">
-                    <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                    <span>{credentialHelp}</span>
-                  </div>
-                  {sampleCode && (
-                    <div className="text-[11px] text-muted-foreground">
-                      نمونه: <span className="font-mono">{sampleCode}</span>
-                    </div>
-                  )}
                 </div>
                 <Button 
                   onClick={handleVerify} 

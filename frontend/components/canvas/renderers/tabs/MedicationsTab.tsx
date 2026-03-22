@@ -2,15 +2,19 @@
 
 import { useMemo, useState } from "react";
 import { Pencil, Pill, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 import { MedicationEntry } from "@/lib/types/vania";
 
 interface Props {
   medications: MedicationEntry[];
+  patientId: number;
+  caseId?: string;
   onEdit: (delta: any) => void;
   readOnly?: boolean;
 }
@@ -24,9 +28,11 @@ const EMPTY_FORM = {
   notes: "",
 };
 
-export function MedicationsTab({ medications, onEdit, readOnly = false }: Props) {
+export function MedicationsTab({ medications, patientId, caseId, onEdit, readOnly = false }: Props) {
   const [draft, setDraft] = useState(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const submitLabel = useMemo(() => (editingId ? "ذخیره دارو" : "افزودن دارو"), [editingId]);
 
@@ -35,26 +41,50 @@ export function MedicationsTab({ medications, onEdit, readOnly = false }: Props)
     setEditingId(null);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (readOnly || !draft.drug_name.trim()) return;
 
-    const nextEntry: MedicationEntry = {
-      id: editingId || `med-${Date.now()}`,
-      drug_name: draft.drug_name.trim(),
-      dosage: draft.dosage.trim(),
-      usage_instructions: draft.usage_instructions.trim(),
-      timing: draft.timing.trim(),
-      duration: draft.duration.trim(),
-      notes: draft.notes.trim(),
-      prescribed_at: new Date().toISOString(),
-    };
+    setIsSaving(true);
+    try {
+      const payload = {
+        patient_id: patientId,
+        case_id: caseId,
+        drug_name: draft.drug_name.trim(),
+        dosage: draft.dosage.trim(),
+        usage_instructions: draft.usage_instructions.trim(),
+        timing: draft.timing.trim(),
+        duration: draft.duration.trim(),
+        notes: draft.notes.trim(),
+      };
 
-    const nextMedications = editingId
-      ? medications.map((item) => (item.id === editingId ? { ...item, ...nextEntry } : item))
-      : [nextEntry, ...(medications || [])];
+      if (editingId) {
+        const res = await fetch(`${API_BASE_URL}/api/vania/medications/${editingId}/`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error("ذخیره تغییرات دارو ناموفق بود.");
+        const updated: MedicationEntry = await res.json();
+        onEdit({ medications: medications.map((item) => (item.id === editingId ? updated : item)) });
+        toast.success("دارو به‌روزرسانی شد.");
+      } else {
+        const res = await fetch(`${API_BASE_URL}/api/vania/medications/`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error("ثبت دارو ناموفق بود.");
+        const created: MedicationEntry = await res.json();
+        onEdit({ medications: [created, ...(medications || [])] });
+        toast.success("دارو ثبت شد.");
+      }
 
-    onEdit({ medications: nextMedications });
-    resetForm();
+      resetForm();
+    } catch (error: any) {
+      toast.error(error?.message || "خطا در ذخیره دارو.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleEdit = (item: MedicationEntry) => {
@@ -70,10 +100,25 @@ export function MedicationsTab({ medications, onEdit, readOnly = false }: Props)
     });
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (readOnly) return;
-    onEdit({ medications: medications.filter((item) => item.id !== id) });
-    if (editingId === id) resetForm();
+    setDeletingId(id);
+    try {
+      const query = new URLSearchParams({ patient_id: String(patientId) });
+      if (caseId) query.set("case_id", caseId);
+      const res = await fetch(`${API_BASE_URL}/api/vania/medications/${id}/?${query.toString()}`, {
+        method: "DELETE",
+        headers: { ...getAuthHeaders() },
+      });
+      if (!res.ok) throw new Error("حذف دارو ناموفق بود.");
+      onEdit({ medications: medications.filter((item) => item.id !== id) });
+      if (editingId === id) resetForm();
+      toast.success("دارو حذف شد.");
+    } catch (error: any) {
+      toast.error(error?.message || "خطا در حذف دارو.");
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   return (
@@ -120,9 +165,9 @@ export function MedicationsTab({ medications, onEdit, readOnly = false }: Props)
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button onClick={handleSubmit} disabled={!draft.drug_name.trim()} className="gap-2">
+            <Button onClick={() => void handleSubmit()} disabled={!draft.drug_name.trim() || isSaving} className="gap-2">
               <Plus className="h-4 w-4" />
-              {submitLabel}
+              {isSaving ? "در حال ذخیره..." : submitLabel}
             </Button>
             {editingId ? (
               <Button variant="ghost" onClick={resetForm}>
@@ -153,7 +198,13 @@ export function MedicationsTab({ medications, onEdit, readOnly = false }: Props)
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleEdit(item)}>
                       <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(item.id)}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive"
+                      onClick={() => void handleDelete(item.id)}
+                      disabled={deletingId === item.id}
+                    >
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>

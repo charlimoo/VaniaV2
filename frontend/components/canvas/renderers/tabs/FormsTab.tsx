@@ -34,6 +34,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 interface Props {
@@ -120,6 +121,7 @@ export function FormsTab({
   const [testUploading, setTestUploading] = useState(false);
   const [testPickerOpen, setTestPickerOpen] = useState(false);
   const [testDraft, setTestDraft] = useState<TestDraft>({ title: "", url: "", result_summary: "", catalog_id: null });
+  const [testMarkedDone, setTestMarkedDone] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [selectedFilePreviews, setSelectedFilePreviews] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -224,6 +226,7 @@ export function FormsTab({
   const openNewTestModal = () => {
     setSelectedFiles([]);
     setTestDraft({ title: "", url: "", result_summary: "", catalog_id: null });
+    setTestMarkedDone(false);
     setTestModalOpen(true);
   };
 
@@ -236,6 +239,7 @@ export function FormsTab({
       url: test.url || "",
       result_summary: test.result_text || test.result_summary || "",
     });
+    setTestMarkedDone(true);
     setTestModalOpen(true);
   };
 
@@ -290,6 +294,10 @@ export function FormsTab({
       return;
     }
 
+    const isEditMode = !!testDraft.id;
+    const shouldSaveResult = isEditMode || testMarkedDone;
+    const resultSummary = shouldSaveResult ? testDraft.result_summary : "";
+
     setTestSaving(true);
     try {
       let testId = testDraft.id;
@@ -305,8 +313,8 @@ export function FormsTab({
             catalog_id: testMode === "full_catalog" ? testDraft.catalog_id || undefined : undefined,
             title: testDraft.title,
             url: testMode === "full_catalog" ? testDraft.url : "",
-            result_text: testDraft.result_summary,
-            result_summary: testDraft.result_summary,
+            result_text: resultSummary,
+            result_summary: resultSummary,
           }),
         });
         if (!res.ok) throw new Error("ثبت تست ناموفق بود.");
@@ -323,8 +331,8 @@ export function FormsTab({
             catalog_id: testMode === "full_catalog" ? testDraft.catalog_id || undefined : undefined,
             title: testDraft.title,
             url: testMode === "full_catalog" ? testDraft.url : "",
-            result_text: testDraft.result_summary,
-            result_summary: testDraft.result_summary,
+            result_text: resultSummary,
+            result_summary: resultSummary,
           }),
         });
         if (!res.ok) throw new Error("ویرایش تست ناموفق بود.");
@@ -332,7 +340,7 @@ export function FormsTab({
         updatedTests = updatedTests.map((t) => (t.id === testId ? updated : t));
       }
 
-      if (selectedFiles.length > 0 && testId) {
+      if ((testDraft.id || testMarkedDone) && selectedFiles.length > 0 && testId) {
         setTestUploading(true);
         let latestTest = updatedTests.find((t) => t.id === testId) || null;
         for (const file of selectedFiles) {
@@ -505,67 +513,57 @@ export function FormsTab({
             هنوز تست یا ازمایشی ثبت نشده است.
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+          <div className="space-y-2">
             {tests.map((test) => {
               const attachments = getTestAttachments(test);
               const resultText = test.result_text || test.result_summary || "";
-              const missingSummary = !resultText.trim();
-              const missingFile = attachments.length === 0;
-              const isTodo = missingSummary || missingFile;
+              const hasResult = !!resultText.trim() || attachments.length > 0;
 
               return (
-                <div key={test.id} className="rounded-xl border bg-card p-3 shadow-sm space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 space-y-1">
-                      <div className="truncate text-xs font-bold flex items-center gap-2">
-                        <span className="truncate">{test.title}</span>
-                        {isTodo && <Badge variant="secondary" className="text-[10px]">در انتظار تکمیل</Badge>}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground">{toJalali(test.created_at || "")}</div>
+                <div
+                  key={test.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 text-right shadow-sm transition hover:border-primary/40 hover:bg-primary/5"
+                >
+                  <button
+                    type="button"
+                    onClick={() => openEditTestModal(test)}
+                    className="min-w-0 flex-1 text-right"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-sm font-semibold">{test.title}</span>
+                      {test.url ? <Badge variant="outline" className="text-[10px]">لینک</Badge> : null}
+                      {attachments.length > 0 ? <Badge variant="outline" className="text-[10px]">{attachments.length} فایل</Badge> : null}
                     </div>
-                    <div className="flex items-center gap-1">
-                      {!readOnly ? <>
-                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => openEditTestModal(test)}>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                      <Badge variant={hasResult ? "outline" : "secondary"} className="text-[10px]">
+                        {hasResult ? "تکمیل شده" : "در انتظار تکمیل"}
+                      </Badge>
+                      <span>{toJalali(test.created_at || "")}</span>
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {!readOnly ? (
+                      <>
+                        <Button
+                          size="icon"
+                          type="button"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => openEditTestModal(test)}
+                        >
                           <Pencil className="w-3.5 h-3.5" />
                         </Button>
-                        <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteTest(test.id)}>
+                        <Button
+                          size="icon"
+                          type="button"
+                          variant="ghost"
+                          className="h-7 w-7 text-destructive"
+                          onClick={() => deleteTest(test.id)}
+                        >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
-                      </> : null}
-                    </div>
-                  </div>
-
-                  <div className="text-[11px] text-foreground/80 leading-relaxed bg-muted/20 rounded p-2 min-h-[56px] whitespace-pre-wrap">
-                    {resultText || "متن نتیجه ثبت نشده است."}
-                  </div>
-
-                  <div className="space-y-2 pt-1">
-                    <div className="text-[10px] text-muted-foreground">فایل‌ها: {attachments.length}</div>
-                    {attachments.length > 0 ? (
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        {attachments.map((attachment) => (
-                          <div key={attachment.id} className="rounded-xl border border-border/60 bg-muted/10 px-3 py-2.5">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="min-w-0 text-[10px] text-muted-foreground">
-                                <div className="truncate font-medium text-foreground">{attachment.file_name}</div>
-                                <div className="mt-1">{toJalali(attachment.file_uploaded_at || "")}</div>
-                                <div className="mt-1">{attachment.content_type?.includes("pdf") ? "PDF" : "تصویر"}</div>
-                              </div>
-                              <div className="flex items-center gap-1">
-                                <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => downloadTestFile(test.id, attachment.id, attachment.file_name)}>
-                                  <Download className="w-3.5 h-3.5" />
-                                </Button>
-                                <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => deleteTestFile(test.id, attachment.id)}>
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-[10px] text-muted-foreground">هنوز فایلی ثبت نشده است.</div>
-                    )}
+                      </>
+                    ) : null}
                   </div>
                 </div>
               );
@@ -688,8 +686,8 @@ export function FormsTab({
             <DialogTitle>{testDraft.id ? (testMode === "exams_only" ? "ویرایش آزمایش" : "ویرایش تست یا ازمایش") : (testMode === "exams_only" ? "افزودن آزمایش" : "افزودن تست یا ازمایش")}</DialogTitle>
             <DialogDescription>
               {testMode === "exams_only"
-                ? "عنوان آزمایش را وارد کنید و نتیجه یا فایل‌های مربوط را ثبت کنید."
-                : "عنوان را وارد کنید. اگر موردی از فهرست شناخته شود، به صورت خودکار به تست مربوط متصل می شود."}
+                ? "عنوان را وارد کنید."
+                : "عنوان را وارد کنید."}
             </DialogDescription>
           </DialogHeader>
 
@@ -748,162 +746,176 @@ export function FormsTab({
               </div>
             </div>
 
-            <div className="grid gap-1.5">
-              <Label className="text-xs">متن نتیجه</Label>
-              <Textarea
-                value={testDraft.result_summary}
-                onChange={(e) => setTestDraft((p) => ({ ...p, result_summary: e.target.value }))}
-                placeholder="نتیجه متنی تست را اینجا ثبت کنید."
-                className="min-h-[110px]"
-              />
-            </div>
-
-            <div className="grid gap-1.5">
-              <div className="flex items-center justify-between gap-3">
-                <Label className="text-xs">فایل‌های نتیجه</Label>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1.5 text-xs"
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  افزودن فایل
-                </Button>
+            {!testDraft.id ? (
+              <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/10 px-3 py-3">
+                <div className="space-y-1">
+                  <div className="text-sm font-medium text-foreground">انجام شده</div>
+                  <div className="text-[11px] text-muted-foreground">اگر انجام شده، نتیجه را ثبت کنید.</div>
+                </div>
+                <Switch checked={testMarkedDone} onCheckedChange={setTestMarkedDone} />
               </div>
+            ) : null}
 
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept="application/pdf,image/*"
-                className="hidden"
-                onChange={(e) => {
-                  addSelectedFiles(Array.from(e.target.files || []));
-                  e.target.value = "";
-                }}
-              />
-
-              <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                  <span>PDF یا تصویر اضافه کنید. می‌توانید چند فایل را باهم انتخاب کنید.</span>
-                  <span>{activeTestAttachments.length + selectedFiles.length} فایل</span>
+            {(testDraft.id || testMarkedDone) ? (
+              <>
+                <div className="grid gap-1.5">
+                  <Label className="text-xs">متن نتیجه</Label>
+                  <Textarea
+                    value={testDraft.result_summary}
+                    onChange={(e) => setTestDraft((p) => ({ ...p, result_summary: e.target.value }))}
+                    placeholder="متن نتیجه را وارد کنید."
+                    className="min-h-[110px]"
+                  />
                 </div>
 
-                {activeTestAttachments.length === 0 && selectedFiles.length === 0 ? (
-                  <div className="py-8 text-center text-xs text-muted-foreground">
-                    هنوز فایلی برای این تست ثبت نشده است.
+                <div className="grid gap-1.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <Label className="text-xs">فایل‌های نتیجه</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1.5 text-xs"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      افزودن فایل
+                    </Button>
                   </div>
-                ) : (
-                  <div className="mt-3 max-h-[340px] overflow-y-auto pr-1">
-                    <div className="grid gap-3 sm:grid-cols-2">
-                    {activeTestAttachments.map((attachment) => {
-                      const isPdf = attachment.content_type?.includes("pdf");
 
-                      return (
-                        <div key={attachment.id} className="overflow-hidden rounded-2xl border border-border/60 bg-background/60">
-                          <div className="flex h-28 items-center justify-center bg-muted/20">
-                            {isPdf ? (
-                              <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                                <FileText className="h-8 w-8" />
-                                <span className="text-[10px]">PDF</span>
-                              </div>
-                            ) : (
-                              <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                                <ImageIcon className="h-8 w-8" />
-                                <span className="text-[10px]">تصویر</span>
-                              </div>
-                            )}
-                          </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept="application/pdf,image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      addSelectedFiles(Array.from(e.target.files || []));
+                      e.target.value = "";
+                    }}
+                  />
 
-                          <div className="space-y-3 p-3">
-                            <div className="space-y-1 text-right">
-                              <div className="truncate text-xs font-medium text-foreground">{attachment.file_name}</div>
-                              <div className="text-[10px] text-muted-foreground">
-                                {toJalali(attachment.file_uploaded_at || "")}
+                  <div className="rounded-2xl border border-dashed border-border/70 bg-muted/10 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                      <span>PDF یا تصویر</span>
+                      <span>{activeTestAttachments.length + selectedFiles.length} فایل</span>
+                    </div>
+
+                    {activeTestAttachments.length === 0 && selectedFiles.length === 0 ? (
+                      <div className="py-8 text-center text-xs text-muted-foreground">
+                        فایلی ثبت نشده است.
+                      </div>
+                    ) : (
+                      <div className="mt-3 max-h-[340px] overflow-y-auto pr-1">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                        {activeTestAttachments.map((attachment) => {
+                          const isPdf = attachment.content_type?.includes("pdf");
+
+                          return (
+                            <div key={attachment.id} className="overflow-hidden rounded-2xl border border-border/60 bg-background/60">
+                              <div className="flex h-28 items-center justify-center bg-muted/20">
+                                {isPdf ? (
+                                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                                    <FileText className="h-8 w-8" />
+                                    <span className="text-[10px]">PDF</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                                    <ImageIcon className="h-8 w-8" />
+                                    <span className="text-[10px]">تصویر</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="space-y-3 p-3">
+                                <div className="space-y-1 text-right">
+                                  <div className="truncate text-xs font-medium text-foreground">{attachment.file_name}</div>
+                                  <div className="text-[10px] text-muted-foreground">
+                                    {toJalali(attachment.file_uploaded_at || "")}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center justify-between gap-2">
+                                  <Badge variant="outline" className="text-[10px] font-normal">
+                                    ثبت شده
+                                  </Badge>
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      type="button"
+                                      size="icon"
+                                      variant="ghost"
+                                      className="h-8 w-8"
+                                      onClick={() => downloadTestFile(testDraft.id!, attachment.id, attachment.file_name)}
+                                    >
+                                      <Download className="h-3.5 w-3.5" />
+                                    </Button>
+                                    {!readOnly ? (
+                                      <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8 text-destructive"
+                                        onClick={() => deleteTestFile(testDraft.id!, attachment.id)}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    ) : null}
+                                  </div>
+                                </div>
                               </div>
                             </div>
+                          );
+                        })}
 
-                            <div className="flex items-center justify-between gap-2">
-                              <Badge variant="outline" className="text-[10px] font-normal">
-                                ثبت شده
-                              </Badge>
-                              <div className="flex items-center gap-1">
+                        {selectedFiles.map((file) => {
+                          const key = `${file.name}-${file.size}-${file.lastModified}`;
+                          const previewUrl = selectedFilePreviews[key];
+                          const isImage = file.type.startsWith("image/");
+
+                          return (
+                            <div key={key} className="overflow-hidden rounded-2xl border border-primary/20 bg-primary/5">
+                              <div className="relative flex h-28 items-center justify-center overflow-hidden bg-background/70">
+                                {isImage && previewUrl ? (
+                                  <img src={previewUrl} alt={file.name} className="h-full w-full object-cover" />
+                                ) : (
+                                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                                    {file.type.includes("pdf") ? <FileText className="h-8 w-8" /> : <ImageIcon className="h-8 w-8" />}
+                                    <span className="text-[10px]">{file.type.includes("pdf") ? "PDF" : "تصویر"}</span>
+                                  </div>
+                                )}
+
                                 <Button
                                   type="button"
                                   size="icon"
-                                  variant="ghost"
-                                  className="h-8 w-8"
-                                  onClick={() => downloadTestFile(testDraft.id!, attachment.id, attachment.file_name)}
+                                  variant="secondary"
+                                  className="absolute left-2 top-2 h-7 w-7"
+                                  onClick={() => removeSelectedFile(file)}
                                 >
-                                  <Download className="h-3.5 w-3.5" />
+                                  <X className="h-3.5 w-3.5" />
                                 </Button>
-                                {!readOnly ? (
-                                  <Button
-                                    type="button"
-                                    size="icon"
-                                    variant="ghost"
-                                    className="h-8 w-8 text-destructive"
-                                    onClick={() => deleteTestFile(testDraft.id!, attachment.id)}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                ) : null}
+                              </div>
+
+                              <div className="space-y-2 p-3">
+                                <div className="space-y-1 text-right">
+                                  <div className="truncate text-xs font-medium text-foreground">{file.name}</div>
+                                  <div className="text-[10px] text-muted-foreground">
+                                    {formatFileSize(file.size)}
+                                  </div>
+                                </div>
+                                <Badge variant="secondary" className="text-[10px] font-normal">
+                                  آماده آپلود
+                                </Badge>
                               </div>
                             </div>
-                          </div>
+                          );
+                        })}
                         </div>
-                      );
-                    })}
-
-                    {selectedFiles.map((file) => {
-                      const key = `${file.name}-${file.size}-${file.lastModified}`;
-                      const previewUrl = selectedFilePreviews[key];
-                      const isImage = file.type.startsWith("image/");
-
-                      return (
-                        <div key={key} className="overflow-hidden rounded-2xl border border-primary/20 bg-primary/5">
-                          <div className="relative flex h-28 items-center justify-center overflow-hidden bg-background/70">
-                            {isImage && previewUrl ? (
-                              <img src={previewUrl} alt={file.name} className="h-full w-full object-cover" />
-                            ) : (
-                              <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                                {file.type.includes("pdf") ? <FileText className="h-8 w-8" /> : <ImageIcon className="h-8 w-8" />}
-                                <span className="text-[10px]">{file.type.includes("pdf") ? "PDF" : "تصویر"}</span>
-                              </div>
-                            )}
-
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="secondary"
-                              className="absolute left-2 top-2 h-7 w-7"
-                              onClick={() => removeSelectedFile(file)}
-                            >
-                              <X className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-
-                          <div className="space-y-2 p-3">
-                            <div className="space-y-1 text-right">
-                              <div className="truncate text-xs font-medium text-foreground">{file.name}</div>
-                              <div className="text-[10px] text-muted-foreground">
-                                {formatFileSize(file.size)}
-                              </div>
-                            </div>
-                            <Badge variant="secondary" className="text-[10px] font-normal">
-                              آماده آپلود
-                            </Badge>
-                          </div>
-                        </div>
-                      );
-                    })}
-                    </div>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
+              </>
+            ) : null}
           </div>
 
           <DialogFooter className="border-t border-border/60 pt-4">

@@ -2,7 +2,7 @@
 import uuid
 import logging
 import json
-import asyncio 
+import asyncio
 from typing import AsyncGenerator, Any
 
 from fastapi import Request
@@ -43,9 +43,12 @@ from .storage import get_storage, get_session_safe
 from agents.naming import title_generator
 from .session_metadata import apply_session_metadata_defaults, get_session_knowledge_flag, set_session_knowledge_metadata
 from services.rag_service import render_session_knowledge_context, session_knowledge_exists
+from .tool_result_sanitizer import sanitize_tool_result_content
 
 # Configure Logger
 logger = logging.getLogger(__name__)
+
+TOOL_ONLY_CHAT_AGENT_SLUGS = {"vania-expert-assistant"}
 
 async def background_naming_task(thread_id: str, user_id: str, agent_messages: list):
     """
@@ -193,9 +196,17 @@ async def agui_stream_generator(
     assistant_msg_id = str(uuid.uuid4())
     
     # Track state for events
+    always_suppress_text_output = bool(getattr(agent, "suppress_plaintext_response", False))
     state = {
         "is_text_started": False,
-        "current_tool_id": None
+        "current_tool_id": None,
+        "suppress_text_output": bool(
+            always_suppress_text_output
+            or getattr(getattr(agent, "service_config", None), "slug", None) in TOOL_ONLY_CHAT_AGENT_SLUGS
+        ),
+        "always_suppress_text_output": always_suppress_text_output,
+        "tool_called": False,
+        "buffered_text": [],
     }
     
     logger.info(f"🌊 [Stream] Starting Active Generator for Run: {run_id} (Thread: {thread_id})")
@@ -352,33 +363,40 @@ async def agui_stream_generator(
                 # --- CASE B: Raw String ---
                 if not hasattr(chunk, "event"):
                     if isinstance(chunk, str) and chunk.strip():
-                        if not state["is_text_started"]:
-                            yield encoder.encode(TextMessageStartEvent(
-                                type=EventType.TEXT_MESSAGE_START, message_id=assistant_msg_id, role="assistant"
+                        if state["suppress_text_output"]:
+                            state["buffered_text"].append(chunk)
+                        else:
+                            if not state["is_text_started"]:
+                                yield encoder.encode(TextMessageStartEvent(
+                                    type=EventType.TEXT_MESSAGE_START, message_id=assistant_msg_id, role="assistant"
+                                ))
+                                state["is_text_started"] = True
+                            yield encoder.encode(TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT, message_id=assistant_msg_id, delta=chunk
                             ))
-                            state["is_text_started"] = True
-                        yield encoder.encode(TextMessageContentEvent(
-                            type=EventType.TEXT_MESSAGE_CONTENT, message_id=assistant_msg_id, delta=chunk
-                        ))
                     continue
 
                 # --- CASE C: Standard Events ---
                 if chunk.event == RunEvent.run_content:
                     if chunk.content:
-                        if not state["is_text_started"]:
-                            yield encoder.encode(TextMessageStartEvent(
-                                type=EventType.TEXT_MESSAGE_START, message_id=assistant_msg_id, role="assistant"
+                        if state["suppress_text_output"]:
+                            state["buffered_text"].append(str(chunk.content))
+                        else:
+                            if not state["is_text_started"]:
+                                yield encoder.encode(TextMessageStartEvent(
+                                    type=EventType.TEXT_MESSAGE_START, message_id=assistant_msg_id, role="assistant"
+                                ))
+                                state["is_text_started"] = True
+                            
+                            yield encoder.encode(TextMessageContentEvent(
+                                type=EventType.TEXT_MESSAGE_CONTENT, message_id=assistant_msg_id, delta=str(chunk.content)
                             ))
-                            state["is_text_started"] = True
-                        
-                        yield encoder.encode(TextMessageContentEvent(
-                            type=EventType.TEXT_MESSAGE_CONTENT, message_id=assistant_msg_id, delta=str(chunk.content)
-                        ))
 
                 elif chunk.event == RunEvent.tool_call_started:
                     tc_id, tc_name, tc_args = extract_tool_info(chunk)
                     if not tc_id or tc_id == "unknown_id": tc_id = str(uuid.uuid4())
                     state["current_tool_id"] = tc_id
+                    state["tool_called"] = True
                     
                     yield encoder.encode(ToolCallStartEvent(
                         type=EventType.TOOL_CALL_START, tool_call_id=tc_id, tool_call_name=tc_name, parent_message_id=assistant_msg_id
@@ -419,14 +437,7 @@ async def agui_stream_generator(
                         tc_obj = getattr(chunk, "tool_call", None)
                         if tc_obj: raw_content = getattr(tc_obj, "result", None)
 
-                    content_str = ""
-                    if raw_content is not None:
-                        if isinstance(raw_content, (dict, list)):
-                            try: content_str = json.dumps(raw_content, ensure_ascii=False) 
-                            except: content_str = str(raw_content)
-                        else: content_str = str(raw_content)
-                    else:
-                        content_str = "Result unavailable"
+                    content_str = sanitize_tool_result_content(raw_content)
 
                     yield encoder.encode(ToolCallResultEvent(
                         type=EventType.TOOL_CALL_RESULT, message_id=assistant_msg_id, tool_call_id=tc_id, content=content_str, role="tool"
@@ -436,6 +447,17 @@ async def agui_stream_generator(
                     state["current_tool_id"] = None
 
         # --- Completion Logic ---
+        if state["suppress_text_output"] and not state["tool_called"] and not state["always_suppress_text_output"]:
+            buffered_text = "".join(state["buffered_text"]).strip()
+            if buffered_text:
+                yield encoder.encode(TextMessageStartEvent(
+                    type=EventType.TEXT_MESSAGE_START, message_id=assistant_msg_id, role="assistant"
+                ))
+                state["is_text_started"] = True
+                yield encoder.encode(TextMessageContentEvent(
+                    type=EventType.TEXT_MESSAGE_CONTENT, message_id=assistant_msg_id, delta=buffered_text
+                ))
+
         if state["is_text_started"]:
             yield encoder.encode(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=assistant_msg_id))
 

@@ -278,6 +278,40 @@ export interface ThreadMetadata {
   agentId: string;
 }
 
+type SessionContextLabels = {
+  patientName?: string | null;
+  doctorName?: string | null;
+  caseTitle?: string | null;
+  caseDoctorName?: string | null;
+  caseDoctorProfessionSlug?: string | null;
+  caseDoctorProfessionLabel?: string | null;
+};
+
+const buildSessionState = ({
+  agentId,
+  patientId,
+  doctorId,
+  caseId,
+  labels,
+}: {
+  agentId: string;
+  patientId?: number | null;
+  doctorId?: number | null;
+  caseId?: string | null;
+  labels?: SessionContextLabels;
+}) => ({
+  agent_id: agentId,
+  ...(patientId ? { visitor_id: patientId, patient_id: patientId } : {}),
+  ...(labels?.patientName ? { visitor_name: labels.patientName, patient_name: labels.patientName } : {}),
+  ...(doctorId ? { selected_expert_id: doctorId, selected_doctor_id: doctorId } : {}),
+  ...(labels?.doctorName ? { selected_expert_name: labels.doctorName, selected_doctor_name: labels.doctorName } : {}),
+  ...(caseId ? { selected_case_id: caseId } : {}),
+  ...(labels?.caseTitle ? { selected_case_title: labels.caseTitle } : {}),
+  ...(labels?.caseDoctorName ? { selected_case_doctor_name: labels.caseDoctorName } : {}),
+  ...(labels?.caseDoctorProfessionSlug ? { selected_case_doctor_profession_slug: labels.caseDoctorProfessionSlug } : {}),
+  ...(labels?.caseDoctorProfessionLabel ? { selected_case_doctor_profession_label: labels.caseDoctorProfessionLabel } : {}),
+});
+
 export const threadManager = {
   listThreads: async (token: string, agentId?: string, page = 1, limit = 50): Promise<any[]> => {
     try {
@@ -456,16 +490,14 @@ export const threadManager = {
     token: string,
     patientId?: number | null,
     doctorId?: number | null,
+    caseId?: string | null,
+    labels?: SessionContextLabels,
   ) => {
     try {
       const payload = {
         session_id: threadId,
         session_name: initialTitle || "New Conversation",
-        session_state: {
-          agent_id: agentId,
-          ...(patientId ? { visitor_id: patientId, patient_id: patientId } : {}),
-          ...(doctorId ? { selected_expert_id: doctorId, selected_doctor_id: doctorId } : {}),
-        },
+        session_state: buildSessionState({ agentId, patientId, doctorId, caseId, labels }),
       };
 
       const headers: Record<string, string> = {
@@ -479,6 +511,9 @@ export const threadManager = {
       if (doctorId) {
         headers["X-Target-Expert-ID"] = doctorId.toString();
         headers["X-Target-Doctor-ID"] = doctorId.toString();
+      }
+      if (caseId) {
+        headers["X-Target-Case-ID"] = caseId;
       }
 
       const res = await fetch(`${API_BASE_URL}/agent/sessions`, {

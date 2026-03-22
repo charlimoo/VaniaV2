@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 interface Props {
   greeting: string;
   activeGoals: string[];
+  showActiveGoals?: boolean;
   clinicalSummary?: string;
   formsTestsAnalysis: string;
   forms?: any[];
@@ -20,6 +21,7 @@ interface Props {
 export function PatientHomeTab({
   greeting,
   activeGoals,
+  showActiveGoals = true,
   clinicalSummary = "",
   formsTestsAnalysis,
   forms = [],
@@ -41,12 +43,9 @@ export function PatientHomeTab({
       {/* --- Hero Section --- */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-primary/10 to-primary/5 border border-primary/10 p-6 shadow-sm">
         <div className="relative z-10">
-          <h2 className="text-2xl font-bold text-foreground mb-2 leading-tight">
+          <h2 className="text-2xl font-bold text-foreground leading-tight">
             {greeting}
           </h2>
-          <p className="text-sm text-muted-foreground max-w-xs leading-relaxed">
-            به پنل همراه خوش آمدید. من اینجا هستم تا در مسیر رشد و سلامت کنار شما باشم.
-          </p>
         </div>
         
         {/* Abstract Background Decor */}
@@ -55,61 +54,63 @@ export function PatientHomeTab({
       </div>
 
       {/* --- Active Goals Section --- */}
-      <section>
-        <div className="flex items-center justify-between mb-4 px-1">
-          <h3 className="text-sm font-bold flex items-center gap-2 text-foreground">
-            <Target className="w-4 h-4 text-emerald-600" />
-            اهداف فعال من
-          </h3>
-          <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
-            {activeGoals?.length || 0} هدف
-          </Badge>
-        </div>
-
-        {activeGoals && activeGoals.length > 0 ? (
-          <div className="grid gap-3">
-            {activeGoals.map((goal, idx) => (
-              <Card key={idx} className="border-muted-100 bg-gradient-to-r from-muted to-transparent shadow-sm hover:shadow-md transition-shadow">
-                <CardContent className="p-4 flex items-start gap-3">
-                  <div className="mt-0.5 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px] font-bold shrink-0 border border-emerald-200">
-                    {idx + 1}
-                  </div>
-                  <p className="text-sm text-foreground/90 leading-relaxed font-medium">
-                    {goal}
-                  </p>
-                </CardContent>
-              </Card>
-            ))}
+      {showActiveGoals ? (
+        <section>
+          <div className="flex items-center justify-between mb-4 px-1">
+            <h3 className="text-sm font-bold flex items-center gap-2 text-foreground">
+              <Target className="w-4 h-4 text-emerald-600" />
+              اهداف فعال من
+            </h3>
+            <Badge variant="outline" className="text-[10px] font-normal text-muted-foreground">
+              {activeGoals?.length || 0} هدف
+            </Badge>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center py-10 bg-muted/10 rounded-2xl border border-dashed border-muted-foreground/20 text-center">
-            <Target className="w-8 h-8 text-muted-foreground/30 mb-2" />
-            <p className="text-xs text-muted-foreground">هنوز هدف مشخصی برای این مرحله ثبت نشده است.</p>
-          </div>
-        )}
-      </section>
 
-      {showClinicalSummary && clinicalSummary?.trim() && (
+          {activeGoals && activeGoals.length > 0 ? (
+            <div className="grid gap-3">
+              {activeGoals.map((goal, idx) => (
+                <Card key={idx} className="border-muted-100 bg-gradient-to-r from-muted to-transparent shadow-sm hover:shadow-md transition-shadow">
+                  <CardContent className="p-4 flex items-start gap-3">
+                    <div className="mt-0.5 w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px] font-bold shrink-0 border border-emerald-200">
+                      {idx + 1}
+                    </div>
+                    <p className="text-sm text-foreground/90 leading-relaxed font-medium">
+                      {goal}
+                    </p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-10 bg-muted/10 rounded-2xl border border-dashed border-muted-foreground/20 text-center">
+              <Target className="w-8 h-8 text-muted-foreground/30 mb-2" />
+              <p className="text-xs text-muted-foreground">هنوز هدف مشخصی برای این مرحله ثبت نشده است.</p>
+            </div>
+          )}
+        </section>
+      ) : null}
+
+      {showClinicalSummary && (
         <section>
           <div className="flex items-center justify-between mb-3 px-1">
             <h3 className="text-sm font-bold text-foreground">علت مراجع و مشاهدات</h3>
           </div>
           <Card className="border-muted-100 shadow-sm">
             <CardContent className="p-4 text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
-              {clinicalSummary}
+              {clinicalSummary?.trim() || "هنوز موردی برای این بخش ثبت نشده است."}
             </CardContent>
           </Card>
         </section>
       )}
 
-      {showFormsTestsAnalysis && formsTestsAnalysis?.trim() && (
+      {showFormsTestsAnalysis && (
         <section>
           <div className="flex items-center justify-between mb-3 px-1">
             <h3 className="text-sm font-bold text-foreground">تحلیل بالینی تست ها و فرم ها</h3>
           </div>
           <Card className="border-muted-100 shadow-sm">
             <CardContent className="p-4 text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">
-              {formsTestsAnalysis}
+              {formsTestsAnalysis?.trim() || "هنوز موردی برای این بخش ثبت نشده است."}
             </CardContent>
           </Card>
         </section>

@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { PersianDatePicker } from "@/components/ui/persian-date-picker";
 import { toast } from "sonner";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 import { RoadmapSession } from "@/lib/types/vania";
@@ -112,11 +113,10 @@ export function AddSessionDialog({ patientId, caseId, onSuccess, trigger }: Prop
               <CalendarDays className="w-3.5 h-3.5" />
               تاریخ جلسه (اختیاری)
             </Label>
-            <Input
-              id="session-date"
-              type="date"
+            <PersianDatePicker
               value={formData.scheduled_date}
-              onChange={(e) => setFormData({ ...formData, scheduled_date: e.target.value })}
+              onChange={(value) => setFormData({ ...formData, scheduled_date: value })}
+              placeholder="تاریخ جلسه را انتخاب کنید"
             />
           </div>
 

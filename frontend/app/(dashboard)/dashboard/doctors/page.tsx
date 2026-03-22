@@ -11,8 +11,9 @@ import {
   MessageSquare, 
   Loader2, 
   AlertCircle,
-  MoreVertical,
-  CalendarCheck
+  MapPin,
+  WalletCards,
+  BadgeCheck
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -20,15 +21,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, fixAvatarUrl } from "@/lib/utils";
 
 // Types
 interface ConnectedDoctor {
@@ -36,10 +30,25 @@ interface ConnectedDoctor {
   name: string;
   avatar: string | null;
   role_label: string;
-  specialty?: string; // New field from backend update
+  specialty?: string;
+  expert_profession_slug?: string | null;
+  expert_profession_label?: string | null;
+  location_name?: string | null;
+  clinic_address?: string;
+  meeting_price?: string;
+  accepting_new_patients?: boolean;
   last_message: string;
   last_message_date: string;
   unread_count: number;
+}
+
+const EN_NUMBER_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+function getMeetingPriceLabel(value: string | number | null | undefined): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "string" ? Number(value) : value;
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return `${EN_NUMBER_FORMATTER.format(Math.round(parsed))} تومان`;
 }
 
 export default function MyDoctorsPage() {
@@ -90,7 +99,9 @@ export default function MyDoctorsPage() {
 
   const filteredDoctors = doctors.filter(d => 
     d.name.toLowerCase().includes(search.toLowerCase()) || 
-    (d.specialty && d.specialty.toLowerCase().includes(search.toLowerCase()))
+    (d.specialty && d.specialty.toLowerCase().includes(search.toLowerCase())) ||
+    (d.expert_profession_label && d.expert_profession_label.toLowerCase().includes(search.toLowerCase())) ||
+    (d.location_name && d.location_name.toLowerCase().includes(search.toLowerCase()))
   );
 
   return (
@@ -153,22 +164,58 @@ export default function MyDoctorsPage() {
                <CardHeader className="flex flex-row items-start justify-between pb-2 space-y-0">
                   <div className="flex gap-3">
                      <Avatar className="h-12 w-12 border border-border">
-                        <AvatarImage src={doc.avatar || ""} />
+                        <AvatarImage src={fixAvatarUrl(doc.avatar) || ""} />
                         <AvatarFallback className="bg-indigo-50 text-indigo-600">
                            {doc.name.slice(0,1)}
                         </AvatarFallback>
                      </Avatar>
-                     <div>
+                     <div className="min-w-0">
                         <CardTitle className="text-base font-bold">{doc.name}</CardTitle>
-                        <CardDescription className="text-xs mt-1 font-medium text-primary">
-                           {doc.specialty || "متخصص"}
-                        </CardDescription>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                          {doc.specialty ? (
+                            <Badge variant="secondary" className="font-normal text-xs">
+                              {doc.specialty}
+                            </Badge>
+                          ) : null}
+                          {doc.expert_profession_label ? (
+                            <Badge variant="outline" className="font-normal text-xs">
+                              {doc.expert_profession_label}
+                            </Badge>
+                          ) : null}
+                        </div>
                      </div>
                   </div>
 
                </CardHeader>
                
                <CardContent className="flex-1 pb-2">
+                 <div className="mb-3 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                    {doc.location_name ? (
+                      <span className="flex items-center gap-1">
+                        <MapPin className="h-3.5 w-3.5" />
+                        {doc.location_name}
+                      </span>
+                    ) : null}
+                    {getMeetingPriceLabel(doc.meeting_price) ? (
+                      <span className="flex items-center gap-1">
+                        <WalletCards className="h-3.5 w-3.5" />
+                        {getMeetingPriceLabel(doc.meeting_price)}
+                      </span>
+                    ) : null}
+                    {doc.accepting_new_patients ? (
+                      <span className="flex items-center gap-1 text-emerald-500">
+                        <BadgeCheck className="h-3.5 w-3.5" />
+                        پذیرش فعال
+                      </span>
+                    ) : null}
+                 </div>
+
+                 {doc.clinic_address ? (
+                   <p className="mb-3 line-clamp-1 text-xs text-muted-foreground">
+                     {doc.clinic_address}
+                   </p>
+                 ) : null}
+
                  {/* Last Message Preview */}
                  <div className="bg-muted/30 rounded-lg p-3 text-xs mt-2 border border-border/50">
                     <div className="flex justify-between items-center mb-1 text-[10px] text-muted-foreground">

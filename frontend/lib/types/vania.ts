@@ -293,6 +293,7 @@ export interface VisitorCaseState {
   greeting?: string;
   clinical_summary?: string;
   current_phase?: string;
+  active_goals?: string[];
   tasks: RescueTask[];
   medications: MedicationEntry[];
   timeline: any[];

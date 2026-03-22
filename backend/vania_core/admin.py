@@ -4,6 +4,8 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.html import format_html
 from .models import (
+    CaseAccessGrant,
+    CaseContextEntry,
     RoleVerificationRequest, 
     DoctorProfile, 
     TreatmentConnection, 
@@ -72,6 +74,60 @@ class TreatmentConnectionAdmin(admin.ModelAdmin):
     def patient_phone(self, obj):
         return obj.patient.phone_number
     patient_phone.short_description = "Patient"
+
+
+@admin.register(CaseAccessGrant)
+class CaseAccessGrantAdmin(admin.ModelAdmin):
+    list_display = ("case_id", "patient", "owner_doctor", "grantee_doctor", "access_mode", "status", "updated_at")
+    list_filter = ("status", "access_mode", "created_at", "updated_at")
+    search_fields = (
+        "case_id",
+        "patient__phone_number",
+        "patient__full_name",
+        "owner_doctor__phone_number",
+        "owner_doctor__full_name",
+        "grantee_doctor__phone_number",
+        "grantee_doctor__full_name",
+    )
+    autocomplete_fields = ["patient", "owner_doctor", "grantee_doctor", "granted_by"]
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(CaseContextEntry)
+class CaseContextEntryAdmin(admin.ModelAdmin):
+    list_display = ("user", "doctor_scope", "case_count", "case_titles_preview", "is_active", "created_at")
+    list_filter = ("is_active", "source", "created_at")
+    search_fields = ("user__phone_number", "user__full_name", "definition__key", "data")
+    autocomplete_fields = ["user", "created_by"]
+    readonly_fields = ("definition", "doctor_scope", "case_count", "case_titles_preview", "created_at")
+    fields = ("user", "definition", "doctor_scope", "case_count", "case_titles_preview", "data", "source", "created_by", "is_active", "created_at")
+
+    def get_queryset(self, request):
+        return (
+            super()
+            .get_queryset(request)
+            .select_related("user", "definition", "created_by")
+            .filter(definition__key__startswith="vania_cases__doctor_")
+        )
+
+    def doctor_scope(self, obj):
+        key = getattr(getattr(obj, "definition", None), "key", "") or ""
+        return key.replace("vania_cases__doctor_", "") if key.startswith("vania_cases__doctor_") else "-"
+    doctor_scope.short_description = "Owner Expert ID"
+
+    def case_count(self, obj):
+        cases = obj.data.get("cases", []) if isinstance(obj.data, dict) else []
+        return len(cases) if isinstance(cases, list) else 0
+    case_count.short_description = "Cases"
+
+    def case_titles_preview(self, obj):
+        cases = obj.data.get("cases", []) if isinstance(obj.data, dict) else []
+        if not isinstance(cases, list) or not cases:
+            return "-"
+        titles = [str(item.get("title") or "بدون عنوان") for item in cases[:3]]
+        suffix = " ..." if len(cases) > 3 else ""
+        return " | ".join(titles) + suffix
+    case_titles_preview.short_description = "Titles"
 
 @admin.register(PatientInvite)
 class PatientInviteAdmin(admin.ModelAdmin):

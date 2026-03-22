@@ -11,6 +11,20 @@ import { ManualReportDialog } from "./ManualReportDialog";
 import { cn } from "@/lib/utils";
 import { normalizeFlashcards } from "@/lib/flashcards";
 
+const normalizeGoals = (goals: unknown): string[] =>
+  Array.isArray(goals) ? goals.map((goal) => String(goal).trim()).filter(Boolean) : [];
+
+const normalizeSwot = (swot: any) => {
+  if (!swot || typeof swot !== "object") return null;
+  const normalized = {
+    Strengths: normalizeGoals(swot.Strengths),
+    Weaknesses: normalizeGoals(swot.Weaknesses),
+    Opportunities: normalizeGoals(swot.Opportunities),
+    Threats: normalizeGoals(swot.Threats),
+  };
+  return Object.values(normalized).some((items) => items.length > 0) ? normalized : null;
+};
+
 interface Props {
   session: RoadmapSession;
   allSessionsHistory: any[]; 
@@ -33,6 +47,8 @@ export function SessionDetail({ session, allSessionsHistory, patientName, patien
   let summaryText = "";
   let privateNotes = "";
   let flashcards: any[] = [];
+  let swotAnalysis: any = null;
+  let smartGoals: string[] = [];
 
   if (reportLog) {
       privateNotes = reportLog.private_notes || "";
@@ -40,6 +56,8 @@ export function SessionDetail({ session, allSessionsHistory, patientName, patien
           if (reportLog.summary && typeof reportLog.summary === 'string' && reportLog.summary.trim().startsWith('{')) {
               structuredReport = JSON.parse(reportLog.summary);
               summaryText = structuredReport.symptoms_analysis || structuredReport.summary || "";
+              swotAnalysis = normalizeSwot(structuredReport.swot_analysis || reportLog.swot_analysis);
+              smartGoals = normalizeGoals(structuredReport.smart_goals || reportLog.smart_goals);
               
               if (!privateNotes && structuredReport.private_notes) {
                   privateNotes = structuredReport.private_notes;
@@ -47,20 +65,42 @@ export function SessionDetail({ session, allSessionsHistory, patientName, patien
               flashcards = normalizeFlashcards(structuredReport.flashcards || reportLog.flashcards || []);
           } else {
               summaryText = reportLog.summary || "";
-              structuredReport = { is_simple: true };
+              swotAnalysis = normalizeSwot(reportLog.swot_analysis);
+              smartGoals = normalizeGoals(reportLog.smart_goals);
+              structuredReport = {
+                is_simple: true,
+                swot_analysis: swotAnalysis,
+                smart_goals: smartGoals,
+              };
               flashcards = normalizeFlashcards(reportLog.flashcards || []);
           }
       } catch (e) {
           summaryText = reportLog.summary || "";
+          swotAnalysis = normalizeSwot(reportLog.swot_analysis);
+          smartGoals = normalizeGoals(reportLog.smart_goals);
+          structuredReport = {
+            is_simple: true,
+            swot_analysis: swotAnalysis,
+            smart_goals: smartGoals,
+          };
           flashcards = normalizeFlashcards(reportLog.flashcards || []);
       }
+  }
+
+  if (structuredReport && !structuredReport.swot_analysis && swotAnalysis) {
+    structuredReport.swot_analysis = swotAnalysis;
+  }
+  if (structuredReport && (!Array.isArray(structuredReport.smart_goals) || structuredReport.smart_goals.length === 0) && smartGoals.length > 0) {
+    structuredReport.smart_goals = smartGoals;
   }
 
   // 3. Normalize for Edit Modal
   const initialFormState = {
     summary: summaryText,
     private_notes: privateNotes,
-    flashcards
+    flashcards,
+    swot_analysis: swotAnalysis,
+    smart_goals: smartGoals,
   };
 
   return (
@@ -95,7 +135,7 @@ export function SessionDetail({ session, allSessionsHistory, patientName, patien
             />
 
             {structuredReport && (
-                <DownloadButton data={{...structuredReport, symptoms_analysis: summaryText, flashcards}} patientName={patientName} />
+                <DownloadButton data={{...structuredReport, symptoms_analysis: summaryText, flashcards, swot_analysis: swotAnalysis || structuredReport.swot_analysis, smart_goals: smartGoals.length > 0 ? smartGoals : structuredReport.smart_goals}} patientName={patientName} />
             )}
         </div>
       </div>
@@ -128,7 +168,7 @@ function CompletedSessionView({ report, summary, privateNotes, flashcards }: { r
                     <span className="text-xs font-bold text-red-500/90">یادداشت محرمانه متخصص</span>
                     <span className="text-[9px] bg-red-950/30 px-2 py-0.5 rounded-full text-red-400/70 border border-red-900/20 mr-auto">غیرقابل نمایش برای مراجعه کننده</span>
                 </div>
-                <p className="text-xs text-red-200/80 leading-relaxed whitespace-pre-wrap">
+                <p className="text-xs text-right text-red-200/80 leading-relaxed whitespace-pre-wrap break-words" dir="rtl">
                     {privateNotes}
                 </p>
             </div>
@@ -147,7 +187,7 @@ function CompletedSessionView({ report, summary, privateNotes, flashcards }: { r
                 </div>
             )}
             {summary ? (
-                <p className="text-sm leading-8 text-foreground/80 bg-muted/10 p-4 rounded-xl border border-border/40 text-justify whitespace-pre-wrap shadow-sm">
+                <p className="text-sm text-right leading-8 text-foreground/80 bg-muted/10 p-4 rounded-xl border border-border/40 whitespace-pre-wrap break-words shadow-sm" dir="rtl">
                     {summary}
                 </p>
             ) : (
@@ -171,18 +211,18 @@ function CompletedSessionView({ report, summary, privateNotes, flashcards }: { r
         )}
 
         {/* 4. SMART Goals */}
-        {report?.smart_goals?.length > 0 && (
+        {normalizeGoals(report?.smart_goals).length > 0 && (
             <div>
                 <h4 className="text-xs font-bold text-foreground/90 mb-3 flex items-center gap-2 opacity-90">
                     <Target className="w-4 h-4 text-emerald-500" /> اهداف هوشمند (SMART)
                 </h4>
                 <div className="space-y-2">
-                    {report.smart_goals.map((goal: string, i: number) => (
+                    {normalizeGoals(report?.smart_goals).map((goal: string, i: number) => (
                         <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-emerald-950/10 border border-emerald-900/20 text-xs text-emerald-100/90">
                             <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-500 flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">
                                 {i + 1}
                             </span>
-                            <span className="leading-relaxed">{goal}</span>
+                            <span className="leading-relaxed text-right" dir="rtl">{goal}</span>
                         </div>
                     ))}
                 </div>
@@ -204,7 +244,7 @@ function CompletedSessionView({ report, summary, privateNotes, flashcards }: { r
                             <div className="font-bold text-sm text-foreground/90 mb-2 border-b border-border/30 pb-2 group-hover:text-amber-500 transition-colors">
                                 {card.title}
                             </div>
-                            <div className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                            <div className="text-xs text-right text-muted-foreground leading-relaxed whitespace-pre-wrap break-words" dir="rtl">
                                 {card.content}
                             </div>
                         </div>
@@ -224,7 +264,7 @@ function PlannedSessionView({ session }: { session: RoadmapSession }) {
                 <Lock className="w-4 h-4" />
                 دستورالعمل‌های راهنما (محرمانه)
             </h4>
-            <p className="text-xs text-amber-200/80 leading-relaxed whitespace-pre-wrap">
+            <p className="text-xs text-right text-amber-200/80 leading-relaxed whitespace-pre-wrap break-words" dir="rtl">
                 {session.doctor_instructions || "دستورالعملی موجود نیست."}
             </p>
         </div>
@@ -247,7 +287,7 @@ function SwotCard({ title, items, accentColor }: { title: string, items: string[
             <h5 className={cn("text-[10px] font-bold uppercase tracking-wider mb-2.5", accentColor)}>{title}</h5>
             <ul className="space-y-1.5">
                 {items.map((item: string, i: number) => (
-                    <li key={i} className="text-[11px] text-muted-foreground leading-snug flex gap-2">
+                    <li key={i} className="text-[11px] text-right text-muted-foreground leading-snug flex gap-2" dir="rtl">
                         <span className={cn("mt-1.5 w-1 h-1 rounded-full shrink-0", accentColor.replace('text-', 'bg-'))} />
                         {item}
                     </li>

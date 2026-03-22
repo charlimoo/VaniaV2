@@ -25,6 +25,8 @@ from .views import (
     CaseShareGrantView,
     TaskManagementView, 
     SessionManagementView,
+    CaseProfileNotesView,
+    MedicationManagementView,
     LocationListView,
     RoadmapView,
     AppendixView,
@@ -81,8 +83,11 @@ urlpatterns = [
     path('cases/<str:case_id>/shares/<int:expert_id>/', CaseShareGrantView.as_view(), name='case-share-revoke'),
     path('tasks/manage/', TaskManagementView.as_view(), name='task-create'),
     path('tasks/manage/<str:task_id>/', TaskManagementView.as_view(), name='task-update-delete'),
+    path('medications/', MedicationManagementView.as_view(), name='medication-create'),
+    path('medications/<str:medication_id>/', MedicationManagementView.as_view(), name='medication-update-delete'),
     path('sessions/manage/', SessionManagementView.as_view(), name='session-create'),
     path('sessions/manage/<int:entry_id>/', SessionManagementView.as_view(), name='session-update-delete'),
+    path('case-profile/', CaseProfileNotesView.as_view(), name='case-profile-notes'),
     path('locations/', LocationListView.as_view(), name='location-list'),
 
     # --- [NEW] Endpoints for Vania Clinical Operating System (VCOS) ---

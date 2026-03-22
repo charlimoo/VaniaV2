@@ -1,5 +1,6 @@
 # backend/vania_core/session_service.py
 import logging
+import json
 from django.utils import timezone
 from users.services import user_context_manager
 from users.models import UserContextEntry
@@ -82,6 +83,25 @@ class SessionService:
                 continue
             if case_id and payload.get("case_id") != case_id:
                 continue
+
+            raw_summary = payload.get("summary", "")
+            if isinstance(raw_summary, str) and raw_summary.strip().startswith("{"):
+                try:
+                    parsed_summary = json.loads(raw_summary)
+                    if isinstance(parsed_summary, dict):
+                        payload["summary"] = (
+                            parsed_summary.get("symptoms_analysis")
+                            or parsed_summary.get("summary")
+                            or ""
+                        )
+                        payload["flashcards"] = parsed_summary.get("flashcards") or payload.get("flashcards") or []
+                        payload["swot_analysis"] = parsed_summary.get("swot_analysis") or payload.get("swot_analysis") or {}
+                        payload["smart_goals"] = parsed_summary.get("smart_goals") or payload.get("smart_goals") or []
+                        payload["session_number"] = parsed_summary.get("session_number") or payload.get("session_number")
+                        payload["title"] = parsed_summary.get("topic") or payload.get("title")
+                        payload["date"] = parsed_summary.get("date") or payload.get("date")
+                except Exception:
+                    logger.warning("Failed to parse structured session summary for entry %s", entry.id)
             
             # [CRITICAL] Inject the DB ID so the frontend can reference this specific log
             payload['id'] = entry.id 

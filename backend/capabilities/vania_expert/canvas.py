@@ -19,7 +19,7 @@ class PatientManagerCanvas(BaseCanvas):
     def get_default_state(cls) -> Dict[str, Any]:
         return {
             "is_active": False,
-            "active_view": "CASES",
+            "active_view": "BASE",
             "active_tab": "CASE_OVERVIEW",
             "patient_profile": None,
             "base_profile": {

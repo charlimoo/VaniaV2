@@ -29,6 +29,9 @@ from .services import (
     SessionService,
     ProfileService,
 )
+from vania_core.patient_service import PatientDataService
+
+from .medication_service import MedicationService
 from .tests_service import ClinicalTestsService
 from .case_files_service import CaseFilesService
 from .flashcards import normalize_flashcards
@@ -62,6 +65,7 @@ from users.models import CustomUser, UserContextEntry
 from users.roles import is_expert, is_visitor
 from capabilities.vania_visitor.forms import FORM_BASE_PROFILE
 from .case_service import CaseService
+from services.models_canvas import CanvasInstance
 
 # Configure logger for this module
 logger = logging.getLogger(__name__)
@@ -562,20 +566,42 @@ class ConversationListView(APIView):
         for conn in connections:
             other = conn.patient if conn.doctor == user else conn.doctor
             role_label = "مراجعه‌کننده" if conn.doctor == user else "متخصص"
-            
+
             try:
                 profile = other.doctor_profile
             except DoctorProfile.DoesNotExist:
                 profile = None
-                
+
             specialty = profile.specialty if profile else ""
+            expert_profession = getattr(other, "expert_profession", None)
+            location_name = profile.location.name if profile and profile.location else ""
+            clinic_address = profile.clinic_address if profile else ""
+            meeting_price = profile.meeting_price if profile else 0
+            accepting_new_patients = bool(profile.accepting_new_patients) if profile else False
             avatar = None
-            if profile and profile.avatar: 
+            if profile and profile.avatar:
                 avatar = request.build_absolute_uri(profile.avatar.url)
-            
+
             last_msg = SecureMessage.objects.filter(Q(sender=user, recipient=other) | Q(sender=other, recipient=user)).last()
             unread = SecureMessage.objects.filter(sender=other, recipient=user, is_read=False).count()
-            results.append({"user_id": other.id, "name": other.full_name or other.phone_number,"phone_number": other.phone_number, "email": other.email, "avatar": avatar, "role_label": role_label, "specialty": specialty, "last_message": last_msg.content if last_msg else "گفتگو را شروع کنید...", "last_message_date": last_msg.created_at if last_msg else conn.updated_at, "unread_count": unread})
+            results.append({
+                "user_id": other.id,
+                "name": other.full_name or other.phone_number,
+                "phone_number": other.phone_number,
+                "email": other.email,
+                "avatar": avatar,
+                "role_label": role_label,
+                "specialty": specialty,
+                "expert_profession_slug": getattr(expert_profession, "slug", None),
+                "expert_profession_label": getattr(expert_profession, "name", None),
+                "location_name": location_name,
+                "clinic_address": clinic_address,
+                "meeting_price": meeting_price,
+                "accepting_new_patients": accepting_new_patients,
+                "last_message": last_msg.content if last_msg else "گفتگو را شروع کنید...",
+                "last_message_date": last_msg.created_at if last_msg else conn.updated_at,
+                "unread_count": unread,
+            })
         results.sort(key=lambda x: x['last_message_date'], reverse=True)
         serializer = ConversationSerializer(results, many=True)
         return Response(serializer.data)
@@ -790,6 +816,17 @@ class RoadmapView(APIView):
         if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
             return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
 
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id, case_id=case_id)
+        target_session = next((item for item in roadmap.sessions if item.session_number == int(session_number)), None)
+        if not target_session:
+            return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if target_session.doc_id:
+            try:
+                SessionService.delete_session(int(target_session.doc_id), request.user)
+            except (TypeError, ValueError):
+                logger.warning("Failed to soft-delete linked session log for roadmap session %s", session_number)
+
         deleted = RoadmapService.delete_session(
             patient,
             int(session_number),
@@ -800,6 +837,7 @@ class RoadmapView(APIView):
             return Response({"error": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
 
         roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id, case_id=case_id)
+        SessionReportView._refresh_visitor_dashboard_canvas(patient, request.user.id, case_id)
         return Response(TherapyRoadmapSerializer(roadmap).data)
 
 
@@ -1384,9 +1422,11 @@ class CaseFileDownloadView(APIView):
 
 class AppendixView(APIView):
     """API endpoint for managing the Thought Appendix."""
-    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        if not is_expert(request.user):
+            return Response({"error": "Only experts can browse appendix data through this endpoint."}, status=status.HTTP_403_FORBIDDEN)
         patient_id = request.query_params.get('visitor_id') or request.query_params.get('patient_id')
         patient = get_object_or_404(CustomUser, pk=patient_id)
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
@@ -1400,6 +1440,8 @@ class AppendixView(APIView):
         return Response(library.model_dump())
 
     def post(self, request):
+        if not is_expert(request.user):
+            return Response({"error": "Only experts can add appendix resources."}, status=status.HTTP_403_FORBIDDEN)
         patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         patient = get_object_or_404(CustomUser, pk=patient_id)
         
@@ -1411,6 +1453,56 @@ class AppendixView(APIView):
             new_resource = AppendixService.add_resource(patient, request.user, serializer.validated_data, doctor_id=request.user.id, case_id=case_id)
             return Response(new_resource.model_dump(), status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def patch(self, request):
+        resource_id = request.data.get("resource_id")
+        next_status = request.data.get("status")
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if not resource_id or not next_status:
+            return Response({"error": "resource_id and status are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if is_expert(request.user):
+            patient_id = request.data.get("visitor_id") or request.data.get("patient_id")
+            patient = get_object_or_404(CustomUser, pk=patient_id)
+            if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+                return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+            _, doctor_scope, can_edit = _resolve_expert_case_scope(request, patient, case_id)
+            if case_id and not doctor_scope:
+                return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+            if case_id and not can_edit:
+                return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+            doctor_scope = doctor_scope or request.user.id
+        else:
+            patient = request.user
+            raw_doctor = (
+                request.data.get("expert_id")
+                or request.data.get("doctor_id")
+                or request.headers.get("X-Target-Expert-ID")
+                or request.headers.get("X-Target-Doctor-ID")
+            )
+            try:
+                doctor_scope = int(raw_doctor) if raw_doctor else None
+            except (TypeError, ValueError):
+                doctor_scope = None
+            if not doctor_scope or not case_id:
+                return Response({"error": "doctor_id and case_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+            if not any(
+                item.get("id") == case_id and int(item.get("doctor_id") or 0) == doctor_scope
+                for item in CaseService.get_accessible_cases_for_patient(patient)
+            ):
+                return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+
+        updated = AppendixService.update_resource_status(
+            patient,
+            resource_id,
+            next_status,
+            doctor_id=doctor_scope,
+            case_id=case_id,
+        )
+        if not updated:
+            return Response({"error": "Resource not found."}, status=status.HTTP_404_NOT_FOUND)
+        library = AppendixService.get_library(patient, doctor_id=doctor_scope, case_id=case_id)
+        return Response(library.model_dump())
 
 
 class ActiveSessionView(APIView):
@@ -1436,6 +1528,108 @@ class ActiveSessionView(APIView):
             return Response({"status": "updated", "active_session": session_number})
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class MedicationManagementView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+
+    def post(self, request):
+        patient_id = request.data.get("visitor_id") or request.data.get("patient_id")
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if not patient_id or not case_id:
+            return Response({"error": "patient_id and case_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        _, doctor_scope, can_edit = _resolve_expert_case_scope(request, patient, case_id)
+        if not doctor_scope:
+            return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+        if not can_edit:
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+
+        medication = MedicationService.add_medication(
+            patient,
+            request.user,
+            {
+                "drug_name": request.data.get("drug_name") or request.data.get("name") or "",
+                "dosage": request.data.get("dosage", ""),
+                "usage_instructions": request.data.get("usage_instructions", ""),
+                "timing": request.data.get("timing", ""),
+                "duration": request.data.get("duration", ""),
+                "notes": request.data.get("notes", ""),
+            },
+            doctor_id=doctor_scope,
+            case_id=case_id,
+        )
+        return Response(medication.model_dump(), status=status.HTTP_201_CREATED)
+
+    def put(self, request, medication_id):
+        patient_id = request.data.get("visitor_id") or request.data.get("patient_id")
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if not patient_id or not case_id:
+            return Response({"error": "patient_id and case_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        _, doctor_scope, can_edit = _resolve_expert_case_scope(request, patient, case_id)
+        if not doctor_scope:
+            return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+        if not can_edit:
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+
+        updated = MedicationService.update_medication(
+            patient,
+            medication_id,
+            {
+                key: value
+                for key, value in {
+                    "drug_name": request.data.get("drug_name", request.data.get("name")),
+                    "dosage": request.data.get("dosage"),
+                    "usage_instructions": request.data.get("usage_instructions"),
+                    "timing": request.data.get("timing"),
+                    "duration": request.data.get("duration"),
+                    "notes": request.data.get("notes"),
+                }.items()
+                if value is not None
+            },
+            creator=request.user,
+            doctor_id=doctor_scope,
+            case_id=case_id,
+        )
+        if not updated:
+            return Response({"error": "Medication not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(updated.model_dump())
+
+    def delete(self, request, medication_id):
+        patient_id = request.query_params.get("visitor_id") or request.query_params.get("patient_id")
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if not patient_id or not case_id:
+            return Response({"error": "patient_id and case_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        _, doctor_scope, can_edit = _resolve_expert_case_scope(request, patient, case_id)
+        if not doctor_scope:
+            return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+        if not can_edit:
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+
+        deleted = MedicationService.delete_medication(
+            patient,
+            medication_id,
+            creator=request.user,
+            doctor_id=doctor_scope,
+            case_id=case_id,
+        )
+        if not deleted:
+            return Response({"error": "Medication not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"status": "deleted"})
 
 # ==============================================================================
 # == 5. OTHER UTILITY/CRUD VIEWS
@@ -1528,6 +1722,42 @@ class SessionManagementView(APIView):
             return Response({"status": "deleted"})
         return Response({"error": "Delete failed"}, status=400)
 
+
+class CaseProfileNotesView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+
+    def put(self, request):
+        patient_id = request.data.get("visitor_id") or request.data.get("patient_id")
+        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
+        summary_text = request.data.get("clinical_summary")
+        analysis_text = request.data.get("forms_tests_analysis")
+
+        if not patient_id or not case_id:
+            return Response({"error": "patient_id and case_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+        if summary_text is None and analysis_text is None:
+            return Response({"error": "No case profile fields provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+        _, doctor_scope, can_edit = _resolve_expert_case_scope(request, patient, case_id)
+        if not doctor_scope:
+            return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+        if not can_edit:
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+
+        if summary_text is not None:
+            ProfileService.update_summary(patient, str(summary_text), doctor_id=doctor_scope, case_id=case_id)
+        if analysis_text is not None:
+            ProfileService.update_forms_tests_analysis(patient, str(analysis_text), doctor_id=doctor_scope, case_id=case_id)
+
+        payload = {
+            "clinical_summary": ProfileService.get_summary(patient, doctor_id=doctor_scope, case_id=case_id),
+            "forms_tests_analysis": ProfileService.get_forms_tests_analysis(patient, doctor_id=doctor_scope, case_id=case_id),
+        }
+        SessionReportView._refresh_visitor_dashboard_canvas(patient, doctor_scope, case_id)
+        return Response(payload)
+
 class CompleteTaskView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -1604,6 +1834,43 @@ class SessionReportView(APIView):
     """
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
 
+    @staticmethod
+    def _refresh_visitor_dashboard_canvas(patient, doctor_id: int, case_id: Optional[str]):
+        try:
+            payload = PatientDataService.get_patient_dashboard_snapshot(patient, doctor_id=doctor_id, case_id=case_id)
+            canvas = CanvasInstance.objects.filter(
+                session_id=f"visitor-dashboard-{patient.id}",
+                canvas_def__component_key="VANIA_PATIENT_JOURNEY",
+            ).first()
+            if not canvas or not isinstance(canvas.current_state, dict):
+                return
+
+            next_state = dict(canvas.current_state)
+            next_state.update(payload)
+            canvas.current_state = next_state
+            canvas.save(update_fields=["current_state", "last_modified_at"])
+        except Exception as exc:
+            logger.warning("Failed to refresh visitor dashboard canvas for patient %s: %s", patient.id, exc)
+
+    @staticmethod
+    def _normalize_swot(raw_swot):
+        normalized = {
+            "Strengths": [],
+            "Weaknesses": [],
+            "Opportunities": [],
+            "Threats": [],
+        }
+        if not isinstance(raw_swot, dict):
+            return normalized
+
+        for key in normalized.keys():
+            value = raw_swot.get(key, [])
+            if isinstance(value, list):
+                normalized[key] = [str(item).strip() for item in value if str(item).strip()]
+            elif isinstance(value, str):
+                normalized[key] = [line.strip() for line in value.splitlines() if line.strip()]
+        return normalized
+
     def post(self, request):
         patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
         session_number = request.data.get('session_number')
@@ -1614,13 +1881,21 @@ class SessionReportView(APIView):
         private_notes = request.data.get('private_notes', '')
         raw_flashcards = request.data.get('flashcards', [])
         flashcards = normalize_flashcards(raw_flashcards)
+        swot_analysis = self._normalize_swot(request.data.get('swot_analysis') or request.data.get('swot') or {})
+        smart_goals = [
+            str(item).strip()
+            for item in (request.data.get('smart_goals') or request.data.get('goals') or [])
+            if str(item).strip()
+        ]
         logger.info(
-            "🧪 [SessionReportView] patient=%s doctor=%s session=%s flashcards_in=%s flashcards_out=%s",
+            "🧪 [SessionReportView] patient=%s doctor=%s session=%s flashcards_in=%s flashcards_out=%s swot_keys=%s goals=%s",
             patient_id,
             request.user.id,
             session_number,
             len(raw_flashcards) if isinstance(raw_flashcards, list) else 0,
             len(flashcards),
+            ",".join([key for key, items in swot_analysis.items() if items]),
+            len(smart_goals),
         )
         
         if not patient_id or session_number is None:
@@ -1635,9 +1910,16 @@ class SessionReportView(APIView):
         # 1. Get Roadmap to check if session exists and if it has a doc_id
         roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id, case_id=case_id)
         target_session = next((s for s in roadmap.sessions if s.session_number == int(session_number)), None)
-        
         if not target_session:
-            return Response({"error": "Session not found in roadmap."}, status=404)
+            target_session = RoadmapService.ensure_session(
+                patient,
+                session_number=int(session_number),
+                title=request.data.get('topic') or f"جلسه {session_number}",
+                scheduled_date=request.data.get('date') or timezone.now().strftime('%Y-%m-%d'),
+                status="COMPLETED",
+                doctor_id=request.user.id,
+                case_id=case_id,
+            )
 
         # 2. Prepare Payload (Structured JSON)
         # We merge with existing data if we are updating, to not lose other AI generated fields
@@ -1647,6 +1929,8 @@ class SessionReportView(APIView):
             "date": request.data.get('date') or timezone.now().strftime('%Y-%m-%d'),
             "topic": target_session.title,
             "symptoms_analysis": summary, # This maps to the main summary
+            "swot_analysis": swot_analysis,
+            "smart_goals": smart_goals,
             "flashcards": flashcards,
             # We preserve existing smart_goals/swot if we are just editing the text
         }
@@ -1687,6 +1971,7 @@ class SessionReportView(APIView):
         # 5. Fetch updated states to return for UI Sync
         updated_roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=request.user.id, case_id=case_id)
         updated_history = SessionService.get_patient_history(patient, viewer_role='DOCTOR', doctor_id=request.user.id, case_id=case_id)
+        self._refresh_visitor_dashboard_canvas(patient, request.user.id, case_id)
 
         return Response({
             "status": "success", 

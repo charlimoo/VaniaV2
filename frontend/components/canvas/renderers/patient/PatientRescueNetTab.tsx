@@ -38,6 +38,18 @@ const DIMENSIONS: Record<string, { label: string; color: string }> = {
   "SOLITUDE": { label: "مدیریت تنهایی", color: "text-orange-400 bg-muted-50 border-muted-100" },
 };
 
+const formatDueDate = (value?: string) => {
+  if (!value) return "";
+  if (value.includes("/")) return value;
+  try {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString("fa-IR");
+  } catch {
+    return value;
+  }
+};
+
 export function PatientRescueNetTab({ tasks, selectedDoctorId, selectedCaseId, onEdit }: Props) {
   // Track loading state for individual task IDs to prevent double-clicks
   const [loadingIds, setLoadingIds] = useState<Set<string>>(new Set());
@@ -175,7 +187,7 @@ export function PatientRescueNetTab({ tasks, selectedDoctorId, selectedCaseId, o
                         {task.due_date && !isDone && (
                           <div className="flex items-center gap-1 mt-1.5 text-[10px] text-amber-600/80 font-medium">
                             <CalendarClock className="w-3 h-3" />
-                            {new Date(task.due_date).toLocaleDateString('fa-IR')}
+                            {formatDueDate(task.due_date)}
                           </div>
                         )}
                       </div>

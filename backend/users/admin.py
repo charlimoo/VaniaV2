@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import CustomUser, UserProfile, UserRole, OTPRequest, ContextDefinition, UserContextEntry
+from .models import CustomUser, UserProfile, UserRole, OTPRequest, ContextDefinition, UserContextEntry, ExpertProfession
 from billing.models import UserWallet
 from billing.forms import UserWalletAdminForm
 
@@ -21,18 +21,33 @@ class UserProfileInline(admin.StackedInline):
 @admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):
     list_display = ('phone_number', 'full_name', 'get_role', 'is_verified_doctor', 'date_joined')
-    list_filter = ('role', 'is_verified_doctor', 'is_staff', 'is_active')
+    list_filter = ('role', 'expert_profession', 'is_verified_doctor', 'is_expert_verified', 'is_staff', 'is_active')
     search_fields = ('phone_number', 'full_name', 'email')
     ordering = ('-date_joined',)
     
     fieldsets = (
         (None, {'fields': ('phone_number', 'password')}),
         ('Personal info', {'fields': ('full_name', 'email', 'role')}),
-        ('Doctor Info', {'fields': ('medical_license', 'is_verified_doctor')}),
+        ('Doctor Info', {'fields': ('expert_profession', 'medical_license', 'is_verified_doctor', 'is_expert_verified', 'expert_verified_at')}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
         ('Important dates', {'fields': ('last_login', 'date_joined')}),
     )
+    add_fieldsets = (
+        (None, {
+            'classes': ('wide',),
+            'fields': ('phone_number', 'password1', 'password2', 'full_name', 'email', 'role', 'expert_profession', 'is_active', 'is_staff'),
+        }),
+    )
+    readonly_fields = ('expert_verified_at', 'date_joined', 'last_login')
     inlines = (UserWalletInline, UserProfileInline)
+
+    def get_deleted_objects(self, objs, request):
+        deleted_objects, model_count, perms_needed, protected = super().get_deleted_objects(objs, request)
+
+        # Allow wallet transactions to be removed as part of a user cascade-delete
+        # even though transactions are not meant to be manually deletable in admin.
+        filtered_perms = {perm for perm in perms_needed if perm.lower() != "transaction"}
+        return deleted_objects, model_count, filtered_perms, protected
 
     def get_role(self, obj):
         return obj.role.name if obj.role else '-'
@@ -41,6 +56,12 @@ class CustomUserAdmin(UserAdmin):
 @admin.register(UserRole)
 class UserRoleAdmin(admin.ModelAdmin):
     list_display = ('name', 'slug')
+
+@admin.register(ExpertProfession)
+class ExpertProfessionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'slug', 'validation_kind', 'is_active')
+    list_filter = ('is_active', 'validation_kind')
+    search_fields = ('name', 'slug', 'description')
 
 @admin.register(OTPRequest)
 class OTPRequestAdmin(admin.ModelAdmin):

@@ -3,7 +3,7 @@
 
 import logging
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, Body, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from asgiref.sync import sync_to_async
 
@@ -198,17 +198,24 @@ async def get_canvas_state(
             pm_canvas = next((c for c in canvases_data if c['component_key'] == 'VANIA_PATIENT_MANAGER'), None)
             if pm_canvas:
                 state = pm_canvas.get('current_state', {})
+                selected_case_payload = state.get("selected_case") if isinstance(state.get("selected_case"), dict) else None
                 if not state.get('is_active'):
                     logger.info("   -> Existing canvas is inactive/empty. Re-triggering hydration.")
                     should_hydrate = True
                 elif scoped_case_id and state.get("selected_case_id") != scoped_case_id:
                     logger.info("   -> Case scope changed for patient manager. Re-triggering hydration.")
                     should_hydrate = True
+                elif scoped_case_id and (
+                    not selected_case_payload or selected_case_payload.get("id") != scoped_case_id
+                ):
+                    logger.info("   -> Patient manager selected_case payload is stale. Re-triggering hydration.")
+                    should_hydrate = True
         if canvases_data:
             pj_canvas = next((c for c in canvases_data if c['component_key'] == 'VANIA_PATIENT_JOURNEY'), None)
             if pj_canvas:
                 state = pj_canvas.get("current_state", {}) or {}
                 cases = state.get("cases") or []
+                selected_case_payload = state.get("selected_case") if isinstance(state.get("selected_case"), dict) else None
                 if not state.get("is_active") or not isinstance(cases, list) or len(cases) == 0:
                     logger.info("   -> Patient journey canvas is empty/inactive. Re-triggering hydration.")
                     should_hydrate = True
@@ -217,6 +224,11 @@ async def get_canvas_state(
                     should_hydrate = True
                 elif scoped_case_id and state.get("selected_case_id") != scoped_case_id:
                     logger.info("   -> Case scope changed for patient journey. Re-triggering hydration.")
+                    should_hydrate = True
+                elif scoped_case_id and (
+                    not selected_case_payload or selected_case_payload.get("id") != scoped_case_id
+                ):
+                    logger.info("   -> Patient journey selected_case payload is stale. Re-triggering hydration.")
                     should_hydrate = True
 
         if should_hydrate and agent_id:
@@ -278,40 +290,66 @@ async def update_canvas_instance(
         patient_id = resource_context.get()
         selected_doctor_id = selected_doctor_context.get()
         selected_case_id = selected_case_context.get()
+        if "selected_doctor_id" in delta:
+            raw_doctor_id = delta.get("selected_doctor_id")
+            selected_doctor_id = None if raw_doctor_id is None else str(raw_doctor_id)
+        elif "doctor_id" in selected_case_delta:
+            raw_doctor_id = selected_case_delta.get("doctor_id")
+            selected_doctor_id = None if raw_doctor_id is None else str(raw_doctor_id)
+
+        if "selected_case_id" in delta:
+            raw_case_id = delta.get("selected_case_id")
+            selected_case_id = None if raw_case_id is None else str(raw_case_id)
+        elif "id" in selected_case_delta:
+            raw_case_id = selected_case_delta.get("id")
+            selected_case_id = None if raw_case_id is None else str(raw_case_id)
         
         if patient_id:
             try:
                 patient = await CustomUser.objects.aget(pk=patient_id)
                 user_is_expert = await sync_to_async(is_expert)(user)
+                resolved_doctor_scope = int(selected_doctor_id) if selected_doctor_id else None
+
+                if "cases" in delta and resolved_doctor_scope:
+                    await sync_to_async(CaseService.save_cases)(
+                        patient,
+                        resolved_doctor_scope,
+                        delta["cases"],
+                        creator=user,
+                    )
+
                 if user_is_expert and selected_case_id:
-                    can_edit = await sync_to_async(CaseService.expert_can_edit_case)(patient, user, selected_case_id)
+                    case_item = await sync_to_async(CaseService.get_accessible_case_for_expert)(patient, user, selected_case_id)
+                    if case_item:
+                        owner_doctor_id = case_item.get("doctor_id")
+                        if owner_doctor_id:
+                            resolved_doctor_scope = int(owner_doctor_id)
+                    can_edit = bool(case_item and case_item.get("can_edit"))
                     if not can_edit:
                         raise HTTPException(status_code=403, detail="This case is read-only for you.")
                 
                 # A. Permanent Summary Update
                 clinical_summary = delta.get("clinical_summary", selected_case_delta.get("clinical_summary"))
                 if clinical_summary is not None:
-                    await sync_to_async(ProfileService.update_summary)(patient, clinical_summary, int(selected_doctor_id) if selected_doctor_id else None, selected_case_id)
+                    await sync_to_async(ProfileService.update_summary)(patient, clinical_summary, resolved_doctor_scope, selected_case_id)
                 
                 # B. Permanent Demographics Update
                 if "patient_profile" in delta:
-                    await sync_to_async(ProfileService.update_demographics)(patient, delta["patient_profile"], int(selected_doctor_id) if selected_doctor_id else None)
+                    await sync_to_async(ProfileService.update_demographics)(patient, delta["patient_profile"], resolved_doctor_scope)
 
                 # C. Permanent Forms+Tests Clinical Analysis
                 analysis_text = delta.get("forms_tests_analysis", selected_case_delta.get("forms_tests_analysis"))
                 if analysis_text is not None:
-                    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, analysis_text, int(selected_doctor_id) if selected_doctor_id else None, selected_case_id)
+                    await sync_to_async(ProfileService.update_forms_tests_analysis)(patient, analysis_text, resolved_doctor_scope, selected_case_id)
                 medication_items = delta.get("medications", selected_case_delta.get("medications"))
                 if medication_items is not None and selected_case_id:
                     await sync_to_async(MedicationService.save_plan)(
                         patient,
                         medication_items,
                         user,
-                        int(selected_doctor_id) if selected_doctor_id else None,
+                        resolved_doctor_scope,
                         selected_case_id,
                     )
-                if "cases" in delta and selected_doctor_id:
-                    await sync_to_async(CaseService.save_cases)(patient, int(selected_doctor_id), delta["cases"], creator=user)
                     
             except CustomUser.DoesNotExist:
                 pass
@@ -324,6 +362,8 @@ async def update_canvas_instance(
         )
         return {"status": "success", "new_state": result["new_state"]}
     
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ [CanvasRoutes] Sync Error: {e}")
         raise HTTPException(status_code=500, detail="Internal Sync Error")

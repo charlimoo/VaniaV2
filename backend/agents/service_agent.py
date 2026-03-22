@@ -2,6 +2,7 @@
 import logging
 import inspect
 import json
+import re
 import traceback
 import time
 from decimal import Decimal
@@ -13,13 +14,13 @@ from asgiref.sync import sync_to_async
 
 # --- Agno Imports ---
 from agno.agent import Agent, RunEvent, AgentSession, RunOutput
-from agno.models.openai import OpenAIChat
 from agno.models.message import Message
 
 # --- Project Imports ---
 from billing.services import process_usage_charge, calculate_credit_cost
 from billing.models import UserWallet, BillingConfig
 from core.ai_provider import get_agno_openai_kwargs
+from .models import SanitizedOpenAIChat
 from .session_metadata import apply_session_metadata_defaults
 
 try:
@@ -28,6 +29,80 @@ except ImportError:
     canvas_manager = None
 
 logger = logging.getLogger("agno.billing")
+
+FIELD_WRITE_AGENT_SLUGS = {"vania-expert-assistant"}
+
+
+def _normalize_message_text(value: str) -> str:
+    return (value or "").strip().replace("\r\n", "\n")
+
+
+def _detect_expert_field_write_instruction(agent_id: str, message: Optional[str]) -> Optional[str]:
+    if agent_id not in FIELD_WRITE_AGENT_SLUGS or not message:
+        return None
+
+    text = _normalize_message_text(message)
+    lowered = text.lower()
+
+    clinical_summary_terms = (
+        "علت مراجعه",
+        "علت مراجع",
+        "مشاهدات",
+        "clinical summary",
+        "observations",
+    )
+    analysis_terms = (
+        "تحلیل تست",
+        "تحلیل بالینی",
+        "تحلیل بالینی تست",
+        "تحلیل بالینی تست‌ها",
+        "تحلیل بالینی تست ها",
+        "تحلیل بالینی تست‌ها و فرم‌ها",
+        "تحلیل بالینی تست ها و فرم ها",
+        "forms_tests_analysis",
+    )
+    write_terms = (
+        "بنویس",
+        "ثبت کن",
+        "ذخیره کن",
+        "پر کن",
+        "اضافه کن",
+        "بذار",
+        "update",
+        "write",
+        "save",
+        "fill",
+        "record",
+    )
+
+    wants_clinical_summary = any(term in text for term in clinical_summary_terms)
+    wants_analysis = any(term in text for term in analysis_terms)
+    wants_write = any(term in lowered for term in write_terms) or wants_clinical_summary or wants_analysis
+
+    if not wants_write or not (wants_clinical_summary or wants_analysis):
+        return None
+
+    tool_lines: list[str] = []
+    if wants_clinical_summary:
+        tool_lines.append("- You must call `update_clinical_summary(summary_text=...)` in this run.")
+    if wants_analysis:
+        tool_lines.append("- You must call `update_forms_tests_analysis(analysis_text=...)` in this run.")
+
+    sample_hint = (
+        "- The user accepts professional sample content. Draft the missing case text yourself and save it through the required tool call(s)."
+        if re.search(r"تستی|نمونه|sample|dummy|mock|test data", lowered, flags=re.IGNORECASE)
+        else "- If the user did not supply full text, generate concise professional content yourself and save it."
+    )
+
+    return "\n".join([
+        "### DIRECT CASE FIELD WRITE (System Injected)",
+        "- This user message is a direct request to write content into case fields, not a request for a chat draft.",
+        "- Do not answer with prose before the tool call.",
+        "- Read current case state first only if needed for safe writing; otherwise write directly.",
+        *tool_lines,
+        sample_hint,
+        "- After successful tool calls, do not dump the saved text into chat.",
+    ])
 
 class ServiceAgent(Agent):
     
@@ -56,7 +131,7 @@ class ServiceAgent(Agent):
         init_kwargs = {
             "name": service_config.name,
             "instructions": base_prompt,
-            "model": injected_model or OpenAIChat(id=target_model_id, **get_agno_openai_kwargs()),
+            "model": injected_model or SanitizedOpenAIChat(id=target_model_id, **get_agno_openai_kwargs()),
             "user_id": str(user.id),
             "session_id": session_id,
             
@@ -161,6 +236,13 @@ class ServiceAgent(Agent):
 
             # 2. Context Injection
             additional_messages = []
+            field_write_instruction = _detect_expert_field_write_instruction(self.agent_id, message)
+            previous_suppress_plaintext = getattr(self, "suppress_plaintext_response", False)
+            self.suppress_plaintext_response = bool(field_write_instruction)
+            if field_write_instruction:
+                additional_messages.append(
+                    Message(role="system", content=field_write_instruction, add_to_agent_memory=False)
+                )
             if canvas_manager:
                 try:
                     # Safe Method Call
@@ -218,6 +300,7 @@ class ServiceAgent(Agent):
                          logger.info(f"{run_log} 🛠️  Model is calling Tool: {tool_name}")
             finally:
                 self.additional_input = previous_additional_input
+                self.suppress_plaintext_response = previous_suppress_plaintext
 
         except GeneratorExit:
             logger.warning(f"{run_log} 🛑 Client Disconnected.")

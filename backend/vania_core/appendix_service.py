@@ -3,11 +3,36 @@ import uuid
 import logging
 from users.services import user_context_manager
 from users.models import UserContextEntry
-from .schemas import ThoughtAppendix, CulturalResource
+from .schemas import ThoughtAppendix, CulturalResource, ResourceType
 from .context_scope import migrate_legacy_to_scoped_once, migrate_doctor_scoped_to_case_once, build_scoped_key
 from .case_service import build_case_scoped_key
 
 logger = logging.getLogger(__name__)
+
+RESOURCE_TYPE_ALIASES = {
+    "BOOK": ResourceType.BOOK.value,
+    "BOOKS": ResourceType.BOOK.value,
+    "کتاب": ResourceType.BOOK.value,
+    "MOVIE": ResourceType.MOVIE.value,
+    "FILM": ResourceType.MOVIE.value,
+    "MOVIES": ResourceType.MOVIE.value,
+    "FILMS": ResourceType.MOVIE.value,
+    "فیلم": ResourceType.MOVIE.value,
+    "POEM": ResourceType.POEM.value,
+    "POEMS": ResourceType.POEM.value,
+    "POETRY": ResourceType.POEM.value,
+    "شعر": ResourceType.POEM.value,
+}
+
+
+def normalize_resource_type(value: str | None) -> str:
+    normalized = (value or "").strip()
+    if not normalized:
+        return ResourceType.BOOK.value
+    alias_key = normalized.upper()
+    if alias_key in ResourceType._value2member_map_:
+        return alias_key
+    return RESOURCE_TYPE_ALIASES.get(alias_key, ResourceType.BOOK.value)
 
 class AppendixService:
     """
@@ -63,10 +88,14 @@ class AppendixService:
         Adds a new resource to the library.
         """
         library = AppendixService.get_library(patient, doctor_id=doctor_id, case_id=case_id)
+        normalized_resource = {
+            **resource_data,
+            "type": normalize_resource_type(resource_data.get("type")),
+        }
         
         new_item = CulturalResource(
             id=str(uuid.uuid4()),
-            **resource_data
+            **normalized_resource
         )
         # Insert at the top of the list
         library.resources.insert(0, new_item)

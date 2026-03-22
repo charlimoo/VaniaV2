@@ -1,4 +1,5 @@
 import logging
+import json
 from typing import Optional
 
 from .case_service import CaseService
@@ -35,8 +36,10 @@ class PatientDataService:
             timeline = SessionService.get_patient_history(patient, viewer_role="PATIENT", doctor_id=doctor_id, case_id=case_id)
             tests = CaseService.get_visible_tests(patient, viewer_role="VISITOR", case_id=case_id)
             forms = CaseService.get_visible_form_entries(patient, viewer_role="VISITOR", case_id=case_id)
+            clinical_summary = ProfileService.get_summary(patient, doctor_id=doctor_id, case_id=case_id)
             forms_tests_analysis = ProfileService.get_forms_tests_analysis(patient, doctor_id=doctor_id, case_id=case_id)
             current_phase = roadmap.current_phase
+            active_goals = PatientDataService._extract_active_goals_from_history(timeline)
             library = [res.model_dump() for res in appendix.resources]
             medication_items = [item.model_dump() for item in medications.medications]
             files = CaseFilesService.get_files(patient, doctor_id=doctor_id, case_id=case_id)
@@ -48,8 +51,10 @@ class PatientDataService:
             tests = []
             forms = []
             files = []
+            clinical_summary = ""
             forms_tests_analysis = ""
             current_phase = ""
+            active_goals = []
 
         return {
             "greeting": f"سلام {patient.full_name or 'دوست من'}",
@@ -60,7 +65,8 @@ class PatientDataService:
             "medications": medication_items,
             "tests": tests,
             "forms": forms,
-            "active_goals": [],
+            "active_goals": active_goals,
+            "clinical_summary": clinical_summary,
             "forms_tests_analysis": forms_tests_analysis,
             "my_doctors": [
                 {
@@ -88,7 +94,26 @@ class PatientDataService:
                 "tests": tests,
                 "forms": forms,
                 "files": files,
+                "active_goals": active_goals,
+                "clinical_summary": clinical_summary,
                 "forms_tests_analysis": forms_tests_analysis,
                 "current_phase": current_phase,
             },
         }
+
+    @staticmethod
+    def _extract_active_goals_from_history(history) -> list[str]:
+        for item in history or []:
+            goals = item.get("smart_goals")
+            if isinstance(goals, list) and goals:
+                return [str(goal).strip() for goal in goals if str(goal).strip()]
+            raw_summary = item.get("summary", "")
+            if isinstance(raw_summary, str) and raw_summary.strip().startswith("{"):
+                try:
+                    parsed = json.loads(raw_summary)
+                    goals = parsed.get("smart_goals") if isinstance(parsed, dict) else None
+                    if goals:
+                        return goals
+                except Exception:
+                    continue
+        return []

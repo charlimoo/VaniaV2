@@ -11,6 +11,25 @@ This repository is a full-stack monorepo with:
 
 The app is Persian-first in the UI, but contributors and agents working on the repo should communicate with collaborators in English unless explicitly asked otherwise.
 
+## IMPORTANT: testing mode:
+if user said that he is testing, have these prefrences:
+user is testing these capabilities:
+backend\capabilities\vania_visitor
+backend\capabilities\vania_expert
+
+and user is using this agent:
+backend\definitions\agents\expert.py
+backend\definitions\agents\visitor.py
+
+and user puts the latest logs of the agent behavior in these files:
+reports\capability test result\expert.json
+reports\capability test result\visitor.json
+these files might be related to the issue of the testing, but also they might be old.
+
+while fixing the issues, do not update the prompts with testing stuff, like "If there is only one test in the active case, assume that is the intended test unless the user says otherwise."
+this is horrible to have things like this in prompts. change them only if its necessary and think of it like a production change.
+look for the real problem.
+
 ## Core Product Concepts
 
 ### 1. Agents

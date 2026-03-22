@@ -2,7 +2,7 @@
 import uuid
 from django.db import models
 from django.conf import settings
-from users.models import UserRole
+from users.models import UserRole, UserContextEntry
 
 # --- 1. PROFESSIONAL IDENTITY & VERIFICATION ---
 
@@ -411,3 +411,10 @@ class ExpertMeetingLink(models.Model):
 
     def __str__(self):
         return f"Meet by {self.creator_id} for {self.visitor_id} at {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class CaseContextEntry(UserContextEntry):
+    class Meta:
+        proxy = True
+        verbose_name = "Case Record"
+        verbose_name_plural = "Case Records"

@@ -1,5 +1,6 @@
 import logging
 from datetime import date, timedelta
+from django.utils import timezone
 from users.services import user_context_manager
 from users.models import UserContextEntry
 from .schemas import TherapyRoadmap, TherapyPhase, RoadmapSession
@@ -55,15 +56,23 @@ class RoadmapService:
             return default_roadmap
 
     @staticmethod
-    def save_roadmap(patient, roadmap_model: TherapyRoadmap, doctor_id=None, case_id=None):
+    def save_roadmap(patient, roadmap_model: TherapyRoadmap, doctor_id=None, case_id=None, creator=None):
         """
         Saves the Pydantic model back to the DB.
         """
         key = build_case_scoped_key(RoadmapService.CONTEXT_KEY, doctor_id, case_id) if doctor_id and case_id else build_scoped_key(RoadmapService.CONTEXT_KEY, doctor_id) if doctor_id else RoadmapService.CONTEXT_KEY
-        entry = user_context_manager.get_context(patient, key)
-        if entry:
-            entry.data = roadmap_model.model_dump()
-            entry.save()
+        # Keep roadmap writes aligned with the singleton context pattern used by other
+        # case-scoped services so refreshes always read the latest authoritative record.
+        roadmap_model.updated_at = timezone.now().isoformat()
+        if not getattr(roadmap_model, "created_at", None):
+            roadmap_model.created_at = roadmap_model.updated_at
+        user_context_manager.set_singleton_context(
+            user=patient,
+            key=key,
+            data=roadmap_model.model_dump(),
+            source=UserContextEntry.SourceType.AGENT if creator else UserContextEntry.SourceType.SYSTEM,
+            creator=creator,
+        )
 
     @staticmethod
     def update_phase(patient, phase: TherapyPhase, doctor_id=None, case_id=None):
@@ -106,6 +115,46 @@ class RoadmapService:
         RoadmapService.save_roadmap(patient, roadmap, doctor_id=doctor_id, case_id=case_id)
         
         return new_session # [FIX] Return the object!
+
+    @staticmethod
+    def ensure_session(
+        patient,
+        session_number: int,
+        title: str,
+        instructions: str = "",
+        scheduled_date: str = None,
+        status: str = "READY",
+        doctor_id=None,
+        case_id=None,
+    ) -> RoadmapSession:
+        roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=doctor_id, case_id=case_id)
+        target_session = next((sess for sess in roadmap.sessions if sess.session_number == int(session_number)), None)
+
+        if target_session:
+            if title:
+                target_session.title = title
+            if instructions:
+                target_session.doctor_instructions = instructions
+            if scheduled_date and not target_session.scheduled_date:
+                target_session.scheduled_date = scheduled_date
+            if status == "COMPLETED":
+                target_session.status = "COMPLETED"
+            elif target_session.status != "COMPLETED":
+                target_session.status = status
+            RoadmapService.save_roadmap(patient, roadmap, doctor_id=doctor_id, case_id=case_id)
+            return target_session
+
+        new_session = RoadmapSession(
+            session_number=int(session_number),
+            title=title or f"جلسه {session_number}",
+            doctor_instructions=instructions or None,
+            scheduled_date=scheduled_date,
+            status=status,
+        )
+        roadmap.sessions.append(new_session)
+        roadmap.sessions.sort(key=lambda sess: sess.session_number)
+        RoadmapService.save_roadmap(patient, roadmap, doctor_id=doctor_id, case_id=case_id)
+        return new_session
 
     @staticmethod
     def set_active_session(patient, session_number: int, doctor_id=None, case_id=None):

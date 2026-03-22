@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 
 // --- Types ---
 interface Resource {
@@ -38,19 +39,42 @@ const TYPE_LABELS = {
   POEM: "شعر"
 };
 
-export function PatientLibraryTab({ library, onEdit }: Props) {
-  const handleMarkConsumed = (resource: Resource) => {
+export function PatientLibraryTab({ library, selectedDoctorId, selectedCaseId, onEdit }: Props) {
+  const handleMarkConsumed = async (resource: Resource) => {
     if (resource.status === "CONSUMED") return;
+    if (!selectedDoctorId || !selectedCaseId) return;
 
-    // 1. Optimistic Update (Visual feedback immediately)
     const newLib = library.map(r => 
       r.id === resource.id ? { ...r, status: "CONSUMED" as const } : r
     );
     onEdit({ library: newLib });
-    
-    toast.success("تبریک! اثر در آرشیو ثبت شد.", {
-      description: "بیایید درباره آن گفتگو کنیم."
-    });
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/vania/appendix/`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+          "X-Target-Doctor-ID": String(selectedDoctorId),
+          "X-Target-Expert-ID": String(selectedDoctorId),
+          "X-Target-Case-ID": selectedCaseId,
+        },
+        body: JSON.stringify({
+          resource_id: resource.id,
+          status: "CONSUMED",
+          doctor_id: selectedDoctorId,
+          expert_id: selectedDoctorId,
+          case_id: selectedCaseId,
+        }),
+      });
+      if (!res.ok) throw new Error("ثبت وضعیت منبع ناموفق بود.");
+      toast.success("تبریک! اثر در آرشیو ثبت شد.", {
+        description: "بیایید درباره آن گفتگو کنیم."
+      });
+    } catch (error: any) {
+      onEdit({ library });
+      toast.error(error?.message || "خطا در ثبت وضعیت منبع.");
+    }
   };
 
   const activeResources = library.filter(r => r.status === "SUGGESTED");
@@ -82,7 +106,7 @@ export function PatientLibraryTab({ library, onEdit }: Props) {
               <ResourceCard 
                 key={res.id} 
                 resource={res} 
-                onAction={() => handleMarkConsumed(res)} 
+                onAction={() => void handleMarkConsumed(res)} 
               />
             ))}
           </div>

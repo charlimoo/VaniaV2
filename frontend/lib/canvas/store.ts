@@ -49,6 +49,10 @@ interface CanvasState {
   setContextCaseId: (id: string | null) => void;
 }
 
+function hasOwn(obj: Record<string, any>, key: string) {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
 // --- Utility: Deep Merge ---
 // Prevents data loss when merging partial updates (deltas)
 function deepMerge(target: any, source: any): any {
@@ -146,12 +150,39 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     
     set((state) => {
       const existing = state.instances[id];
-      const nextCaseId =
-        typeof delta?.selected_case_id === "string"
-          ? delta.selected_case_id
-          : typeof delta?.selected_case?.id === "string"
-            ? delta.selected_case.id
-            : state.contextCaseId;
+      const deltaRecord = (delta && typeof delta === "object" ? delta : {}) as Record<string, any>;
+      const selectedCaseDelta =
+        deltaRecord.selected_case && typeof deltaRecord.selected_case === "object"
+          ? (deltaRecord.selected_case as Record<string, any>)
+          : null;
+
+      let nextCaseId = state.contextCaseId;
+      if (hasOwn(deltaRecord, "selected_case_id")) {
+        const rawCaseId = deltaRecord.selected_case_id;
+        nextCaseId = rawCaseId == null ? null : String(rawCaseId);
+      } else if (selectedCaseDelta && hasOwn(selectedCaseDelta, "id")) {
+        const rawCaseId = selectedCaseDelta.id;
+        nextCaseId = rawCaseId == null ? null : String(rawCaseId);
+      }
+
+      let nextDoctorId = state.contextDoctorId;
+      if (hasOwn(deltaRecord, "selected_doctor_id")) {
+        const rawDoctorId = deltaRecord.selected_doctor_id;
+        nextDoctorId = rawDoctorId == null ? null : String(rawDoctorId);
+      } else if (selectedCaseDelta && hasOwn(selectedCaseDelta, "doctor_id")) {
+        const rawDoctorId = selectedCaseDelta.doctor_id;
+        nextDoctorId = rawDoctorId == null ? null : String(rawDoctorId);
+      }
+
+      let nextResourceId = state.contextResourceId;
+      const patientProfileDelta =
+        deltaRecord.patient_profile && typeof deltaRecord.patient_profile === "object"
+          ? (deltaRecord.patient_profile as Record<string, any>)
+          : null;
+      if (patientProfileDelta && hasOwn(patientProfileDelta, "id")) {
+        const rawResourceId = patientProfileDelta.id;
+        nextResourceId = rawResourceId == null ? null : String(rawResourceId);
+      }
       
       // SCENARIO 1: New Instance Creation (Self-Healing)
       if (!existing) {
@@ -175,6 +206,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
              orderedIds: [...state.orderedIds, id],
              activeTabId: forceFocus ? id : (state.activeTabId || id),
              isPanelOpen: forceFocus ? true : state.isPanelOpen,
+             contextResourceId: nextResourceId,
+             contextDoctorId: nextDoctorId,
              contextCaseId: nextCaseId,
            };
         } else {
@@ -211,6 +244,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
         instances: updatedInstances,
         activeTabId: forceFocus ? id : state.activeTabId,
         isPanelOpen: forceFocus ? true : state.isPanelOpen,
+        contextResourceId: nextResourceId,
+        contextDoctorId: nextDoctorId,
         contextCaseId: nextCaseId,
       };
     });

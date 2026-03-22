@@ -287,6 +287,9 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
     "x-reasoning-effort",
     "x-target-resource-id",
+    "x-target-expert-id",
+    "x-target-doctor-id",
+    "x-target-case-id",
     "x-enable-reasoning",
 ]
 

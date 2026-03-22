@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -47,12 +48,14 @@ class VaniaVisitorCapability(BaseCapability):
         roadmap = RoadmapService.get_or_create_roadmap(patient, doctor_id=doctor_id, case_id=case_id)
         appendix = AppendixService.get_library(patient, doctor_id=doctor_id, case_id=case_id)
         medications = MedicationService.get_plan(patient, doctor_id=doctor_id, case_id=case_id)
+        timeline = SessionService.get_patient_history(patient, viewer_role="PATIENT", doctor_id=doctor_id, case_id=case_id)
         return {
             "greeting": f"سلام {patient.full_name or 'دوست من'}",
             "clinical_summary": ProfileService.get_summary(patient, doctor_id=doctor_id, case_id=case_id),
             "current_phase": roadmap.current_phase,
             "tasks": TaskService.get_patient_tasks(patient, doctor_id=doctor_id, case_id=case_id),
-            "timeline": SessionService.get_patient_history(patient, viewer_role="PATIENT", doctor_id=doctor_id, case_id=case_id),
+            "timeline": timeline,
+            "active_goals": self._extract_active_goals_from_history(timeline),
             "library": [res.model_dump() for res in appendix.resources],
             "medications": [item.model_dump() for item in medications.medications],
             "tests": CaseService.get_visible_tests(patient, viewer_role="VISITOR", case_id=case_id),
@@ -60,6 +63,23 @@ class VaniaVisitorCapability(BaseCapability):
             "files": CaseFilesService.get_files(patient, doctor_id=doctor_id, case_id=case_id),
             "forms_tests_analysis": ProfileService.get_forms_tests_analysis(patient, doctor_id=doctor_id, case_id=case_id),
         }
+
+    @staticmethod
+    def _extract_active_goals_from_history(history: List[Dict[str, Any]]) -> List[str]:
+        for item in history:
+            goals = item.get("smart_goals")
+            if isinstance(goals, list) and goals:
+                return [str(goal).strip() for goal in goals if str(goal).strip()]
+            raw_summary = item.get("summary", "")
+            if isinstance(raw_summary, str) and raw_summary.strip().startswith("{"):
+                try:
+                    parsed = json.loads(raw_summary)
+                    goals = parsed.get("smart_goals") if isinstance(parsed, dict) else None
+                    if goals:
+                        return goals
+                except Exception:
+                    continue
+        return []
 
     def get_tools(self, user: Any, session_id: str) -> List:
         from .tools import VaniaVisitorToolFactory
@@ -72,13 +92,53 @@ class VaniaVisitorCapability(BaseCapability):
 - Base profile is shared with all linked experts.
 - Tasks, resources, reflections, non-base forms, and tests belong to the selected case.
 - Medications shown in the selected case are read-only for you and come from the expert's prescription plan.
-- If you need to act on case data, use the selected case rather than assuming a single expert-global workspace.
+- Case-scoped actions use the selected case.
 - Test results can contain written notes plus attached PDF/image files.
 - When you need to inspect the actual contents of a saved test result, use `get_my_test_result_details`.
+- When you want one specific attachment inside a test, such as "the PDF", "the image", or a filename, use `get_my_test_attachment_details` with that attachment's id.
+- If you want to inspect, reopen, retry, or check a test attachment again, call `get_my_test_result_details` again for that test.
+- Do not say you lack a file/PDF-reading tool for test attachments when `get_my_test_result_details` is available. If an attachment is not loadable, say that specific attachment could not be loaded from storage.
 - Use `get_my_visitor_profile` for your full shared profile and `get_active_expert_profile` when you need the detailed profile of the currently selected expert.
 - Case files are shared within the selected case between you and the expert.
-- Use `list_case_files` or `search_case_files` before `read_case_file`.
-- Read only the minimum relevant excerpt from a file and avoid reproducing whole documents.
+
+### GROUNDING AND PREFLIGHT RULES
+Before deciding what to do, ground yourself in the current workspace state.
+
+1. Check state first when there is any ambiguity.
+- If the request depends on which case is selected, which expert is active, what has already been saved, or what files/tests exist, inspect the current state with tools before answering.
+- Prefer checking instead of assuming.
+
+2. Use these tools as your first-line state checks.
+- `get_my_cases` when you need to know which cases exist or which case is active.
+- `get_my_case_snapshot` when you need current case details, saved fields, tasks, tests, medications, files, or timeline data.
+- `select_case` when the user wants to open, switch to, or activate one of their cases in the workspace.
+- `get_my_visitor_profile` when you need the full shared profile.
+- `get_active_expert_profile` when you need the selected expert's detailed profile.
+
+3. Read before acting when the latest saved state matters.
+- Before answering about tests, files, tasks, medications, or case summary content, check the relevant case state first if there is any ambiguity.
+- If the user points to a specific saved test or file, inspect that item with the correct tool before describing it.
+
+4. Do not say you cannot do something until after preflight.
+- Do not say a case, file, test, expert, or field is unavailable until you have checked the relevant state with tools.
+- If a tool confirms the limitation, explain that specific limitation briefly.
+- If a tool fails, inspect the error, correct the payload if possible, and retry once with a clear fix before giving up.
+
+5. If the user refers to "this", "that case", "my doctor", "the current test", or similar shorthand:
+- Resolve it from current case/user/expert state with tools first.
+- Then continue.
+
+### PERSIAN UI TERM MAP
+- `اطلاعات پایه` = your shared base profile / `BASE_PROFILE_V1`
+- `پرونده` = selected case overview / `CASE_OVERVIEW`
+- `فایل‌ها` = shared case files
+- `تور نجات من` = my rescue-net tasks
+- `کتابخانه` = thought appendix / recommended resources
+- `مسیر من` = session timeline / journey
+- `شیوه و مصرف دارو` = medication plan shown by the expert
+- `علت مراجع و مشاهدات` = case summary / observations area
+
+Treat the frontend labels above as the source of truth.
 """
 
     def get_context_prompt(self, user: Any, resource_id: str) -> str:
@@ -140,6 +200,7 @@ class VaniaVisitorCapability(BaseCapability):
                 "current_phase": "",
                 "tasks": [],
                 "timeline": [],
+                "active_goals": [],
                 "library": [],
                 "medications": [],
                 "tests": [],

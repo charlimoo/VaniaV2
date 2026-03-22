@@ -68,7 +68,7 @@ export function CanvasPanel({ onCollapse, isPreviewMode = false, demoConfig }: C
         
         {/* Scrollable Tab List */}
         <div className="ml-1 min-w-0 flex-1 overflow-x-auto scrollbar-hide sm:ml-2">
-          <Tabs 
+          {/* <Tabs 
             value={activeTabId || undefined} 
             onValueChange={setActiveTab}
             className="w-full min-w-max"
@@ -89,11 +89,11 @@ export function CanvasPanel({ onCollapse, isPreviewMode = false, demoConfig }: C
                 </TabsTrigger>
               ))}
             </TabsList>
-          </Tabs>
+          </Tabs> */}
         </div>
 
         {/* Actions Area */}
-        <div className="flex shrink-0 items-center gap-1 pl-2 pr-1.5 border-r sm:gap-1.5 sm:pl-3 sm:pr-2">
+        <div className="flex shrink-0 items-center gap-1 pl-2 pr-1.5 sm:gap-1.5 sm:pl-3 sm:pr-2">
           
           {/* Lock / Sync Status Indicator */}
           <div 

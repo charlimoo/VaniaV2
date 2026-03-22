@@ -1,7 +1,7 @@
 // frontend/components/canvas/renderers/tabs/RoadmapTab.tsx
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   ArrowDown,
   ArrowUp,
@@ -50,6 +50,16 @@ interface Props {
 export function RoadmapTab({ roadmap, activeGoals, patientId, caseId, patientName, allSessionsHistory, onEdit, readOnly = false }: Props) {
   const [selectedSession, setSelectedSession] = useState<RoadmapSession | null>(null);
   const [approachDraft, setApproachDraft] = useState("");
+
+  useEffect(() => {
+    if (!selectedSession) return;
+    const nextSelectedSession = (roadmap.sessions || []).find(
+      (session) => session.session_number === selectedSession.session_number
+    );
+    if (nextSelectedSession) {
+      setSelectedSession(nextSelectedSession);
+    }
+  }, [roadmap.sessions, selectedSession]);
 
   // --- Event Handlers ---
 
@@ -184,8 +194,15 @@ if (selectedSession) {
             patientId={patientId} // [FIX] Pass this prop
             caseId={caseId}
             onBack={() => setSelectedSession(null)} 
-            // [FIX] Pass onEdit to handle updates from the dialog
-            onUpdate={(data) => onEdit({ roadmap_data: data.roadmap, sessions: data.history })} 
+            onUpdate={(data) => {
+              onEdit({ roadmap_data: data.roadmap, sessions: data.history });
+              const nextSelectedSession = (data?.roadmap?.sessions || []).find(
+                (item: RoadmapSession) => item.session_number === selectedSession.session_number
+              );
+              if (nextSelectedSession) {
+                setSelectedSession(nextSelectedSession);
+              }
+            }} 
         />
     );
 }
@@ -287,7 +304,7 @@ if (selectedSession) {
 
             <Card className={cn(
                 "border transition-all duration-300 shadow-sm",
-                session.status === "READY" ? "border-blue-200 bg-blue-50/10" : "border-border/50",
+                session.status === "READY" ? "border-blue-600/20 bg-blue-500/10" : "border-border/50",
                 roadmap.active_session_number === session.session_number ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : ""
             )}>
               <CardContent className="p-4">
@@ -305,8 +322,8 @@ if (selectedSession) {
                     <span className={cn(
                         "text-[10px] font-medium px-2 py-0.5 rounded mt-1.5 inline-block",
                         session.status === "DRAFT" && "bg-muted text-muted-foreground",
-                        session.status === "READY" && "bg-blue-100 text-blue-700",
-                        session.status === "COMPLETED" && "bg-emerald-100 text-emerald-700",
+                        session.status === "READY" && "bg-blue-900 text-blue-100",
+                        session.status === "COMPLETED" && "bg-emerald-900 text-emerald-200",
                     )}>
                       {session.status === "DRAFT" ? "برنامه‌ریزی شده" : 
                        session.status === "READY" ? "آماده اجرا" : "انجام شده"}

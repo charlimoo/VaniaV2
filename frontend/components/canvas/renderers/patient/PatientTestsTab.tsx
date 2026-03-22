@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FlaskConical, Upload, Download, Loader2, Link2 } from "lucide-react";
+import { FlaskConical, Upload, Loader2, Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { ClinicalTestAttachment, ClinicalTestEntry } from "@/lib/types/vania";
 import { Badge } from "@/components/ui/badge";
@@ -241,7 +241,7 @@ export function PatientTestsTab({
 
   if (!tests?.length) {
     return (
-      <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-xl bg-muted/5">
+      <div className="text-center py-12 text-muted-foreground border-2 border-dashed rounded-xl bg-muted/5 text-xs">
         {emptyText}
       </div>
     );
@@ -259,71 +259,49 @@ export function PatientTestsTab({
         </Badge>
       </div>
 
-      <div className="grid grid-cols-1 gap-3">
+      <div className="space-y-2">
         {tests.map((test) => {
           const attachments = getTestAttachments(test);
           const resultText = test.result_text || test.result_summary || "";
-          const missingSummary = !resultText.trim();
-          const missingFile = attachments.length === 0;
-          const isTodo = missingSummary || missingFile;
+          const hasResult = !!resultText.trim() || attachments.length > 0;
 
           return (
-            <div key={test.id} className="rounded-xl border bg-card p-3 shadow-sm space-y-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 space-y-1">
-                  <div className="truncate text-xs font-bold flex items-center gap-2">
-                    <span className="truncate">{test.title}</span>
-                    {isTodo && (
-                      <Badge variant="secondary" className="text-[10px]">
-                        در انتظار تکمیل
-                      </Badge>
-                    )}
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">{toJalali(test.created_at)}</div>
+            <button
+              key={test.id}
+              type="button"
+              onClick={() => openUpload(test)}
+              className="flex w-full items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 text-right shadow-sm transition hover:border-primary/40 hover:bg-primary/5"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-sm font-semibold">{test.title}</span>
+                  {test.url ? <Badge variant="outline" className="text-[10px]">لینک</Badge> : null}
+                  {attachments.length > 0 ? <Badge variant="outline" className="text-[10px]">{attachments.length} فایل</Badge> : null}
                 </div>
-
-                <div className="flex items-center gap-1">
-                  <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => openUpload(test)}>
-                    <Upload className="w-3.5 h-3.5 ml-1" />
-                    {createLabel}
-                  </Button>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                  <Badge variant={hasResult ? "outline" : "secondary"} className="text-[10px]">
+                    {hasResult ? "تکمیل شده" : "در انتظار تکمیل"}
+                  </Badge>
+                  <span>{toJalali(test.created_at)}</span>
+                  {test.url ? <span className="inline-flex items-center gap-1"><Link2 className="w-3 h-3" /> لینک</span> : null}
                 </div>
               </div>
-
-              {test.url && (
-                <a href={test.url} target="_blank" rel="noreferrer" className="text-[11px] text-primary inline-flex items-center gap-1.5 break-all">
-                  <Link2 className="w-3 h-3" /> لینک تست
-                </a>
-              )}
-
-              <div className="text-[11px] text-foreground/80 leading-relaxed bg-muted/20 rounded p-2 min-h-[56px] whitespace-pre-wrap">
-                {resultText || "متن نتیجه ثبت نشده است."}
+              <div className="shrink-0">
+                <Button
+                  size="sm"
+                  type="button"
+                  variant="outline"
+                  className="h-7 text-[11px]"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openUpload(test);
+                  }}
+                >
+                  <Upload className="w-3.5 h-3.5 ml-1" />
+                  {createLabel}
+                </Button>
               </div>
-
-              <div className="space-y-2 pt-1">
-                <div className="text-[10px] text-muted-foreground">فایل‌ها: {attachments.length}</div>
-                {attachments.length > 0 ? (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {attachments.map((attachment) => (
-                      <div key={attachment.id} className="rounded-xl border border-border/60 bg-muted/10 px-3 py-2.5">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 text-[10px] text-muted-foreground">
-                            <div className="truncate font-medium text-foreground">{attachment.file_name}</div>
-                            <div className="mt-1">{toJalali(attachment.file_uploaded_at || "")}</div>
-                            <div className="mt-1">{attachment.content_type?.includes("pdf") ? "PDF" : "تصویر"}</div>
-                          </div>
-                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => downloadTestFile(test.id, attachment.id, attachment.file_name)}>
-                            <Download className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-[10px] text-muted-foreground">هنوز فایلی ثبت نشده است.</div>
-                )}
-              </div>
-            </div>
+            </button>
           );
         })}
       </div>

@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { useAssistantRuntime } from "@assistant-ui/react";
+import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 
 interface PatientProfile {
   id: number;
@@ -23,6 +24,7 @@ interface ProfileTabProps {
   tests: any[];
   onEdit: (delta: any) => void;
   isLocked: boolean;
+  caseId?: string;
   showClinicalSummary?: boolean;
   showFormsTestsAnalysis?: boolean;
 }
@@ -43,6 +45,7 @@ export function ProfileTab({
   tests,
   onEdit,
   isLocked,
+  caseId,
   showClinicalSummary = true,
   showFormsTestsAnalysis = true,
 }: ProfileTabProps) {
@@ -70,9 +73,21 @@ export function ProfileTab({
     if (!isSummaryDirty || isLocked) return;
     setIsSaving(true);
     toast.promise(
-      new Promise<void>((resolve) => {
-        onEdit({ clinical_summary: summary });
-        setTimeout(() => resolve(), 700);
+      fetch(`${API_BASE_URL}/api/vania/case-profile/`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          patient_id: patientProfile.id,
+          case_id: caseId,
+          clinical_summary: summary,
+        }),
+      }).then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error || "خطا در ذخیره سازی.");
+        onEdit({ clinical_summary: body?.clinical_summary ?? summary });
       }),
       {
         loading: "در حال ذخیره متن...",
@@ -87,9 +102,21 @@ export function ProfileTab({
     if (!isAnalysisDirty || isLocked) return;
     setIsSaving(true);
     toast.promise(
-      new Promise<void>((resolve) => {
-        onEdit({ forms_tests_analysis: analysis });
-        setTimeout(() => resolve(), 700);
+      fetch(`${API_BASE_URL}/api/vania/case-profile/`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+        body: JSON.stringify({
+          patient_id: patientProfile.id,
+          case_id: caseId,
+          forms_tests_analysis: analysis,
+        }),
+      }).then(async (res) => {
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.error || "خطا در ذخیره سازی.");
+        onEdit({ forms_tests_analysis: body?.forms_tests_analysis ?? analysis });
       }),
       {
         loading: "در حال ذخیره تحلیل...",

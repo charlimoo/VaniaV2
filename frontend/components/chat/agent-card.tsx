@@ -67,10 +67,7 @@ export function AgentCard({ service, trigger }: AgentCardProps) {
                 {service.name}
               </SheetTitle>
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary" className="text-[10px] h-5 px-1.5 gap-1 font-normal bg-background border shadow-sm">
-                  <Zap className="h-3 w-3 text-amber-500 fill-amber-500" />
-                  {service.cost_multiplier} ضریب هزینه
-                </Badge>
+
                 {service.tags?.map(tag => (
                   <Badge key={tag} variant="outline" className="text-[10px] h-5 px-1.5 font-normal">
                     {tag}

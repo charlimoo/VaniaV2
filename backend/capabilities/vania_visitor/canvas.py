@@ -11,7 +11,7 @@ class PatientJourneyCanvas(BaseCanvas):
     into a single unified view.
     """
     component_key = "VANIA_PATIENT_JOURNEY"
-    name = "مسیر سلامت من" # My Health Journey
+    name = "مسیر من"
     slug = "vania-patient-journey-v1"
     description = "A personal dashboard for visitors to track tasks, session history, and expert connections."
 

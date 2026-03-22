@@ -1,4 +1,5 @@
 import copy
+import re
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,48 @@ def build_case_scoped_key(base_key: str, doctor_id: int, case_id: str) -> str:
 class CaseService:
     CASES_CONTEXT_BASE = "vania_cases"
     BASE_PROFILE_CONTEXT_KEY = build_base_profile_key()
+    LEGACY_GENERIC_CASE_TITLE_RE = re.compile(r"^پرونده\s+\d+\s*$")
+
+    @staticmethod
+    def _default_case_title(patient: CustomUser, doctor: CustomUser) -> str:
+        patient_name = (
+            CaseService.build_patient_profile(patient).get("name")
+            or patient.full_name
+            or patient.phone_number
+            or "مراجع"
+        )
+        doctor_name = doctor.full_name or doctor.phone_number or "متخصص"
+        return f"پرونده {doctor_name} - {patient_name}"
+
+    @staticmethod
+    def _normalize_legacy_case_titles(
+        patient: CustomUser,
+        doctor: CustomUser,
+        cases: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        if not isinstance(cases, list):
+            return []
+
+        default_title = CaseService._default_case_title(patient, doctor)
+        changed = False
+        normalized_cases: List[Dict[str, Any]] = []
+
+        for item in cases:
+            if not isinstance(item, dict):
+                normalized_cases.append(item)
+                continue
+
+            next_item = copy.deepcopy(item)
+            current_title = str(next_item.get("title") or "").strip()
+            if not current_title or CaseService.LEGACY_GENERIC_CASE_TITLE_RE.match(current_title):
+                next_item["title"] = default_title
+                changed = True
+            normalized_cases.append(next_item)
+
+        if changed:
+            CaseService.save_cases(patient, int(doctor.id), normalized_cases, creator=doctor)
+
+        return normalized_cases
 
     @staticmethod
     def _serialize_case(case_data: Dict[str, Any], doctor: Optional[CustomUser] = None) -> Dict[str, Any]:
@@ -91,7 +134,12 @@ class CaseService:
         if not entry or not isinstance(entry.data, dict):
             return []
         cases = entry.data.get("cases", [])
-        return cases if isinstance(cases, list) else []
+        if not isinstance(cases, list):
+            return []
+        doctor = CustomUser.objects.filter(pk=int(doctor_id)).first()
+        if not doctor:
+            return cases
+        return CaseService._normalize_legacy_case_titles(patient, doctor, cases)
 
     @staticmethod
     def save_cases(patient: CustomUser, doctor_id: int, cases: List[Dict[str, Any]], creator=None):
@@ -115,7 +163,7 @@ class CaseService:
         case_payload = CaseService._serialize_case(
             {
                 "id": uuid.uuid4().hex,
-                "title": title or f"پرونده {len(cases) + 1}",
+                "title": title or CaseService._default_case_title(patient, doctor),
                 "created_at": timestamp,
                 "updated_at": timestamp,
             },

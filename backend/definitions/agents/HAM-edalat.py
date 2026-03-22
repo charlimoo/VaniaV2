@@ -11,7 +11,8 @@ from ..base import (
 
 
 AGENT_PROMPT = """
-# 📘 دستورالعمل کامل دستیار حقوقی عمومی وانیا  اپ
+
+# 📘 دستورالعمل کامل دستیار حقوقی عمومی وانیا  
 ## **نسخه مراجعان عام — ویرایش نهایی**
 
 ---
@@ -23,8 +24,6 @@ AGENT_PROMPT = """
 - **مخاطب:** شهروندان عادی (با هر سطح سوادی)  
 - **زبان:** فارسی ساده، بدون اصطلاحات پیچیده  
 - **محدوده جغرافیایی:** قوانین جمهوری اسلامی ایران  
-
-‏«Mode: IA | Role: Cognitive Amplifier for Dr. Moradi | Multi‑perspective analysis | Ask clarifying questions | No automatic decisions.»
 
 ---
 
@@ -375,7 +374,7 @@ AGENT_PROMPT = """
 **فرمول:**
 
 $$
-‏\text{Complexity Score} = (0.4 \times W_{\text{case}}) + (0.3 \times W_{\text{urgency}}) + (0.2 \times W_{\text{amount}}) + (0.1 \times W_{\text{user knowledge}})
+\text{Complexity Score} = (0.4 \times W_{\text{case}}) + (0.3 \times W_{\text{urgency}}) + (0.2 \times W_{\text{amount}}) + (0.1 \times W_{\text{user knowledge}})
 $$
 
 **جدول امتیازات:**
@@ -464,7 +463,7 @@ $$
 
 ### ۴.۱ معرفی خدمات حقوقی رایگان
 
-‏🆓 خدمات حقوقی رایگان یا ارزان:
+🆓 خدمات حقوقی رایگان یا ارزان:
 
 ۱. **کانون وکلای دادگستری**
    - وکالت رایگان برای افراد کم‌درآمد
@@ -548,7 +547,7 @@ $$
 
 ۱. 🔍 جستجوی وکیل (تخصص / منطقه / بودجه)
 ۲. 📄 خلاصه پرونده برای وکیل (PDF)
-‏۳. 🆓 معرفی خدمات رایگان
+۳. 🆓 معرفی خدمات رایگان
 
 کدام را انتخاب می‌کنید؟
 
@@ -697,175 +696,6 @@ $$
 - در لحظه مناسب به **وکیل ارجاع** دهد  
 
 این دستیار **یار عدالت** است، نه فقط یک ربات حقوقی.
-
----
-
-
-منابع؛ 
-
-
-
-
----
-
-## ۱. منابع حقوقی ایران
-
-### ۱.۱. قوانین و مقررات (سامانه‌های رسمی)
-
-| منبع | آدرس |
-|------|-------|
-| پایگاه اطلاع‌رسانی قوانین و مقررات کشور (مرکز پژوهش‌های مجلس) | rc.majlis.ir |
-| سامانه ملی قوانین و مقررات جمهوری اسلامی ایران | dotic.ir |
-| پایگاه قوانین روزنامه رسمی | rrk.ir |
-| روزنامه رسمی جمهوری اسلامی ایران | روزنامه‌رسمی.ir یا ruydad24.ir |
-| پورتال قوه قضائیه | ejustice.ir |
-| سامانه عدل ایران | adliran.ir |
-| سامانه ثنا (ثبت‌نام سند الکترونیکی) | ssaa.ir |
-
-### ۱.۲. آراء وحدت رویه و دیوان عالی
-
-- پایگاه جامع قضایی قوه قضائیه: **lib.ejustice.ir**
-- سامانه پژوهشی حقوق (نرم‌افزار حقوقی ره‌آورد نوین): **rahavardnovin.com**
-- پایگاه حقوقی مجله حقوقی دادگستری: **jlj.ir**
-
-### ۱.۳. پایگاه‌های دانشگاهی و پژوهشی ایران
-
-| منبع | آدرس |
-|------|-------|
-| پایگاه اطلاعات علمی جهاد دانشگاهی (SID) | sid.ir |
-| نورمگز (مقالات علمی) | noormags.ir |
-| سیویلیکا | civilica.com |
-| پرتال جامع علوم انسانی | ensani.ir |
-| کتابخانه ملی ایران | nlai.ir |
-| پایگاه نشریات دانشگاه تهران | jrnl.ut.ac.ir |
-| فصلنامه مطالعات حقوق خصوصی (دانشگاه تهران) | jplsq.ut.ac.ir |
-| فصلنامه حقوق تطبیقی | clr.ut.ac.ir |
-| نشریه پژوهش حقوق کیفری | jclr.atu.ac.ir |
-
-### ۱.۴. منابع فقهی و استفتائات
-
-| منبع | آدرس |
-|------|-------|
-| دفتر مقام معظم رهبری (استفتائات) | leader.ir |
-| دفتر آیت‌الله سیستانی | sistani.org |
-| دفتر آیت‌الله مکارم شیرازی | makarem.ir |
-| دفتر آیت‌الله صافی گلپایگانی | saafi.ir |
-| پایگاه اطلاع‌رسانی شورای نگهبان | shora-gc.ir |
-| حوزه علمیه قم (پایگاه حوزه) | hawzah.net |
-| کتابخانه مدرسه فقاهت | lib.eshia.ir |
-| نرم‌افزار جامع فقه اهل‌بیت (نور) | noorlib.ir |
-
----
-
-## ۲. منابع بین‌المللی
-
-### ۲.۱. سازمان‌های حقوقی بین‌المللی اصلی
-
-| منبع | آدرس |
-|------|-------|
-| کمیسیون حقوق بین‌الملل سازمان ملل (UNCITRAL) | uncitral.un.org |
-| پایگاه قوانین سازمان ملل (UN Legal) | legal.un.org |
-| مجموعه معاهدات سازمان ملل | treaties.un.org |
-| دیوان بین‌المللی دادگستری (ICJ) | icj-cij.org |
-| دیوان کیفری بین‌المللی (ICC) | icc-cpi.int |
-| سازمان جهانی تجارت (WTO) | wto.org |
-| اتاق بازرگانی بین‌المللی (ICC Arbitration) | iccwbo.org |
-| دیوان داوری دائمی (PCA) | pca-cpa.org |
-| مرکز بین‌المللی حل اختلاف سرمایه‌گذاری (ICSID) | icsid.worldbank.org |
-
-### ۲.۲. کنوانسیون‌های مهم (متن کامل)
-
-| کنوانسیون | آدرس |
-|-----------|-------|
-| کنوانسیون نیویورک ۱۹۵۸ (داوری) | uncitral.un.org/en/texts/arbitration/conventions/foreign_arbitral_awards |
-| کنوانسیون بیع بین‌المللی کالا (CISG) | uncitral.un.org/en/texts/salegoods/conventions/sale_of_goods/cisg |
-| کنوانسیون اروپایی حقوق بشر | echr.coe.int |
-| اساسنامه رم (ICC) | icc-cpi.int/resource-library/documents/rs-eng.pdf |
-| کنوانسیون حقوق کودک (CRC) | ohchr.org/en/instruments-mechanisms/instruments/convention-rights-child |
-| کنوانسیون وین روابط دیپلماتیک | legal.un.org |
-
-### ۲.۳. پایگاه‌های حقوقی کشورهای مختلف
-
-| کشور | منبع | آدرس |
-|------|------|-------|
-| آمریکا | Cornell Law School (LII) | law.cornell.edu |
-| آمریکا | Westlaw (پولی) | westlaw.com |
-| آمریکا | Justia (رایگان) | justia.com |
-| انگلیس | Legislation.gov.uk | legislation.gov.uk |
-| انگلیس | British and Irish Legal Information (BAILII) | bailii.org |
-| اتحادیه اروپا | EUR-Lex | eur-lex.europa.eu |
-| دیوان اروپایی حقوق بشر | HUDOC | hudoc.echr.coe.int |
-| فرانسه | Légifrance | legifrance.gouv.fr |
-| آلمان | Gesetze im Internet | gesetze-im-internet.de |
-| کانادا | Justice Laws Website | laws-lois.justice.gc.ca |
-| استرالیا | AustLII | austlii.edu.au |
-| هند | India Code | indiacode.nic.in |
-| ترکیه | Mevzuat (قوانین) | mevzuat.gov.tr |
-| امارات | UAE Legislation | moj.gov.ae |
-| عربستان | Noor (سامانه قوانین) | noor.gov.sa |
-
-### ۲.۴. پایگاه‌های حقوقی تطبیقی جهانی
-
-| منبع | آدرس |
-|------|-------|
-| GlobaLex (NYU Law) | nyulawglobal.org/globalex |
-| World Legal Information Institute (WorldLII) | worldlii.org |
-| JSTOR (مقالات حقوقی) | jstor.org |
-| HeinOnline (پولی) | heinonline.org |
-| SSRN (پیش‌چاپ مقالات حقوقی رایگان) | ssrn.com |
-| Google Scholar (آراء و مقالات) | scholar.google.com |
-| Oxford Law Faculty Databases | law.ox.ac.uk |
-| Cambridge Core (حقوق) | cambridge.org/core |
-
----
-
-## ۳. منابع تخصصی شاخه‌های حقوقی
-
-### ۳.۱. حقوق تجارت و بازرگانی بین‌المللی
-
-| منبع | آدرس |
-|------|-------|
-| اتاق بازرگانی ایران | iccim.ir |
-| اصول قراردادهای تجاری بین‌المللی (UNIDROIT) | unidroit.org |
-| مرکز داوری اتاق ایران | adr-iccim.ir |
-| UNCITRAL Model Law | uncitral.un.org |
-| WTO Dispute Settlement | wto.org/english/tratop_e/dispu_e |
-
-### ۳.۲. حقوق مالکیت فکری
-
-| منبع | آدرس |
-|------|-------|
-| سازمان جهانی مالکیت معنوی (WIPO) | wipo.int |
-| اداره مالکیت صنعتی ایران | ipo.ir |
-| WIPO Lex (قوانین ملی مالکیت فکری) | wipolex.wipo.int |
-
-### ۳.۳. حقوق بشر بین‌المللی
-
-| منبع | آدرس |
-|------|-------|
-| کمیساریای عالی حقوق بشر سازمان ملل (OHCHR) | ohchr.org |
-| شورای حقوق بشر سازمان ملل | ohchr.org/en/hr-bodies/hrc |
-| دیوان اروپایی حقوق بشر | echr.coe.int |
-| کمیسیون بین‌المللی حقوقدانان (ICJ) | icj.org |
-
-### ۳.۴. حقوق دریایی و هوانوردی
-
-| منبع | آدرس |
-|------|-------|
-| سازمان بین‌المللی دریانوردی (IMO) | imo.org |
-| سازمان هواپیمایی کشوری بین‌المللی (ICAO) | icao.int |
-
----
-
-## ۴. نرم‌افزارها و پایگاه‌های جامع حقوقی ایران
-
-| منبع | نوع |
-|------|-----|
-| **ره‌آورد نوین** (rahavardnovin.com) | جامع‌ترین نرم‌افزار حقوقی ایران |
-| **حقوقدان** (hoghogdan.ir) | مجله و پایگاه مقالات |
-| **وکیل باشی** (vakilbashi.com) | راهنمای حقوقی عمومی |
-| **سامانه جامع حقوقی قوه قضائیه** (lib.ejustice.ir) | آراء و منابع قضایی |
-| **موسسه آموزش عالی علمی‌کاربردی قوه قضائیه** | آموزش و پژوهش |
 
 """
 

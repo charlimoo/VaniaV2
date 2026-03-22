@@ -21,8 +21,8 @@ interface AgentSettingsState {
 }
 
 const DEFAULT_SETTINGS: AgentSettings = {
-  isReasoningEnabled: true,
-  reasoningEffort: 'medium',
+  isReasoningEnabled: false,
+  reasoningEffort: 'none',
 };
 
 export const useAgentSettings = create<AgentSettingsState>()(
@@ -37,8 +37,8 @@ export const useAgentSettings = create<AgentSettingsState>()(
             settingsByAgent: {
               ...state.settingsByAgent,
               [agentSlug]: {
-                isReasoningEnabled: defaults.enable_reasoning,
-                reasoningEffort: defaults.reasoning_effort,
+                isReasoningEnabled: false,
+                reasoningEffort: 'none',
               } as AgentSettings,
             },
           }));

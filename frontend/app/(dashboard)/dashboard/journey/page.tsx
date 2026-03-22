@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertCircle, Route } from "lucide-react";
 import { RoleGuard } from "@/components/role-guard";
 import PatientJourneyCanvas from "@/components/canvas/renderers/PatientJourneyCanvas";
@@ -21,6 +20,7 @@ type CanvasStateResponse = {
 };
 
 const VISITOR_AGENT_SLUG = "vania-visitor-companion";
+const JOURNEY_NAVIGATION_KEYS = new Set(["active_view", "active_tab", "selected_case_id", "selected_doctor_id"]);
 
 function deepMerge(target: any, source: any): any {
   if (typeof target !== "object" || target === null) return source;
@@ -38,16 +38,24 @@ function deepMerge(target: any, source: any): any {
   return output;
 }
 
+function normalizeDashboardJourneyState(state: JourneyState, preserveSelection = false): JourneyState {
+  if (preserveSelection) {
+    return state;
+  }
+
+  return {
+    ...state,
+    active_view: "BASE",
+    selected_case_id: null,
+    selected_doctor_id: null,
+  };
+}
+
 export default function VisitorJourneyPage() {
   const { user } = useUser();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const queryDoctorId = searchParams.get("doctorId") || searchParams.get("expertId");
-  const queryCaseId = searchParams.get("caseId");
   const sessionId = useMemo(() => (user?.id ? `visitor-dashboard-${user.id}` : null), [user?.id]);
-  const [doctorScopeId, setDoctorScopeId] = useState<string | null>(queryDoctorId);
-  const [caseScopeId, setCaseScopeId] = useState<string | null>(queryCaseId);
+  const [doctorScopeId, setDoctorScopeId] = useState<string | null>(null);
+  const [caseScopeId, setCaseScopeId] = useState<string | null>(null);
 
   const [canvasId, setCanvasId] = useState<string | null>(null);
   const [data, setData] = useState<JourneyState | null>(null);
@@ -55,40 +63,13 @@ export default function VisitorJourneyPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setDoctorScopeId(queryDoctorId);
-    setCaseScopeId(queryCaseId);
-  }, [queryDoctorId, queryCaseId]);
-
-  const updateScopeQuery = useCallback((doctorId?: string | null, caseId?: string | null) => {
-    const nextParams = new URLSearchParams(searchParams.toString());
-    if (doctorId) {
-      nextParams.set("expertId", doctorId);
-      nextParams.set("doctorId", doctorId);
-    } else {
-      nextParams.delete("expertId");
-      nextParams.delete("doctorId");
-    }
-    if (caseId) {
-      nextParams.set("caseId", caseId);
-    } else {
-      nextParams.delete("caseId");
-    }
-
-    const nextQuery = nextParams.toString();
-    const nextUrl = `/dashboard/journey${nextQuery ? `?${nextQuery}` : ""}`;
-    const currentUrl = `/dashboard/journey${searchParams.toString() ? `?${searchParams.toString()}` : ""}`;
-    if (nextUrl !== currentUrl) {
-      router.replace(nextUrl);
-    }
-  }, [router, searchParams]);
-
   const loadCanvas = useCallback(async () => {
     if (!sessionId || !user?.id) return;
     setLoading(true);
     setError(null);
 
     try {
+      const preserveSelection = Boolean(doctorScopeId || caseScopeId);
       const headers = getAuthHeaders();
       if (!headers.Authorization) return;
       headers["X-Target-Resource-ID"] = String(user.id);
@@ -114,17 +95,9 @@ export default function VisitorJourneyPage() {
       const journey = body.canvases?.find((c) => c.component_key === "VANIA_PATIENT_JOURNEY");
       if (!journey) throw new Error("بوم مسیر مراجع یافت نشد.");
 
+      const normalizedState = normalizeDashboardJourneyState(journey.current_state, preserveSelection);
       setCanvasId(journey.id);
-      setData(journey.current_state);
-
-      const hydratedDoctor = journey.current_state?.selected_doctor_id;
-      const hydratedCase = journey.current_state?.selected_case_id;
-      if (!doctorScopeId && hydratedDoctor && journey.current_state?.active_view === "CASES") {
-        setDoctorScopeId(String(hydratedDoctor));
-      }
-      if (!caseScopeId && hydratedCase && journey.current_state?.active_view === "CASES") {
-        setCaseScopeId(String(hydratedCase));
-      }
+      setData(normalizedState);
     } catch (e: any) {
       setError(e?.message || "خطا در بارگذاری داشبورد.");
     } finally {
@@ -148,18 +121,16 @@ export default function VisitorJourneyPage() {
           ? String(selectedCaseMeta.doctor_id)
           : null;
 
-    if (selectedCaseId && selectedDoctorId) {
-      setDoctorScopeId(selectedDoctorId);
-      setCaseScopeId(selectedCaseId);
-      if (user?.id) {
-        localStorage.setItem(`vania:last_selected_doctor_by_patient:${user.id}`, selectedDoctorId);
+      if (selectedCaseId && selectedDoctorId) {
+        setDoctorScopeId(selectedDoctorId);
+        setCaseScopeId(selectedCaseId);
+        if (user?.id) {
+          localStorage.setItem(`vania:last_selected_doctor_by_patient:${user.id}`, selectedDoctorId);
+        }
+      } else if (delta.active_view === "BASE") {
+        setCaseScopeId(null);
+        setDoctorScopeId(null);
       }
-      updateScopeQuery(selectedDoctorId, selectedCaseId);
-    } else if (delta.active_view === "BASE") {
-      setCaseScopeId(null);
-      setDoctorScopeId(null);
-      updateScopeQuery(null, null);
-    }
 
     const previous = data;
     setData((prev) => (prev ? deepMerge(prev, delta) : prev));
@@ -173,6 +144,14 @@ export default function VisitorJourneyPage() {
     if (selectedCaseId && !selectedDoctorId) {
       setCaseScopeId(selectedCaseId);
     }
+
+    const persistentDelta = Object.fromEntries(
+      Object.entries(delta).filter(([key]) => !JOURNEY_NAVIGATION_KEYS.has(key))
+    );
+    if (Object.keys(persistentDelta).length === 0) {
+      return;
+    }
+
     setSaving(true);
 
     try {
@@ -198,7 +177,7 @@ export default function VisitorJourneyPage() {
           ...(effectiveDoctorId ? { "X-Target-Doctor-ID": effectiveDoctorId } : {}),
           ...(effectiveCaseId ? { "X-Target-Case-ID": effectiveCaseId } : {}),
         },
-        body: JSON.stringify({ delta }),
+        body: JSON.stringify({ delta: persistentDelta }),
       });
 
       if (!res.ok) throw new Error("ذخیره تغییرات ناموفق بود.");
@@ -207,7 +186,7 @@ export default function VisitorJourneyPage() {
     } finally {
       setSaving(false);
     }
-  }, [canvasId, data, doctorScopeId, caseScopeId, user?.id, updateScopeQuery]);
+  }, [canvasId, data, doctorScopeId, caseScopeId, user?.id]);
 
   return (
     <RoleGuard allowedRoles={["visitor"]}>

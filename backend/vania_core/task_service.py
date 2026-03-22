@@ -8,8 +8,63 @@ from users.models import UserContextEntry
 from .models import Notification, TreatmentConnection
 from .context_scope import migrate_legacy_to_scoped_once, migrate_doctor_scoped_to_case_once, build_scoped_key
 from .case_service import build_case_scoped_key
+from .schemas import RescueDimension
 
 logger = logging.getLogger(__name__)
+
+RESCUE_DIMENSION_ALIASES = {
+    "PERSONAL": RescueDimension.PERSONAL.value,
+    "SELFCARE": RescueDimension.PERSONAL.value,
+    "SELF_CARE": RescueDimension.PERSONAL.value,
+    "خودمراقبتی": RescueDimension.PERSONAL.value,
+    "شخصی": RescueDimension.PERSONAL.value,
+    "EMOTIONAL": RescueDimension.EMOTIONAL.value,
+    "هیجانی": RescueDimension.EMOTIONAL.value,
+    "عاطفی": RescueDimension.EMOTIONAL.value,
+    "RELATIONSHIP": RescueDimension.RELATIONSHIP.value,
+    "RELATIONS": RescueDimension.RELATIONSHIP.value,
+    "روابط": RescueDimension.RELATIONSHIP.value,
+    "ارتباط": RescueDimension.RELATIONSHIP.value,
+    "FRIENDSHIP": RescueDimension.FRIENDSHIP.value,
+    "SOCIAL": RescueDimension.FRIENDSHIP.value,
+    "اجتماعی": RescueDimension.FRIENDSHIP.value,
+    "دوستان": RescueDimension.FRIENDSHIP.value,
+    "CAREER": RescueDimension.CAREER.value,
+    "WORK": RescueDimension.CAREER.value,
+    "EDUCATION": RescueDimension.CAREER.value,
+    "STUDY": RescueDimension.CAREER.value,
+    "شغلی": RescueDimension.CAREER.value,
+    "تحصیلی": RescueDimension.CAREER.value,
+    "INTELLECTUAL": RescueDimension.INTELLECTUAL.value,
+    "THOUGHT": RescueDimension.INTELLECTUAL.value,
+    "THOUGHTS": RescueDimension.INTELLECTUAL.value,
+    "COGNITIVE": RescueDimension.INTELLECTUAL.value,
+    "فکری": RescueDimension.INTELLECTUAL.value,
+    "افکار": RescueDimension.INTELLECTUAL.value,
+    "ENVIRONMENT": RescueDimension.ENVIRONMENT.value,
+    "محیطی": RescueDimension.ENVIRONMENT.value,
+    "RECREATION": RescueDimension.RECREATION.value,
+    "SPORT": RescueDimension.RECREATION.value,
+    "EXERCISE": RescueDimension.RECREATION.value,
+    "LEISURE": RescueDimension.RECREATION.value,
+    "تفریحی": RescueDimension.RECREATION.value,
+    "ورزشی": RescueDimension.RECREATION.value,
+    "SOLITUDE": RescueDimension.SOLITUDE.value,
+    "تنهایی": RescueDimension.SOLITUDE.value,
+    "ALONE": RescueDimension.SOLITUDE.value,
+    "OTHER": RescueDimension.PERSONAL.value,
+    "سایر": RescueDimension.PERSONAL.value,
+}
+
+
+def normalize_rescue_dimension(value: str | None) -> str:
+    normalized = (value or "").strip()
+    if not normalized:
+        return RescueDimension.PERSONAL.value
+    alias_key = normalized.upper()
+    if alias_key in RescueDimension._value2member_map_:
+        return alias_key
+    return RESCUE_DIMENSION_ALIASES.get(alias_key, RescueDimension.PERSONAL.value)
 
 class TaskService:
     """
@@ -58,6 +113,7 @@ class TaskService:
         Assigns a new task to the patient.
         Triggers a notification for the patient.
         """
+        normalized_dimension = normalize_rescue_dimension(dimension)
         with transaction.atomic():
             entry = UserContextEntry.objects.select_for_update().get(
                 pk=TaskService._get_or_create_task_list_entry(patient, doctor_id=doctor_id, case_id=case_id).pk
@@ -71,7 +127,7 @@ class TaskService:
                 "id": str(uuid.uuid4()),
                 "text": text,
                 "status": "PENDING",
-                "dimension": dimension,
+                "dimension": normalized_dimension,
                 "doctor_id": doctor.id,
                 "doctor_name": doctor.full_name or f"Dr. {doctor.phone_number}",
                 "created_at": timezone.now().isoformat(),

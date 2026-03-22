@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DynamicForm } from "@/components/tool-ui/form/dynamic-form";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CaseSummary, ClinicalTestEntry, FormDefinition } from "@/lib/types/vania";
 
 interface Props {
@@ -23,63 +24,18 @@ interface Props {
   renderCaseActions?: (item: CaseSummary) => ReactNode;
 }
 
-const PROFILE_SECTIONS = [
-  {
-    title: "هویت و پرونده",
-    fields: [
-      { key: "full_name", label: "نام و نام خانوادگی" },
-      { key: "national_id", label: "شماره ملی" },
-      { key: "file_number", label: "شماره پرونده" },
-      { key: "file_date", label: "تاریخ تشکیل پرونده" },
-      { key: "gender", label: "جنسیت" },
-      { key: "birth_date", label: "تاریخ تولد" },
-    ],
-  },
-  {
-    title: "راه‌های ارتباطی",
-    fields: [
-      { key: "mobile_phone", label: "شماره موبایل" },
-      { key: "home_phone", label: "تلفن ثابت" },
-      { key: "email", label: "ایمیل" },
-      { key: "preferred_contact_method", label: "راه ارتباطی ترجیحی" },
-      { key: "address_home", label: "نشانی محل سکونت" },
-      { key: "address_work", label: "نشانی محل کار" },
-    ],
-  },
-  {
-    title: "وضعیت فردی، تحصیلی و شغلی",
-    fields: [
-      { key: "marital_status", label: "وضعیت تأهل" },
-      { key: "family_relation", label: "نسبت فامیلی با همسر" },
-      { key: "children_count", label: "تعداد فرزندان" },
-      { key: "education_level", label: "تحصیلات" },
-      { key: "education_major", label: "رشته تحصیلی" },
-      { key: "military_status", label: "وضعیت نظام وظیفه" },
-      { key: "military_exempt_reason", label: "علت معافیت" },
-      { key: "job_status", label: "وضعیت شغلی" },
-      { key: "job_type", label: "نوع شغل" },
-      { key: "job_title", label: "عنوان شغل" },
-      { key: "income_approx", label: "درآمد تقریبی" },
-    ],
-  },
-  {
-    title: "شبکه‌های اجتماعی",
-    fields: [
-      { key: "social_instagram", label: "اینستاگرام", social: "instagram" },
-      { key: "social_x", label: "ایکس", social: "x" },
-      { key: "social_linkedin", label: "لینکدین", social: "linkedin" },
-      { key: "social_telegram", label: "تلگرام", social: "telegram" },
-      { key: "social_website", label: "وب‌سایت", social: "website" },
-      { key: "social_other", label: "سایر راه‌های آنلاین" },
-    ],
-  },
-  {
-    title: "ارجاع",
-    fields: [
-      { key: "referral_source", label: "منبع ارجاع" },
-    ],
-  },
-];
+type SchemaField = {
+  name?: string;
+  label?: string;
+  type: string;
+  fields?: SchemaField[];
+  columns?: Array<{ name: string; label: string; type?: string }>;
+};
+
+type ProfileSection = {
+  title: string;
+  fields: Array<SchemaField & { key: string; social?: string }>;
+};
 
 const hasValue = (value: unknown) => {
   if (value === null || value === undefined) return false;
@@ -92,6 +48,37 @@ const toText = (value: unknown) => {
   if (Array.isArray(value)) return value.join("، ");
   return String(value);
 };
+
+const SOCIAL_FIELD_MAP: Record<string, string> = {
+  social_instagram: "instagram",
+  social_x: "x",
+  social_linkedin: "linkedin",
+  social_telegram: "telegram",
+  social_website: "website",
+};
+
+const FALLBACK_PROFILE_SECTIONS: ProfileSection[] = [
+  {
+    title: "هویت و پرونده",
+    fields: [
+      { key: "full_name", label: "نام و نام خانوادگی", type: "text" },
+      { key: "national_id", label: "شماره ملی", type: "text" },
+      { key: "gender", label: "جنسیت", type: "text" },
+      { key: "birth_date", label: "تاریخ تولد", type: "date" },
+    ],
+  },
+  {
+    title: "راه‌های ارتباطی",
+    fields: [
+      { key: "mobile_phone", label: "شماره موبایل", type: "text" },
+      { key: "home_phone", label: "تلفن ثابت", type: "text" },
+      { key: "email", label: "ایمیل", type: "email" },
+      { key: "preferred_contact_method", label: "راه ارتباطی ترجیحی", type: "text" },
+      { key: "address_home", label: "نشانی محل سکونت", type: "textarea" },
+      { key: "address_work", label: "نشانی محل کار", type: "textarea" },
+    ],
+  },
+];
 
 const normalizeSocialHref = (type: string, value: string) => {
   const trimmed = value.trim();
@@ -132,10 +119,33 @@ export function BaseInfoPanel({
 }: Props) {
   const [activeFormEntry, setActiveFormEntry] = useState<any | null>(null);
   const visibleForms = (forms || []).filter((item) => item?.form_key !== "BASE_PROFILE_V1" && item?.data?.form_key !== "BASE_PROFILE_V1");
-  const visibleProfileSections = PROFILE_SECTIONS.map((section) => ({
-    ...section,
-    fields: section.fields.filter((field) => hasValue(profile?.[field.key])),
-  })).filter((section) => section.fields.length > 0);
+  const baseProfileDefinition = useMemo(
+    () => (availableForms || []).find((form) => form.key === "BASE_PROFILE_V1") || null,
+    [availableForms]
+  );
+  const profileSections = useMemo<ProfileSection[]>(() => {
+    const schema = baseProfileDefinition?.schema || [];
+    if (!schema.length) return FALLBACK_PROFILE_SECTIONS;
+
+    return schema
+      .filter((field) => field.type === "section")
+      .map((section) => ({
+        title: section.title || section.label || "بخش",
+        fields: (section.fields || [])
+          .filter((field) => !!field.name)
+          .map((field) => ({
+            ...field,
+            key: field.name as string,
+            social: field.name ? SOCIAL_FIELD_MAP[field.name] : undefined,
+          })),
+      }));
+  }, [baseProfileDefinition]);
+  const visibleProfileSections = profileSections
+    .map((section) => ({
+      ...section,
+      fields: section.fields.filter((field) => hasValue(profile?.[field.key])),
+    }))
+    .filter((section) => section.fields.length > 0);
   const activeFormDefinition = useMemo(() => {
     const formKey = activeFormEntry?.form_key || activeFormEntry?.data?.form_key;
     return (availableForms || []).find((form) => form.key === formKey) || null;
@@ -161,10 +171,8 @@ export function BaseInfoPanel({
             </div>
           ) : (
             cases.map((item) => (
-              <button
+              <div
                 key={item.id}
-                type="button"
-                onClick={() => onOpenCase(item.id)}
                 className="group flex w-full items-center justify-between gap-4 rounded-3xl border border-primary/25 bg-primary/8 px-4 py-4 text-right transition hover:border-primary/45 hover:bg-primary/12"
               >
                 <div className="min-w-0 flex-1">
@@ -185,13 +193,19 @@ export function BaseInfoPanel({
                   ) : null}
                 </div>
                 <div className="flex items-center gap-2">
-                  {renderCaseActions ? <div onClick={(e) => e.stopPropagation()}>{renderCaseActions(item)}</div> : null}
-                  <div className="inline-flex items-center gap-1 text-xs font-medium text-primary transition group-hover:translate-x-[-2px]">
+                  {renderCaseActions ? <div>{renderCaseActions(item)}</div> : null}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onOpenCase(item.id)}
+                    className="inline-flex h-8 items-center gap-1 px-2 text-xs font-medium text-primary transition group-hover:translate-x-[-2px]"
+                  >
                     ورود
                     <ArrowLeft className="h-3.5 w-3.5" />
-                  </div>
+                  </Button>
                 </div>
-              </button>
+              </div>
             ))
           )}
         </div>
@@ -219,11 +233,43 @@ export function BaseInfoPanel({
           <div className="space-y-6">
             {visibleProfileSections.map((section) => (
               <div key={section.title} className="space-y-3">
-                <div className="text-sm font-semibold text-foreground">{section.title}</div>
+                <div className="text-xs font-regular text-primary/70">{section.title}</div>
                 <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-3">
                   {section.fields.map((field) => {
                     const rawValue = profile?.[field.key];
                     const href = typeof rawValue === "string" && field.social ? normalizeSocialHref(field.social, rawValue) : null;
+
+                    if (field.type === "datagrid" && Array.isArray(rawValue)) {
+                      return (
+                        <div key={field.key} className="sm:col-span-2 xl:col-span-3">
+                          <div className="mb-2 text-[11px] text-muted-foreground">{field.label}</div>
+                          <div className="overflow-hidden rounded-2xl border border-border/60">
+                            <Table>
+                              <TableHeader className="bg-muted/30">
+                                <TableRow className="hover:bg-transparent">
+                                  {(field.columns || []).map((column) => (
+                                    <TableHead key={column.name} className="text-right text-xs font-medium">
+                                      {column.label}
+                                    </TableHead>
+                                  ))}
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {rawValue.map((row: Record<string, unknown>, index: number) => (
+                                  <TableRow key={`${field.key}-${index}`}>
+                                    {(field.columns || []).map((column) => (
+                                      <TableCell key={column.name} className="text-xs whitespace-normal">
+                                        {hasValue(row?.[column.name]) ? toText(row[column.name]) : "-"}
+                                      </TableCell>
+                                    ))}
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        </div>
+                      );
+                    }
 
                     return (
                       <div key={field.key} className="border-b border-border/50 pb-2">
@@ -248,71 +294,7 @@ export function BaseInfoPanel({
         )}
       </section>
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold">ثبت‌های پایه</h3>
-          </div>
-        </div>
 
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-sm font-semibold">
-                <FlaskConical className="h-4 w-4 text-primary" />
-                تست‌های ثبت‌شده
-              </h3>
-              <Badge variant="outline">{tests.length}</Badge>
-            </div>
-            <div className="grid gap-3">
-              {tests.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border/60 px-4 py-5 text-sm text-muted-foreground">
-                  هنوز تستی ثبت نشده است.
-                </div>
-              ) : (
-                tests.map((test) => (
-                  <div key={test.id} className="border-b border-border/50 pb-3">
-                    <div className="text-sm font-medium">{test.title}</div>
-                    <div className="mt-1 text-xs text-muted-foreground">{test.result_text || test.result_summary || "متن نتیجه هنوز ثبت نشده است."}</div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="flex items-center gap-2 text-sm font-semibold">
-                <FileText className="h-4 w-4 text-primary" />
-                فرم‌های ثبت‌شده
-              </h3>
-              <Badge variant="outline">{visibleForms.length}</Badge>
-            </div>
-            <div className="grid gap-3">
-              {visibleForms.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border/60 px-4 py-5 text-sm text-muted-foreground">
-                  هنوز فرم دیگری ثبت نشده است.
-                </div>
-              ) : (
-                visibleForms.map((form, index) => (
-                  <div key={form.id || index} className="flex items-center justify-between gap-3 border-b border-border/50 pb-3">
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium">{form.data?.form_title || form.type || form.form_key}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {form.date ? new Date(form.date).toLocaleDateString("fa-IR") : "بدون تاریخ"}
-                      </div>
-                    </div>
-                    <Button type="button" variant="ghost" size="sm" className="gap-1.5 text-xs" onClick={() => setActiveFormEntry(form)}>
-                      <Eye className="h-3.5 w-3.5" />
-                      مشاهده فرم
-                    </Button>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
 
       <Dialog open={!!activeFormEntry} onOpenChange={(open) => !open && setActiveFormEntry(null)}>
         <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-4xl max-h-[85vh] overflow-y-auto">

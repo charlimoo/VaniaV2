@@ -32,6 +32,19 @@ const DIMENSIONS: { key: RescueDimension; label: string; colorClass: string }[] 
   { key: "RECREATION", label: "تفریحی-ورزشی", colorClass: "bg-muted-50 text-green-400 border-muted" },
   { key: "SOLITUDE", label: "مدیریت تنهایی", colorClass: "bg-muted-50 text-orange-400 border-muted" },
 ];
+
+const formatDueDate = (value?: string) => {
+  if (!value) return "";
+  if (value.includes("/")) return value;
+  try {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString("fa-IR");
+  } catch {
+    return value;
+  }
+};
+
 export function RescueNetTab({ tasks, patientId, caseId, onEdit, readOnly = false }: Props) {
   
   // Group tasks
@@ -204,7 +217,7 @@ export function RescueNetTab({ tasks, patientId, caseId, onEdit, readOnly = fals
                         {task.due_date && task.status !== "DONE" && (
                           <div className="flex items-center gap-1 mt-1 text-[9px] text-amber-600/80 font-medium">
                             <CalendarClock className="w-2.5 h-2.5" />
-                            {new Date(task.due_date).toLocaleDateString('fa-IR')}
+                            {formatDueDate(task.due_date)}
                           </div>
                         )}
                     </div>

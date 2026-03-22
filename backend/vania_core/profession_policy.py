@@ -14,8 +14,8 @@ EXPERT_OVERVIEW_DEFAULT_SECTIONS = [
     "tests",
 ]
 VISITOR_OVERVIEW_DEFAULT_SECTIONS = [
+    "clinical_summary",
     "forms_tests_analysis",
-    "forms",
     "tests",
 ]
 
@@ -327,6 +327,8 @@ def sanitize_visitor_case_payload(case_payload: Dict[str, Any], profession_slug:
     payload["forms"] = filter_form_entries(payload.get("forms") or [], allowed_form_keys)
     if policy.get("test_mode") == "disabled":
         payload["tests"] = []
+    if not feature_policy.get("appendix_enabled", False):
+        payload["active_goals"] = []
     if not feature_policy.get("library_enabled", False):
         payload["library"] = []
     if not feature_policy.get("medications_enabled", False):

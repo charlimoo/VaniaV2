@@ -19,8 +19,6 @@ FORM_BASE_PROFILE = {
             "title": "هویت و پرونده",
             "description": "مشخصات اصلی مراجع و اطلاعات پایه پرونده را ثبت کنید.",
             "fields": [
-                {"name": "file_number", "label": "شماره پرونده مراجع", "type": "text", "width": "half"},
-                {"name": "file_date", "label": "تاریخ تشکیل پرونده", "type": "date", "width": "half"},
                 {"name": "full_name", "label": "نام و نام خانوادگی", "type": "text", "width": "half", "required": True},
                 {"name": "national_id", "label": "شماره ملی", "type": "text", "width": "half"},
                 {"name": "gender", "label": "جنسیت", "type": "select", "options": ["مؤنث", "مذکر"], "width": "half"},

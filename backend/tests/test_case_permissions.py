@@ -1,10 +1,14 @@
 from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.test import APIClient
+from unittest.mock import patch
 
 from users.models import CustomUser, ExpertProfession, UserRole
+from capabilities.test_attachment_media import build_case_file_tool_result, build_test_attachment_tool_result
 from vania_core.case_service import CaseService
 from vania_core.models import TreatmentConnection
 from vania_core.patient_service import PatientDataService
+from vania_core.case_files_service import CaseFilesService
 from vania_core.tests_service import ClinicalTestsService
 
 
@@ -113,3 +117,134 @@ class CasePermissionsTests(TestCase):
             format="json",
         )
         self.assertEqual(put_response.status_code, 403)
+
+    @patch("vania_core.case_files_service.CaseFilesService.extract_file")
+    def test_read_test_result_bundle_uses_shared_file_extraction_shape(self, mock_extract_file):
+        mock_extract_file.return_value = {
+            "status": "READY",
+            "text_stats": {
+                "readable": True,
+                "total_chars": 32,
+                "total_chunks": 1,
+                "total_pages": 1,
+            },
+            "content": {
+                "pages": [
+                    {"page_number": 1, "text": "CBC result: hemoglobin normal"},
+                ],
+                "chunks": [
+                    {"chunk_index": 0, "page_number": 1, "text": "CBC result: hemoglobin normal"},
+                ],
+            },
+        }
+        uploaded = SimpleUploadedFile("cbc.pdf", b"%PDF-1.4 test", content_type="application/pdf")
+        ClinicalTestsService.attach_test_file(
+            patient=self.visitor,
+            created_by=self.owner,
+            test_id=self.test_entry["id"],
+            uploaded_file=uploaded,
+            doctor_id=self.owner.id,
+            case_id=self.case["id"],
+        )
+
+        payload = ClinicalTestsService.read_test_result_bundle(
+            self.visitor,
+            self.test_entry["id"],
+            self.owner.id,
+            self.case["id"],
+        )
+
+        self.assertIsNotNone(payload)
+        self.assertEqual(len(payload["attachments"]), 1)
+        attachment = payload["attachments"][0]
+        self.assertEqual(attachment["extraction_status"], "READY")
+        self.assertEqual(attachment["text_stats"]["total_pages"], 1)
+        self.assertEqual(attachment["pages"][0]["text"], "CBC result: hemoglobin normal")
+        self.assertIn("hemoglobin normal", attachment["extracted_text"])
+
+    def test_test_attachment_tool_result_loads_original_media(self):
+        pdf_upload = SimpleUploadedFile("cbc.pdf", b"%PDF-1.4 test", content_type="application/pdf")
+        png_upload = SimpleUploadedFile("scan.png", b"\x89PNG\r\n\x1a\nfake", content_type="image/png")
+        ClinicalTestsService.attach_test_file(
+            patient=self.visitor,
+            created_by=self.owner,
+            test_id=self.test_entry["id"],
+            uploaded_file=pdf_upload,
+            doctor_id=self.owner.id,
+            case_id=self.case["id"],
+        )
+        ClinicalTestsService.attach_test_file(
+            patient=self.visitor,
+            created_by=self.owner,
+            test_id=self.test_entry["id"],
+            uploaded_file=png_upload,
+            doctor_id=self.owner.id,
+            case_id=self.case["id"],
+        )
+
+        test_record = ClinicalTestsService.get_test(
+            self.visitor,
+            self.test_entry["id"],
+            self.owner.id,
+            self.case["id"],
+        )
+        tool_result = build_test_attachment_tool_result(test_record)
+        payload = tool_result.model_dump()
+
+        self.assertIsNotNone(tool_result.files)
+        self.assertIsNotNone(tool_result.images)
+        self.assertEqual(tool_result.files[0].filename, "cbc.pdf")
+        self.assertEqual(tool_result.files[0].mime_type, "application/pdf")
+        self.assertEqual(tool_result.images[0].mime_type, "image/png")
+        self.assertIn("Only attachments with loaded_into_context=true", payload["content"])
+
+        pdf_attachment_id = next(
+            item["id"]
+            for item in test_record["attachments"]
+            if item["content_type"] == "application/pdf"
+        )
+        pdf_only_result = build_test_attachment_tool_result(test_record, attachment_id=pdf_attachment_id)
+        self.assertIsNotNone(pdf_only_result.files)
+        self.assertIsNone(pdf_only_result.images)
+
+    def test_case_file_tool_result_loads_original_media(self):
+        pdf_upload = SimpleUploadedFile("case-note.pdf", b"%PDF-1.4 case note", content_type="application/pdf")
+        png_upload = SimpleUploadedFile("scan.png", b"\x89PNG\r\n\x1a\nfake", content_type="image/png")
+
+        pdf_file = CaseFilesService.create_file(
+            patient=self.visitor,
+            created_by=self.owner,
+            doctor_id=self.owner.id,
+            case_id=self.case["id"],
+            uploaded_file=pdf_upload,
+            name="Case Note",
+            description="PDF file",
+        )
+        png_file = CaseFilesService.create_file(
+            patient=self.visitor,
+            created_by=self.owner,
+            doctor_id=self.owner.id,
+            case_id=self.case["id"],
+            uploaded_file=png_upload,
+            name="Scan",
+            description="Image file",
+        )
+
+        pdf_result = build_case_file_tool_result(pdf_file)
+        pdf_payload = pdf_result.model_dump()
+        self.assertIsNotNone(pdf_result.files)
+        self.assertIsNone(pdf_result.images)
+        self.assertEqual(pdf_result.files[0].filename, "case-note.pdf")
+        self.assertEqual(pdf_result.files[0].mime_type, "application/pdf")
+        self.assertIn("loaded_into_context", pdf_payload["content"])
+
+        png_read_payload = CaseFilesService.read_file(
+            self.visitor,
+            self.owner.id,
+            self.case["id"],
+            png_file["id"],
+        )
+        png_result = build_case_file_tool_result(png_file, payload=png_read_payload)
+        self.assertIsNone(png_result.files)
+        self.assertIsNotNone(png_result.images)
+        self.assertEqual(png_result.images[0].mime_type, "image/png")

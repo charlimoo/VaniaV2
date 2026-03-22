@@ -18,6 +18,27 @@ interface Flashcard {
   content: string;
 }
 
+type SwotState = {
+  Strengths: string[];
+  Weaknesses: string[];
+  Opportunities: string[];
+  Threats: string[];
+};
+
+const EMPTY_SWOT: SwotState = {
+  Strengths: [],
+  Weaknesses: [],
+  Opportunities: [],
+  Threats: [],
+};
+
+const swotToText = (items: string[] = []) => items.join("\n");
+const textToSwot = (value: string) =>
+  value
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 interface Props {
   patientId: number;
   caseId?: string;
@@ -27,6 +48,8 @@ interface Props {
     summary: string;
     private_notes: string;
     flashcards: any[];
+    swot_analysis?: Partial<SwotState>;
+    smart_goals?: string[];
   };
   trigger?: React.ReactNode;
   onSuccess: (data: any) => void;
@@ -39,6 +62,8 @@ export function ManualReportDialog({ patientId, caseId, sessionNumber, sessionTi
   const [summary, setSummary] = useState("");
   const [privateNotes, setPrivateNotes] = useState("");
   const [flashcards, setFlashcards] = useState<Flashcard[]>([]);
+  const [swot, setSwot] = useState<SwotState>(EMPTY_SWOT);
+  const [smartGoalsText, setSmartGoalsText] = useState("");
 
   useEffect(() => {
     if (open) {
@@ -51,6 +76,13 @@ export function ManualReportDialog({ patientId, caseId, sessionNumber, sessionTi
         content: c.content || c.back || ""
       }));
       setFlashcards(normalizedCards);
+      setSwot({
+        Strengths: initialData?.swot_analysis?.Strengths || [],
+        Weaknesses: initialData?.swot_analysis?.Weaknesses || [],
+        Opportunities: initialData?.swot_analysis?.Opportunities || [],
+        Threats: initialData?.swot_analysis?.Threats || [],
+      });
+      setSmartGoalsText((initialData?.smart_goals || []).join("\n"));
     }
   }, [open, initialData]);
 
@@ -68,6 +100,10 @@ export function ManualReportDialog({ patientId, caseId, sessionNumber, sessionTi
     setFlashcards(flashcards.filter((_, i) => i !== index));
   };
 
+  const updateSwot = (key: keyof SwotState, value: string) => {
+    setSwot((prev) => ({ ...prev, [key]: textToSwot(value) }));
+  };
+
   const handleSubmit = async () => {
     setLoading(true);
     try {
@@ -80,7 +116,9 @@ export function ManualReportDialog({ patientId, caseId, sessionNumber, sessionTi
           session_number: sessionNumber,
           summary: summary,
           private_notes: privateNotes,
-          flashcards: flashcards.filter(f => f.title.trim() !== "") 
+          flashcards: flashcards.filter(f => f.title.trim() !== ""),
+          swot_analysis: swot,
+          smart_goals: textToSwot(smartGoalsText),
         })
       });
 
@@ -165,6 +203,63 @@ export function ManualReportDialog({ patientId, caseId, sessionNumber, sessionTi
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="space-y-3 bg-muted/10 p-4 rounded-xl border border-border/40">
+            <Label className="text-xs font-semibold text-foreground/80">تحلیل SWOT</Label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">نقاط قوت</Label>
+                <Textarea
+                  value={swotToText(swot.Strengths)}
+                  onChange={(e) => updateSwot("Strengths", e.target.value)}
+                  placeholder="هر مورد در یک خط"
+                  className="min-h-[96px] text-sm text-right"
+                  dir="rtl"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">نقاط ضعف</Label>
+                <Textarea
+                  value={swotToText(swot.Weaknesses)}
+                  onChange={(e) => updateSwot("Weaknesses", e.target.value)}
+                  placeholder="هر مورد در یک خط"
+                  className="min-h-[96px] text-sm text-right"
+                  dir="rtl"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">فرصت‌ها</Label>
+                <Textarea
+                  value={swotToText(swot.Opportunities)}
+                  onChange={(e) => updateSwot("Opportunities", e.target.value)}
+                  placeholder="هر مورد در یک خط"
+                  className="min-h-[96px] text-sm text-right"
+                  dir="rtl"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-[11px] text-muted-foreground">تهدیدها</Label>
+                <Textarea
+                  value={swotToText(swot.Threats)}
+                  onChange={(e) => updateSwot("Threats", e.target.value)}
+                  placeholder="هر مورد در یک خط"
+                  className="min-h-[96px] text-sm text-right"
+                  dir="rtl"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold text-foreground/80">اهداف جلسه</Label>
+            <Textarea
+              value={smartGoalsText}
+              onChange={(e) => setSmartGoalsText(e.target.value)}
+              placeholder="هر هدف را در یک خط بنویسید"
+              className="min-h-[110px] text-sm text-right"
+              dir="rtl"
+            />
           </div>
 
           <div className="space-y-2">

@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from django.conf import settings
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
 from openai import OpenAI
@@ -38,6 +39,7 @@ class ClinicalTestsService:
     CONTEXT_KEY = "clinical_tests"
     MAX_EXTRACTED_TEXT_CHARS = 24000
     ALLOWED_ATTACHMENT_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp"}
+    ATTACHMENT_EXCERPT_CHARS = 600
 
     @staticmethod
     def list_catalog() -> List[Dict[str, Any]]:
@@ -168,6 +170,15 @@ class ClinicalTestsService:
             default_storage.delete(file_path)
 
     @staticmethod
+    def _save_attachment_copy(patient, source_name: str, content_bytes: bytes) -> str:
+        extension = os.path.splitext(source_name or "")[1].lower()
+        if extension not in ClinicalTestsService.ALLOWED_ATTACHMENT_EXTENSIONS:
+            raise ValueError("Unsupported file type.")
+        safe_name = f"{uuid.uuid4().hex}{extension}"
+        relative_path = os.path.join("clinical_tests", str(patient.id), safe_name)
+        return default_storage.save(relative_path, ContentFile(content_bytes))
+
+    @staticmethod
     def delete_test(patient, created_by, test_id: str, doctor_id=None, case_id=None) -> bool:
         tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id, case_id=case_id)
         filtered = []
@@ -175,6 +186,11 @@ class ClinicalTestsService:
         for test in tests:
             if test.get("id") == test_id:
                 removed = True
+                attachments = test.get("attachments", [])
+                if isinstance(attachments, list):
+                    for attachment in attachments:
+                        if isinstance(attachment, dict):
+                            ClinicalTestsService._delete_file_if_exists(attachment.get("file_path"))
                 ClinicalTestsService._delete_file_if_exists(test.get("file_path"))
                 continue
             filtered.append(test)
@@ -204,14 +220,7 @@ class ClinicalTestsService:
         if target is None:
             return None
 
-        ClinicalTestsService._delete_file_if_exists(target.get("file_path"))
-
-        extension = os.path.splitext(uploaded_file.name or "")[1].lower()
-        if extension not in ClinicalTestsService.ALLOWED_ATTACHMENT_EXTENSIONS:
-            raise ValueError("Unsupported file type.")
-        safe_name = f"{uuid.uuid4().hex}{extension}"
-        relative_path = os.path.join("clinical_tests", str(patient.id), safe_name)
-        saved_path = default_storage.save(relative_path, uploaded_file)
+        saved_path = ClinicalTestsService._save_attachment_copy(patient, uploaded_file.name or "", uploaded_file.read())
 
         attachments = target.get("attachments", [])
         if not isinstance(attachments, list):
@@ -227,6 +236,51 @@ class ClinicalTestsService:
         target["updated_at"] = datetime.now().isoformat()
         ClinicalTestsService._normalize_test_record(target)
 
+        ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id, case_id=case_id)
+        return target
+
+    @staticmethod
+    def attach_case_file(
+        patient,
+        created_by,
+        test_id: str,
+        file_id: str,
+        doctor_id=None,
+        case_id=None,
+    ) -> Optional[Dict[str, Any]]:
+        from .case_files_service import CaseFilesService
+
+        case_file = CaseFilesService.get_file(patient, int(doctor_id), case_id, file_id) if doctor_id and case_id else None
+        if not case_file:
+            return None
+
+        storage_path = case_file.get("storage_path")
+        source_name = case_file.get("original_file_name") or case_file.get("name") or ""
+        if not storage_path or not source_name or not default_storage.exists(storage_path):
+            return None
+
+        with default_storage.open(storage_path, "rb") as existing_file:
+            file_bytes = existing_file.read()
+
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id, case_id=case_id)
+        target = next((test for test in tests if test.get("id") == test_id), None)
+        if target is None:
+            return None
+
+        saved_path = ClinicalTestsService._save_attachment_copy(patient, source_name, file_bytes)
+        attachments = target.get("attachments", [])
+        if not isinstance(attachments, list):
+            attachments = []
+        attachments.append({
+            "id": str(uuid.uuid4()),
+            "file_path": saved_path,
+            "file_name": source_name,
+            "file_uploaded_at": datetime.now().isoformat(),
+            "content_type": case_file.get("content_type") or mimetypes.guess_type(source_name)[0] or "application/octet-stream",
+        })
+        target["attachments"] = attachments
+        target["updated_at"] = datetime.now().isoformat()
+        ClinicalTestsService._normalize_test_record(target)
         ClinicalTestsService.save_tests(patient, tests, creator=created_by, doctor_id=doctor_id, case_id=case_id)
         return target
 
@@ -339,14 +393,7 @@ class ClinicalTestsService:
             return None
         attachments = []
         for attachment in test.get("attachments", []) or []:
-            extracted_text = ClinicalTestsService.extract_attachment_text(attachment)
-            attachments.append({
-                "id": attachment.get("id"),
-                "file_name": attachment.get("file_name"),
-                "content_type": attachment.get("content_type"),
-                "file_uploaded_at": attachment.get("file_uploaded_at"),
-                "extracted_text": extracted_text,
-            })
+            attachments.append(ClinicalTestsService.read_test_attachment_bundle(attachment))
         return {
             "id": test.get("id"),
             "title": test.get("title"),
@@ -358,17 +405,61 @@ class ClinicalTestsService:
         }
 
     @staticmethod
-    def extract_attachment_text(attachment: Dict[str, Any]) -> str:
+    def read_test_attachment_bundle(attachment: Dict[str, Any]) -> Dict[str, Any]:
         storage_path = attachment.get("file_path")
         file_name = attachment.get("file_name") or ""
+        content_type = attachment.get("content_type")
+
+        payload: Dict[str, Any] = {
+            "id": attachment.get("id"),
+            "file_name": file_name,
+            "content_type": content_type,
+            "file_uploaded_at": attachment.get("file_uploaded_at"),
+            "extracted_text": "",
+            "extraction_status": "FAILED",
+            "text_stats": {
+                "readable": False,
+                "total_chars": 0,
+                "total_chunks": 0,
+                "total_pages": 0,
+            },
+            "excerpt": "",
+            "pages": [],
+        }
+
         if not storage_path or not default_storage.exists(storage_path):
-            return ""
-        extension = os.path.splitext(file_name)[1].lower()
-        if extension == ".pdf":
-            return ClinicalTestsService.extract_pdf_text(storage_path)
-        if extension in {".png", ".jpg", ".jpeg", ".webp"}:
-            return ClinicalTestsService.extract_image_text(storage_path, attachment.get("content_type"))
-        return ""
+            return payload
+
+        from .case_files_service import CaseFilesService
+
+        extracted = CaseFilesService.extract_file(storage_path, file_name, content_type)
+        pages = extracted.get("content", {}).get("pages", []) or []
+        combined_text = "\n\n".join(
+            (item.get("text") or "").strip()
+            for item in pages
+            if isinstance(item, dict) and (item.get("text") or "").strip()
+        ).strip()
+        excerpt = combined_text[:ClinicalTestsService.ATTACHMENT_EXCERPT_CHARS].strip()
+
+        payload.update({
+            "extracted_text": combined_text[:ClinicalTestsService.MAX_EXTRACTED_TEXT_CHARS],
+            "extraction_status": extracted.get("status") or "FAILED",
+            "text_stats": extracted.get("text_stats") or payload["text_stats"],
+            "excerpt": excerpt,
+            "pages": [
+                {
+                    "page_number": item.get("page_number"),
+                    "text": (item.get("text") or "")[:ClinicalTestsService.ATTACHMENT_EXCERPT_CHARS],
+                }
+                for item in pages[:3]
+                if isinstance(item, dict)
+            ],
+        })
+        return payload
+
+    @staticmethod
+    def extract_attachment_text(attachment: Dict[str, Any]) -> str:
+        return ClinicalTestsService.read_test_attachment_bundle(attachment).get("extracted_text", "")
 
     @staticmethod
     def extract_image_text(storage_path: str, content_type: Optional[str] = None) -> str:

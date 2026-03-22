@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PersianDatePicker } from "@/components/ui/persian-date-picker";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
@@ -118,10 +119,10 @@ export function AddTaskDialog({ patientId, caseId, onSuccess, trigger }: Props) 
             </div>
             <div className="grid gap-2">
                 <Label className="text-xs">مهلت انجام (اختیاری)</Label>
-                <Input 
-                    type="date" 
+                <PersianDatePicker
                     value={formData.due_date} 
-                    onChange={(e) => setFormData({...formData, due_date: e.target.value})} 
+                    onChange={(value) => setFormData({...formData, due_date: value})}
+                    placeholder="تاریخ را انتخاب کنید"
                 />
             </div>
           </div>

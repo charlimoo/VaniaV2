@@ -28,6 +28,7 @@ from billing.models import BillingConfig
 from .schemas import SessionCreate, SessionUpdate
 from .storage import get_storage, get_session_safe
 from .stream import agui_stream_generator
+from .tool_result_sanitizer import sanitize_tool_result_content
 from .utils import safe_serialize, build_branch_history_messages
 from .session_metadata import adjust_session_knowledge_file_count, apply_session_metadata_defaults
 
@@ -44,6 +45,8 @@ class SessionType(str, Enum):
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+TOOL_ONLY_CHAT_AGENT_SLUGS = {"vania-expert-assistant"}
+
 ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024
 ATTACHMENT_ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/jpg"}
 ATTACHMENT_ALLOWED_DOC_TYPES = {"application/pdf"}
@@ -56,6 +59,9 @@ def _normalize_session_state_aliases(session_state):
     out = dict(session_state)
     visitor_id = out.get("visitor_id") or out.get("patient_id")
     expert_id = out.get("selected_expert_id") or out.get("selected_doctor_id")
+    visitor_name = out.get("visitor_name") or out.get("patient_name")
+    expert_name = out.get("selected_expert_name") or out.get("selected_doctor_name")
+    case_title = out.get("selected_case_title") or out.get("case_title") or out.get("case_name")
 
     if visitor_id is not None:
         out["visitor_id"] = visitor_id
@@ -63,8 +69,22 @@ def _normalize_session_state_aliases(session_state):
     if expert_id is not None:
         out["selected_expert_id"] = expert_id
         out["selected_doctor_id"] = expert_id
+    if visitor_name:
+        out["visitor_name"] = visitor_name
+        out["patient_name"] = visitor_name
+    if expert_name:
+        out["selected_expert_name"] = expert_name
+        out["selected_doctor_name"] = expert_name
+    if case_title:
+        out["selected_case_title"] = case_title
+        out["case_title"] = case_title
+        out["case_name"] = case_title
 
     return out
+
+
+def _should_hide_assistant_text(agent_slug: Optional[str], tool_calls: Optional[list]) -> bool:
+    return bool(agent_slug in TOOL_ONLY_CHAT_AGENT_SLUGS and tool_calls)
 
 # ==========================================
 # SESSION MANAGEMENT ROUTES
@@ -157,8 +177,17 @@ async def get_session_history(
                     "agent_id": session_data.get("agent_id"),
                     "visitor_id": session_data.get("visitor_id"),
                     "patient_id": session_data.get("patient_id"),
+                    "visitor_name": session_data.get("visitor_name"),
+                    "patient_name": session_data.get("patient_name"),
                     "selected_expert_id": session_data.get("selected_expert_id"),
                     "selected_doctor_id": session_data.get("selected_doctor_id"),
+                    "selected_expert_name": session_data.get("selected_expert_name"),
+                    "selected_doctor_name": session_data.get("selected_doctor_name"),
+                    "selected_case_id": session_data.get("selected_case_id"),
+                    "selected_case_title": session_data.get("selected_case_title"),
+                    "selected_case_doctor_name": session_data.get("selected_case_doctor_name"),
+                    "selected_case_doctor_profession_slug": session_data.get("selected_case_doctor_profession_slug"),
+                    "selected_case_doctor_profession_label": session_data.get("selected_case_doctor_profession_label"),
                 })
                 attachment_history = session_data.get("ui_attachments") or []
             else:
@@ -247,6 +276,8 @@ async def get_session_history(
 
             if role == 'assistant':
                 item["tool_calls"] = m_data.get('tool_calls')
+                if _should_hide_assistant_text(session_data.get("agent_id"), item["tool_calls"]):
+                    item["content"] = ""
             
             if role == 'tool':
                 item["tool_call_id"] = m_data.get('tool_call_id')
@@ -256,6 +287,7 @@ async def get_session_history(
                         item["content"] = json.dumps(item["content"], ensure_ascii=False)
                     except:
                         item["content"] = str(item["content"])
+                item["content"] = sanitize_tool_result_content(item["content"])
 
             history.append(item)
 
@@ -503,6 +535,8 @@ async def get_shared_chat(token: str):
         # 4. Sanitize Messages
         history = []
         raw_messages = []
+        session_payload = safe_serialize(session)
+        shared_agent_slug = ((session_payload.get("session_data") or {}) if isinstance(session_payload, dict) else {}).get("agent_id")
 
         if hasattr(session, 'memory') and session.memory and hasattr(session.memory, 'messages'):
             raw_messages = session.memory.messages
@@ -541,6 +575,8 @@ async def get_shared_chat(token: str):
 
             if role == 'assistant':
                 item["tool_calls"] = m_data.get('tool_calls')
+                if _should_hide_assistant_text(shared_agent_slug, item["tool_calls"]):
+                    item["content"] = ""
             
             if role == 'tool':
                 item["tool_call_id"] = m_data.get('tool_call_id')
@@ -548,6 +584,7 @@ async def get_shared_chat(token: str):
                 if isinstance(content, (dict, list)):
                     try: item["content"] = json.dumps(content, ensure_ascii=False)
                     except: item["content"] = str(content)
+                item["content"] = sanitize_tool_result_content(item["content"])
 
             history.append(item)
 

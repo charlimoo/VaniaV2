@@ -3,6 +3,7 @@
 
 import { Clock, Zap, FileText } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { DownloadButton } from "../tabs/roadmap/DownloadButton"; 
 import { normalizeFlashcards } from "@/lib/flashcards";
 
@@ -12,6 +13,13 @@ interface Session {
   date: string;
   summary: string;
   flashcards: any[]; // Changed from typed array to any[] to handle inconsistent keys
+  smart_goals?: string[];
+  swot_analysis?: {
+    Strengths?: string[];
+    Weaknesses?: string[];
+    Opportunities?: string[];
+    Threats?: string[];
+  };
   doc_id?: string;
 }
 
@@ -39,6 +47,15 @@ export function PatientTimelineTab({ sessions, patientName }: Props) {
         <div className="pointer-events-none absolute right-4 top-0 bottom-0 w-px bg-border/60" />
         {sessions.map((session, idx) => {
           const normalizedFlashcards = normalizeFlashcards(session.flashcards);
+          const sessionGoals = Array.isArray(session.smart_goals)
+            ? session.smart_goals.map((goal) => String(goal).trim()).filter(Boolean)
+            : [];
+          const swot = session.swot_analysis;
+          const hasSwot =
+            !!swot?.Strengths?.length ||
+            !!swot?.Weaknesses?.length ||
+            !!swot?.Opportunities?.length ||
+            !!swot?.Threats?.length;
           return (
             <div key={idx} className="relative group pr-10">
               <div className="absolute right-4 top-6 z-10 h-3.5 w-3.5 translate-x-1/2 rounded-full border-2 border-background bg-primary shadow-sm transition-transform group-hover:scale-110" />
@@ -60,16 +77,79 @@ export function PatientTimelineTab({ sessions, patientName }: Props) {
                         date: session.date,
                         topic: session.title,
                         symptoms_analysis: session.summary, 
-                        flashcards: normalizedFlashcards
+                        flashcards: normalizedFlashcards,
+                        swot_analysis: swot,
+                        smart_goals: sessionGoals,
                       }} 
                       patientName={patientName} 
                     />
                   </div>
 
-                  <div className="text-sm text-foreground/80 leading-relaxed bg-muted/30 p-3.5 rounded-lg border border-border/50 text-justify">
+                  <div className="text-sm text-right text-foreground/80 leading-relaxed bg-muted/30 p-3.5 rounded-lg border border-border/50 whitespace-pre-wrap break-words" dir="rtl">
                     <FileText className="w-4 h-4 inline-block ml-2 text-muted-foreground/70 align-middle" />
                     {session.summary}
                   </div>
+
+                  {sessionGoals.length > 0 && (
+                    <div className="space-y-3 pt-1">
+                      <h5 className="text-xs font-bold text-foreground">اهداف جلسه</h5>
+                      <div className="space-y-2">
+                        {sessionGoals.map((goal, index) => (
+                          <div key={`goal-${index}`} className="rounded-lg border border-border/50 bg-muted/20 p-3 text-xs text-right text-muted-foreground" dir="rtl">
+                            {goal}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {hasSwot && (
+                    <div className="space-y-3 pt-1">
+                      <h5 className="text-xs font-bold text-foreground">تحلیل SWOT</h5>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {swot?.Strengths?.length ? (
+                          <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                            <div className="mb-2 text-xs font-semibold">نقاط قوت</div>
+                            <div className="space-y-1">
+                              {swot.Strengths.map((item, index) => (
+                                <div key={`s-${index}`} className="text-xs text-right text-muted-foreground" dir="rtl">{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                        {swot?.Weaknesses?.length ? (
+                          <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                            <div className="mb-2 text-xs font-semibold">نقاط ضعف</div>
+                            <div className="space-y-1">
+                              {swot.Weaknesses.map((item, index) => (
+                                <div key={`w-${index}`} className="text-xs text-right text-muted-foreground" dir="rtl">{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                        {swot?.Opportunities?.length ? (
+                          <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                            <div className="mb-2 text-xs font-semibold">فرصت‌ها</div>
+                            <div className="space-y-1">
+                              {swot.Opportunities.map((item, index) => (
+                                <div key={`o-${index}`} className="text-xs text-right text-muted-foreground" dir="rtl">{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                        {swot?.Threats?.length ? (
+                          <div className="rounded-lg border border-border/50 bg-muted/20 p-3">
+                            <div className="mb-2 text-xs font-semibold">تهدیدها</div>
+                            <div className="space-y-1">
+                              {swot.Threats.map((item, index) => (
+                                <div key={`t-${index}`} className="text-xs text-right text-muted-foreground" dir="rtl">{item}</div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  )}
 
                   {normalizedFlashcards.length > 0 && (
                     <div className="space-y-3 pt-2">

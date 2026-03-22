@@ -12,7 +12,6 @@ from agno.db.sqlite import SqliteDb
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.qdrant import Qdrant
 from agno.knowledge.embedder.openai import OpenAIEmbedder
-from agno.models.openai import OpenAIChat
 
 # --- Service Imports ---
 from services.models import AgentService
@@ -32,6 +31,8 @@ from capabilities.registry import CapabilityRegistry
 
 # --- Context ---
 from .context import resource_context
+from .models import SanitizedOpenAIChat
+from .storage import get_session_safe
 
 # --- Agent Import ---
 from .service_agent import ServiceAgent
@@ -50,6 +51,47 @@ NATIVE_REASONING_MODELS = {
 }
 
 NONE_EFFORT_MODELS = {"gpt-5.1", "gpt-5.2", "gpt5.1", "gpt5.2", "gpt-5", "gpt5"}
+
+
+def _build_session_selection_context(session_data: Optional[dict]) -> list[str]:
+    if not isinstance(session_data, dict):
+        return []
+
+    lines: list[str] = []
+
+    visitor_id = session_data.get("visitor_id") or session_data.get("patient_id")
+    visitor_name = session_data.get("visitor_name") or session_data.get("patient_name")
+    if visitor_id or visitor_name:
+        label = visitor_name or "Unknown"
+        suffix = f" (ID: {visitor_id})" if visitor_id is not None else ""
+        lines.append(f"Active visitor from frontend state: {label}{suffix}")
+
+    expert_id = session_data.get("selected_expert_id") or session_data.get("selected_doctor_id")
+    expert_name = session_data.get("selected_expert_name") or session_data.get("selected_doctor_name")
+    if expert_id or expert_name:
+        label = expert_name or "Unknown"
+        suffix = f" (ID: {expert_id})" if expert_id is not None else ""
+        lines.append(f"Active expert from frontend state: {label}{suffix}")
+
+    case_id = session_data.get("selected_case_id")
+    case_title = session_data.get("selected_case_title") or session_data.get("case_title") or session_data.get("case_name")
+    if case_id or case_title:
+        label = case_title or "Untitled case"
+        suffix = f" (ID: {case_id})" if case_id else ""
+        lines.append(f"Active case from frontend state: {label}{suffix}")
+
+    case_doctor_name = session_data.get("selected_case_doctor_name")
+    if case_doctor_name:
+        lines.append(f"Active case doctor label in UI: {case_doctor_name}")
+
+    case_doctor_profession = (
+        session_data.get("selected_case_doctor_profession_label")
+        or session_data.get("selected_case_doctor_profession_slug")
+    )
+    if case_doctor_profession:
+        lines.append(f"Active case profession label in UI: {case_doctor_profession}")
+
+    return lines
 
 
 def create_agent_for_service(user, service_slug: str, session_id: str, request: Optional[Request] = None ) -> ServiceAgent:
@@ -162,6 +204,18 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
             
     except Exception as e:
         logger.warning(f"⚠️ [Factory] Failed to inject user context: {e}")
+
+    try:
+        storage_for_context = get_session_safe(storage_instance, session_id, str(user.id))
+        if storage_for_context and getattr(storage_for_context, "session_data", None):
+            session_selection_context = _build_session_selection_context(storage_for_context.session_data)
+            if session_selection_context:
+                dynamic_instructions.append(
+                    "\n### ACTIVE FRONTEND SELECTIONS (System Injected)\n"
+                    + "\n".join([f"- {line}" for line in session_selection_context])
+                )
+    except Exception as e:
+        logger.warning(f"⚠️ [Factory] Failed to inject frontend selection context: {e}")
         
     # B. Capability General Instructions
     cap_instructions = CapabilityRegistry.get_prompt_additions_for_domains(active_caps, user)
@@ -206,7 +260,7 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
         if final_enable_reasoning:
             use_agno_reasoning_wrapper = True
 
-    llm_model = OpenAIChat(**llm_kwargs)
+    llm_model = SanitizedOpenAIChat(**llm_kwargs)
 
     # =========================================================================
     # 6. Storage Engine
@@ -280,7 +334,7 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
     summary_manager = None
     if getattr(service, 'enable_session_summaries', False):
         summary_manager = TimedSessionSummaryManager(
-            model=OpenAIChat(id="gpt-4o-mini", **get_agno_openai_kwargs()),
+            model=SanitizedOpenAIChat(id="gpt-4o-mini", **get_agno_openai_kwargs()),
             log_prefix=f"[Run {session_id}]",
         )
         logger.debug(f"   [Factory] 🧠 Session Summaries enabled for {session_id}")

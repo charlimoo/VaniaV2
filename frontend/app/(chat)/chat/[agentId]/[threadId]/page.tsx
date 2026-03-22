@@ -40,8 +40,8 @@ import { useUser } from "@/hooks/use-user";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 import { useChatLayout } from "@/components/chat/chat-layout-context";
 import { useIsMobile } from "@/hooks/use-mobile";
-import { useAgentSettings } from "@/lib/agent-settings-store";
 import { useTradeStore } from "@/lib/vania/tstore";
+import type { PatientManagerState } from "@/lib/types/vania";
 import { cn } from "@/lib/utils";
 import { APP_CONFIG } from "@/lib/config";
 
@@ -63,16 +63,16 @@ export default function ChatPage() {
   const doctorId = doctorIdParam ? parseInt(doctorIdParam) : null;
   const caseId = searchParams.get('caseId');
 
-  const { setActivePatient } = useVaniaStore();
+  const { activePatientName, setActivePatient } = useVaniaStore();
 
   // --- STORES & SETTINGS ---
-  const { syncAgentDefaults, settingsByAgent } = useAgentSettings();
-  const agentSettings = settingsByAgent[agentId] || { reasoningEffort: 'medium', isReasoningEnabled: true };
-  
   const { isChatCollapsed, isCanvasCollapsed, toggleChat, toggleCanvas } = useWorkspaceStore();
   
   const clearCanvas = useCanvasStore((s) => s.clear);
   const canvasInstances = useCanvasStore((s) => s.instances);
+  const contextResourceId = useCanvasStore((s) => s.contextResourceId);
+  const contextDoctorId = useCanvasStore((s) => s.contextDoctorId);
+  const contextCaseId = useCanvasStore((s) => s.contextCaseId);
   const resetTradeFilters = useTradeStore((s) => s.resetFilters);
 
   // --- LOCAL STATE ---
@@ -94,6 +94,23 @@ export default function ChatPage() {
   const restoredContextRef = useRef<string | null>(null);
 
   const isDraft = threadId.startsWith("local-") && !isCreatedOnBackend;
+  const effectivePatientId = contextResourceId ? Number(contextResourceId) : patientId;
+  const effectiveDoctorId = contextDoctorId ? Number(contextDoctorId) : doctorId;
+  const effectiveCaseId = contextCaseId ?? caseId;
+  const patientManagerCanvas = useMemo(
+    () => Object.values(canvasInstances).find((canvas) => canvas.component_key === "VANIA_PATIENT_MANAGER"),
+    [canvasInstances]
+  );
+  const patientManagerState = patientManagerCanvas?.current_state as PatientManagerState | undefined;
+  const selectedCase = patientManagerState?.selected_case ?? null;
+  const sessionContextLabels = useMemo(() => ({
+    patientName: activePatientName || patientManagerState?.patient_profile?.name || null,
+    doctorName: selectedCase?.doctor_name || null,
+    caseTitle: selectedCase?.title || null,
+    caseDoctorName: selectedCase?.doctor_name || null,
+    caseDoctorProfessionSlug: selectedCase?.doctor_profession_slug || null,
+    caseDoctorProfessionLabel: selectedCase?.doctor_profession_label || null,
+  }), [activePatientName, patientManagerState?.patient_profile?.name, selectedCase]);
 
   const getDoctorLocalKey = (pid: number) => `vania:last_selected_doctor_by_patient:${pid}`;
   const getExpertLocalKey = (pid: number) => `vania:last_selected_expert_by_visitor:${pid}`;
@@ -112,7 +129,7 @@ export default function ChatPage() {
     ].join(":");
 
     if (restoredContextRef.current === restoreKey) return;
-    if (patientId && doctorId) {
+    if (patientId && doctorId && caseId) {
       restoredContextRef.current = restoreKey;
       return;
     }
@@ -134,6 +151,7 @@ export default function ChatPage() {
                 let resolvedPatientId = patientId || sessionState.visitor_id || sessionState.patient_id || null;
                 let resolvedDoctorId = doctorId || sessionState.selected_expert_id || sessionState.selected_doctor_id || null;
                 let resolvedCaseId = caseId || sessionState.selected_case_id || null;
+                const resolvedPatientName = sessionState.visitor_name || sessionState.patient_name || null;
                 if (!resolvedDoctorId && resolvedPatientId) {
                   const localExpert = localStorage.getItem(getExpertLocalKey(Number(resolvedPatientId)));
                   const localDoctor = localStorage.getItem(getDoctorLocalKey(Number(resolvedPatientId)));
@@ -153,6 +171,8 @@ export default function ChatPage() {
                         resolvedPatientId = pmCanvas.current_state.patient_profile.id;
                         const pname = pmCanvas.current_state.patient_profile.name;
                         setActivePatient(resolvedPatientId, pname);
+                    } else if (resolvedPatientId && resolvedPatientName) {
+                        setActivePatient(Number(resolvedPatientId), resolvedPatientName);
                     }
                     const query = new URLSearchParams();
                     if (resolvedPatientId) query.set("visitorId", String(resolvedPatientId));
@@ -174,6 +194,50 @@ export default function ChatPage() {
 
     restoreContext();
   }, [threadId, patientId, doctorId, caseId, agentId, router, setActivePatient, searchParams]);
+
+  useEffect(() => {
+    const nextPatientId = contextResourceId || (patientId ? String(patientId) : null);
+    const nextDoctorId = contextDoctorId || (doctorId ? String(doctorId) : null);
+    const nextCaseId = contextCaseId ?? caseId ?? null;
+
+    const currentPatientId = patientId ? String(patientId) : null;
+    const currentDoctorId = doctorId ? String(doctorId) : null;
+    const currentCaseId = caseId ?? null;
+
+    if (
+      nextPatientId === currentPatientId &&
+      nextDoctorId === currentDoctorId &&
+      nextCaseId === currentCaseId
+    ) {
+      return;
+    }
+
+    const query = new URLSearchParams(searchParams.toString());
+
+    if (nextPatientId) {
+      query.set("visitorId", nextPatientId);
+      query.delete("patientId");
+    } else {
+      query.delete("visitorId");
+      query.delete("patientId");
+    }
+
+    if (nextDoctorId) {
+      query.set("expertId", nextDoctorId);
+      query.delete("doctorId");
+    } else {
+      query.delete("expertId");
+      query.delete("doctorId");
+    }
+
+    if (nextCaseId) {
+      query.set("caseId", nextCaseId);
+    } else {
+      query.delete("caseId");
+    }
+
+    router.replace(`/chat/${agentId}/${threadId}${query.toString() ? `?${query.toString()}` : ""}`);
+  }, [agentId, threadId, searchParams, router, patientId, doctorId, caseId, contextResourceId, contextDoctorId, contextCaseId]);
 
   useEffect(() => {
     if (!threadId.startsWith("local-")) return;
@@ -219,10 +283,6 @@ export default function ChatPage() {
 
           if (current) {
             setService(current);
-            syncAgentDefaults(agentId, {
-              enable_reasoning: current.enable_reasoning,
-              reasoning_effort: current.reasoning_effort,
-            });
 
             const isOwned = current.access_status === 'OWNED' || current.access_status === 'FREE';
             if (!isOwned && current.demo_config?.access_mode === 'BLOCKED') {
@@ -243,7 +303,7 @@ export default function ChatPage() {
     };
 
     fetchData();
-  }, [agentId, router, userLoading, threadId, syncAgentDefaults]);
+  }, [agentId, router, userLoading, threadId]);
 
   // 3. Layout Synchronization Effect
   useEffect(() => {
@@ -287,27 +347,27 @@ export default function ChatPage() {
     if (!headers.Authorization) return new HttpAgent({ url: "" });
     
     const extraHeaders: Record<string, string> = {
-        "X-Reasoning-Effort": isPreviewMode ? "none" : agentSettings.reasoningEffort, 
-        "X-Enable-Reasoning": isPreviewMode ? "false" : (agentSettings.isReasoningEnabled ? "true" : "false")
+        "X-Reasoning-Effort": "none",
+        "X-Enable-Reasoning": "false"
     };
 
     // [FIX] Inject Patient ID into headers if present
-    if (patientId) {
-        extraHeaders["X-Target-Resource-ID"] = patientId.toString();
+    if (effectivePatientId) {
+        extraHeaders["X-Target-Resource-ID"] = effectivePatientId.toString();
     }
-    if (doctorId) {
-        extraHeaders["X-Target-Expert-ID"] = doctorId.toString();
-        extraHeaders["X-Target-Doctor-ID"] = doctorId.toString();
+    if (effectiveDoctorId) {
+        extraHeaders["X-Target-Expert-ID"] = effectiveDoctorId.toString();
+        extraHeaders["X-Target-Doctor-ID"] = effectiveDoctorId.toString();
     }
-    if (caseId) {
-        extraHeaders["X-Target-Case-ID"] = caseId;
+    if (effectiveCaseId) {
+        extraHeaders["X-Target-Case-ID"] = effectiveCaseId;
     }
 
     return new HttpAgent({
       url: `${API_BASE_URL}/agent/agui?agent_id=${agentId}`,
       headers: { ...headers, ...extraHeaders } as Record<string, string>
     });
-  }, [agentId, agentSettings, isPreviewMode, patientId, doctorId, caseId]); // Add patientId dependency
+  }, [agentId, effectivePatientId, effectiveDoctorId, effectiveCaseId]);
 
   // 6. Subscription & Smart Title Polling
   useEffect(() => {
@@ -389,20 +449,38 @@ export default function ChatPage() {
 
     if (threadId.startsWith("local-") && token) {
         // [FIX] Pass patientId when creating the thread on backend
-        await threadManager.createThreadOnBackend(threadId, tempTitle, agentId, token, patientId, doctorId);
+        await threadManager.createThreadOnBackend(
+          threadId,
+          tempTitle,
+          agentId,
+          token,
+          effectivePatientId,
+          effectiveDoctorId,
+          effectiveCaseId,
+          sessionContextLabels,
+        );
         setIsCreatedOnBackend(true);
         setThreadTitle(tempTitle);
         refreshThreads();
     }
-  }, [threadId, agentId, refreshThreads, patientId, doctorId]); // Add patientId dependency
+  }, [threadId, agentId, refreshThreads, effectivePatientId, effectiveDoctorId, effectiveCaseId, sessionContextLabels]);
 
   const ensureThread = useCallback(async () => {
     const token = localStorage.getItem("accessToken");
     if (!threadId.startsWith("local-") || !token || isCreatedOnBackend) return;
-    await threadManager.createThreadOnBackend(threadId, threadTitle, agentId, token, patientId, doctorId);
+    await threadManager.createThreadOnBackend(
+      threadId,
+      threadTitle,
+      agentId,
+      token,
+      effectivePatientId,
+      effectiveDoctorId,
+      effectiveCaseId,
+      sessionContextLabels,
+    );
     setIsCreatedOnBackend(true);
     refreshThreads();
-  }, [agentId, doctorId, isCreatedOnBackend, patientId, refreshThreads, threadId, threadTitle]);
+  }, [agentId, effectiveDoctorId, isCreatedOnBackend, effectivePatientId, effectiveCaseId, refreshThreads, sessionContextLabels, threadId, threadTitle]);
 
   const attachmentsAdapter = useMemo(
     () =>
@@ -418,6 +496,7 @@ export default function ChatPage() {
     agent,
     threadId,
     agentId,
+    showThinking: false,
     onNewMessageWrapper: handleNewMessage,
     adapters: { history: historyAdapter, attachments: attachmentsAdapter },
     onError: (err) => console.error("Runtime Error:", err)
@@ -441,16 +520,36 @@ export default function ChatPage() {
     const headers = getAuthHeaders();
     if (!headers.Authorization) return;
     const session_state: Record<string, any> = {};
-    if (patientId) {
-      session_state.visitor_id = patientId;
-      session_state.patient_id = patientId;
+    if (effectivePatientId) {
+      session_state.visitor_id = effectivePatientId;
+      session_state.patient_id = effectivePatientId;
     }
-    if (doctorId) {
-      session_state.selected_expert_id = doctorId;
-      session_state.selected_doctor_id = doctorId;
+    if (sessionContextLabels.patientName) {
+      session_state.visitor_name = sessionContextLabels.patientName;
+      session_state.patient_name = sessionContextLabels.patientName;
     }
-    if (caseId) {
-      session_state.selected_case_id = caseId;
+    if (effectiveDoctorId) {
+      session_state.selected_expert_id = effectiveDoctorId;
+      session_state.selected_doctor_id = effectiveDoctorId;
+    }
+    if (sessionContextLabels.doctorName) {
+      session_state.selected_expert_name = sessionContextLabels.doctorName;
+      session_state.selected_doctor_name = sessionContextLabels.doctorName;
+    }
+    if (effectiveCaseId) {
+      session_state.selected_case_id = effectiveCaseId;
+    }
+    if (sessionContextLabels.caseTitle) {
+      session_state.selected_case_title = sessionContextLabels.caseTitle;
+    }
+    if (sessionContextLabels.caseDoctorName) {
+      session_state.selected_case_doctor_name = sessionContextLabels.caseDoctorName;
+    }
+    if (sessionContextLabels.caseDoctorProfessionSlug) {
+      session_state.selected_case_doctor_profession_slug = sessionContextLabels.caseDoctorProfessionSlug;
+    }
+    if (sessionContextLabels.caseDoctorProfessionLabel) {
+      session_state.selected_case_doctor_profession_label = sessionContextLabels.caseDoctorProfessionLabel;
     }
     if (Object.keys(session_state).length === 0) return;
     fetch(`${API_BASE_URL}/agent/sessions/${threadId}`, {
@@ -461,7 +560,7 @@ export default function ChatPage() {
       },
       body: JSON.stringify({ session_state }),
     }).catch(() => {});
-  }, [threadId, patientId, doctorId, caseId]);
+  }, [threadId, effectivePatientId, effectiveDoctorId, effectiveCaseId, sessionContextLabels]);
 
   // 9. Mobile Gestures
   const handleMobileToggle = () => setMobileView(prev => prev === 'chat' ? 'canvas' : 'chat');

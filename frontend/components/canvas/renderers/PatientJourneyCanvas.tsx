@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { ArrowRight, BookOpen, FileText, FolderOpen, History, LifeBuoy, Pill, Route } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PatientJourneyState, VisitorCanvasTab } from "@/lib/types/vania";
@@ -43,8 +43,6 @@ const replaceCaseScopedEntries = <T extends { case_id?: string | null }>(
 export default function PatientJourneyCanvas({ data, onEdit }: Props) {
   const { user } = useUser();
   const params = useParams();
-  const router = useRouter();
-  const searchParams = useSearchParams();
   const setInstances = useCanvasStore((state) => state.setInstances);
   const [activeView, setActiveView] = useState<"BASE" | "CASES">(data.active_view || "CASES");
   const [activeTab, setActiveTab] = useState<string>(data.active_tab || "CASE_OVERVIEW");
@@ -83,6 +81,12 @@ export default function PatientJourneyCanvas({ data, onEdit }: Props) {
   const visibleTabs = (visibleSelectedCase?.visible_tabs || data.visible_tabs || ["CASE_OVERVIEW"]) as VisitorCanvasTab[];
   const featurePolicy = visibleSelectedCase?.feature_policy || data.feature_policy;
   const caseOverviewSections = visibleSelectedCase?.case_overview_sections || data.case_overview_sections || [];
+  const showClinicalSummary = caseOverviewSections.includes("clinical_summary") && !!featurePolicy?.show_clinical_summary;
+  const showFormsTestsAnalysis =
+    caseOverviewSections.includes("forms_tests_analysis") && !!featurePolicy?.show_forms_tests_analysis;
+  const showForms = caseOverviewSections.includes("forms") && !!featurePolicy?.form_history_visible;
+  const showTests = caseOverviewSections.includes("tests") && !!featurePolicy?.tests_visible;
+  const showActiveGoals = !!featurePolicy?.appendix_enabled;
 
   useEffect(() => {
     if (activeView !== "CASES" || !visibleTabs.length) return;
@@ -92,23 +96,6 @@ export default function PatientJourneyCanvas({ data, onEdit }: Props) {
       onEdit({ active_tab: nextTab } as any);
     }
   }, [activeTab, activeView, onEdit, visibleTabs]);
-
-  const buildScopedSearchParams = (doctorId?: number | null, caseId?: string | null) => {
-    const nextParams = new URLSearchParams(searchParams.toString());
-    if (doctorId) {
-      nextParams.set("expertId", String(doctorId));
-      nextParams.set("doctorId", String(doctorId));
-    } else {
-      nextParams.delete("expertId");
-      nextParams.delete("doctorId");
-    }
-    if (caseId) {
-      nextParams.set("caseId", caseId);
-    } else {
-      nextParams.delete("caseId");
-    }
-    return nextParams;
-  };
 
   const hydrateChatCanvas = async (doctorId: number, caseId: string) => {
     if (!threadId || !agentId || !user?.id) return;
@@ -144,39 +131,22 @@ export default function PatientJourneyCanvas({ data, onEdit }: Props) {
     setActiveView("CASES");
     setActiveTab(((caseMeta as any).visible_tabs || ["CASE_OVERVIEW"])[0]);
 
-    const nextParams = buildScopedSearchParams(caseMeta.doctor_id, caseId);
-    const nextQuery = nextParams.toString();
-    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
-    const currentUrl = `${window.location.pathname}${window.location.search}`;
-
-    if (nextUrl !== currentUrl) {
-      router.replace(nextUrl);
-    }
-
-    if (isChatCanvas) {
-      await hydrateChatCanvas(caseMeta.doctor_id, caseId);
-      return;
-    }
-
     onEdit({
       active_view: "CASES",
       active_tab: ((caseMeta as any).visible_tabs || ["CASE_OVERVIEW"])[0],
       selected_case_id: caseId,
       selected_doctor_id: caseMeta.doctor_id,
     } as any);
+
+    if (isChatCanvas) {
+      await hydrateChatCanvas(caseMeta.doctor_id, caseId);
+      return;
+    }
   };
 
   const handleBackToBase = () => {
     setActiveView("BASE");
     setPendingCaseId(null);
-
-    const nextParams = buildScopedSearchParams(null, null);
-    const nextQuery = nextParams.toString();
-    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}`;
-    const currentUrl = `${window.location.pathname}${window.location.search}`;
-    if (nextUrl !== currentUrl) {
-      router.replace(nextUrl);
-    }
 
     onEdit({
       active_view: "BASE",
@@ -311,9 +281,8 @@ export default function PatientJourneyCanvas({ data, onEdit }: Props) {
 
         {activeView === "CASES" && (
           <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border/40 pt-3">
-            <div className="ml-2 text-sm font-semibold">{visibleSelectedCase?.title || "پرونده"}</div>
             {[
-              { id: "CASE_OVERVIEW", label: "پرونده و فرم‌ها", icon: FileText },
+              { id: "CASE_OVERVIEW", label: "پرونده", icon: FileText },
               { id: "RESCUENET", label: "تور نجات", icon: LifeBuoy },
               { id: "MEDICATIONS", label: "شیوه و مصرف دارو", icon: Pill },
               { id: "TIMELINE", label: "مسیر من", icon: History },
@@ -355,7 +324,7 @@ export default function PatientJourneyCanvas({ data, onEdit }: Props) {
               emptyCasesText="هنوز پرونده‌ای برای شما ثبت نشده است."
               renderCaseActions={(item) => (
                 <Button type="button" variant="ghost" size="sm" className="h-8 text-[11px]" onClick={() => openShareDialog(item)}>
-                  اشتراک مشاهده
+                  مدیریت دسترسی به پرونده
                 </Button>
               )}
             />
@@ -372,25 +341,28 @@ export default function PatientJourneyCanvas({ data, onEdit }: Props) {
           <div className="space-y-8">
             <PatientHomeTab
               greeting={visibleSelectedCase.title}
-              activeGoals={[]}
+              activeGoals={visibleSelectedCase.active_goals || []}
+              showActiveGoals={showActiveGoals}
               clinicalSummary={visibleSelectedCase.clinical_summary || ""}
               formsTestsAnalysis={visibleSelectedCase.forms_tests_analysis || ""}
-              forms={caseOverviewSections.includes("forms") ? visibleSelectedCase.forms || [] : []}
-              tests={caseOverviewSections.includes("tests") ? visibleSelectedCase.tests || [] : []}
-              showClinicalSummary={caseOverviewSections.includes("clinical_summary")}
-              showFormsTestsAnalysis={caseOverviewSections.includes("forms_tests_analysis")}
-              showForms={caseOverviewSections.includes("forms")}
+              forms={showForms ? visibleSelectedCase.forms || [] : []}
+              tests={showTests ? visibleSelectedCase.tests || [] : []}
+              showClinicalSummary={showClinicalSummary}
+              showFormsTestsAnalysis={showFormsTestsAnalysis}
+              showForms={showForms}
               showTests={false}
             />
-            {caseOverviewSections.includes("tests") ? <PatientTestsTab
-              tests={visibleSelectedCase.tests || []}
-              selectedDoctorId={visibleSelectedCase.doctor_id}
-              selectedCaseId={visibleSelectedCase.id || undefined}
-              onEdit={handleSelectedCaseEdit}
-              title={visibleSelectedCase.test_mode === "exams_only" ? "آزمایش های من" : "تست های من"}
-              createLabel={visibleSelectedCase.test_mode === "exams_only" ? "ثبت نتیجه آزمایش" : "آپلود نتیجه"}
-              emptyText={visibleSelectedCase.test_mode === "exams_only" ? "هنوز آزمایشی برای این پرونده ثبت نشده است." : "هنوز تستی توسط متخصص ثبت نشده است."}
-            /> : null}
+            {showTests ? (
+              <PatientTestsTab
+                tests={visibleSelectedCase.tests || []}
+                selectedDoctorId={visibleSelectedCase.doctor_id}
+                selectedCaseId={visibleSelectedCase.id || undefined}
+                onEdit={handleSelectedCaseEdit}
+                title={visibleSelectedCase.test_mode === "exams_only" ? "آزمایش های من" : "تست های من"}
+                createLabel={visibleSelectedCase.test_mode === "exams_only" ? "ثبت یا بروزرسانی نتیجه آزمایش" : "ثبت یا بروزرسانی نتیجه"}
+                emptyText={visibleSelectedCase.test_mode === "exams_only" ? "هنوز آزمایشی برای این پرونده ثبت نشده است." : "هنوز تستی توسط متخصص ثبت نشده است."}
+              />
+            ) : null}
           </div>
         )}
 
@@ -464,7 +436,7 @@ export default function PatientJourneyCanvas({ data, onEdit }: Props) {
       <Dialog open={!!shareDialogCase} onOpenChange={(open) => !open && setShareDialogCase(null)}>
         <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-xl">
           <DialogHeader>
-            <DialogTitle>اشتراک فقط-خواندنی پرونده</DialogTitle>
+            <DialogTitle>دسترسی خوانش پرونده</DialogTitle>
             <DialogDescription>
               فقط متخصصان هم‌نوع با متخصص این پرونده در این فهرست نشان داده می‌شوند. دسترسی جدید فقط برای مشاهده است و امکان ویرایش ندارد.
             </DialogDescription>
