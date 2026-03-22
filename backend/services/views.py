@@ -6,10 +6,18 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from agents.factory import _build_session_selection_context
+from agents.prompt_culture import get_shared_prompt_culture
+from agents.storage import get_session_safe, get_storage
+from capabilities.registry import CapabilityRegistry
+from users.roles import is_expert
+from vania_core.profile_snapshots import (
+    format_expert_profile_context,
+    format_visitor_profile_context,
+)
 
 from .models import AgentService
 from .serializers import ServiceSerializer
-from capabilities.registry import CapabilityRegistry
 from users.eligibility import is_user_eligible_for_agent
 
 logger = logging.getLogger(__name__)
@@ -58,6 +66,111 @@ class ServiceListView(APIView):
         
         serializer = ServiceSerializer(visible_services, many=True, context=serializer_context)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ServiceDebugContextView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, slug: str):
+        user = request.user
+        service = AgentService.objects.filter(slug=slug, is_active=True, is_public=True).first()
+        if not service:
+            return Response({"detail": "Service not found."}, status=status.HTTP_404_NOT_FOUND)
+        if not is_user_eligible_for_agent(user, service):
+            return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
+
+        session_id = request.query_params.get("session_id") or ""
+        resource_id = (
+            request.headers.get("X-Target-Resource-ID")
+            or request.query_params.get("resource_id")
+            or request.query_params.get("visitor_id")
+            or request.query_params.get("patient_id")
+        )
+        selected_doctor_id = (
+            request.headers.get("X-Target-Expert-ID")
+            or request.headers.get("X-Target-Doctor-ID")
+            or request.query_params.get("expert_id")
+            or request.query_params.get("doctor_id")
+        )
+        selected_case_id = request.headers.get("X-Target-Case-ID") or request.query_params.get("case_id")
+
+        user_context_prompt = [f"User Name: {getattr(user, 'full_name', None) or getattr(user, 'phone_number', 'User')}"]
+        user_context_prompt.append(f"User Phone: {getattr(user, 'phone_number', 'User')}")
+        user_context_prompt.extend(format_expert_profile_context(user))
+        if not is_expert(user):
+            user_context_prompt.extend(format_visitor_profile_context(user))
+        user_context_text = (
+            "\n### USER CONTEXT (System Injected)\n" + "\n".join([f"- {line}" for line in user_context_prompt])
+            if user_context_prompt
+            else ""
+        )
+
+        session_selection_text = ""
+        session_data = None
+        if session_id:
+            try:
+                storage = get_storage()
+                session = get_session_safe(storage, session_id, str(user.id))
+                session_data = getattr(session, "session_data", None) if session else None
+                if not session_data and isinstance(session, dict):
+                    session_data = session.get("session_data")
+            except Exception as exc:
+                logger.warning(f"⚠️ [Services] Debug session lookup failed for {session_id}: {exc}")
+                session_data = None
+
+        effective_session_data = dict(session_data or {})
+        if resource_id and not effective_session_data.get("visitor_id") and not effective_session_data.get("patient_id"):
+            effective_session_data["visitor_id"] = resource_id
+            effective_session_data["patient_id"] = resource_id
+        if selected_doctor_id and not effective_session_data.get("selected_expert_id") and not effective_session_data.get("selected_doctor_id"):
+            effective_session_data["selected_expert_id"] = selected_doctor_id
+            effective_session_data["selected_doctor_id"] = selected_doctor_id
+        if selected_case_id and not effective_session_data.get("selected_case_id"):
+            effective_session_data["selected_case_id"] = selected_case_id
+
+        session_selection_lines = _build_session_selection_context(effective_session_data)
+        if session_selection_lines:
+            session_selection_text = (
+                "\n### ACTIVE FRONTEND SELECTIONS (System Injected)\n"
+                + "\n".join([f"- {line}" for line in session_selection_lines])
+            )
+
+        capability_prompt = CapabilityRegistry.get_prompt_additions_for_domains(service.capabilities or [], user)
+        resource_prompt = ""
+        if resource_id:
+            resource_prompt = CapabilityRegistry.get_context_prompt_for_domains(
+                service.capabilities or [],
+                user,
+                str(resource_id),
+            )
+
+        return Response(
+            {
+                "service": {
+                    "id": service.id,
+                    "slug": service.slug,
+                    "name": service.name,
+                    "model_id": service.model_id,
+                },
+                "layers": {
+                    "shared_prompt": get_shared_prompt_culture(),
+                    "static_prompt": service.system_prompt or "",
+                    "capability_prompt": capability_prompt or "",
+                    "runtime_injected_context": "\n\n".join(
+                        [part for part in [user_context_text, session_selection_text, resource_prompt] if part]
+                    ),
+                    "history_note": "Conversation/history tokens are estimated on the frontend from current thread messages.",
+                },
+                "sources": {
+                    "capabilities": service.capabilities or [],
+                    "resource_id": resource_id,
+                    "selected_doctor_id": selected_doctor_id,
+                    "selected_case_id": selected_case_id,
+                    "session_id": session_id or None,
+                },
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class SubmitFormView(APIView):

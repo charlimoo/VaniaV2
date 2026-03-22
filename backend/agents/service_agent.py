@@ -21,6 +21,7 @@ from billing.services import process_usage_charge, calculate_credit_cost
 from billing.models import UserWallet, BillingConfig
 from core.ai_provider import get_agno_openai_kwargs
 from .models import SanitizedOpenAIChat
+from .prompt_culture import compose_agent_instructions
 from .session_metadata import apply_session_metadata_defaults
 
 try:
@@ -115,9 +116,10 @@ class ServiceAgent(Agent):
         self.session_id = session_id
         self.agent_id = service_config.slug
         
-        base_prompt = service_config.system_prompt or "You are a helpful AI assistant."
-        if extra_instructions:
-            base_prompt = f"{base_prompt}\n\n{extra_instructions}"
+        base_prompt = compose_agent_instructions(
+            service_config.system_prompt or "You are a helpful AI assistant.",
+            extra_instructions,
+        )
 
         db_to_use = storage or db
         target_model_id = service_config.model_id or "gpt-4o"

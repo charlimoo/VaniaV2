@@ -94,6 +94,9 @@ export interface AgentUIConfig {
   default_width: number;
   show_voice_input: boolean;
   mobile_view_default?: 'chat' | 'canvas';
+  featured?: boolean;
+  featured_label?: string;
+  featured_variant?: string;
 }
 
 export interface AgentService {
@@ -101,6 +104,7 @@ export interface AgentService {
   name: string;
   slug: string;
   description: string;
+  system_prompt?: string;
   model_id?: string;
   user_guide?: string;
   supported_canvases: string[]; 

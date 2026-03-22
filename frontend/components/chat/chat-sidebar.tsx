@@ -74,10 +74,19 @@ export function ChatSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) 
         const res = await fetch(`${API_BASE_URL}/api/services/`, { headers })
         if (res.ok) {
           const data = await res.json()
-          setAllAgents(data)
+          const sorted = [...data].sort((a: AgentService, b: AgentService) => {
+            const aFeatured = a.ui_config?.featured ? 1 : 0
+            const bFeatured = b.ui_config?.featured ? 1 : 0
+            const aActive = a.access_status === "OWNED" || a.access_status === "FREE" ? 1 : 0
+            const bActive = b.access_status === "OWNED" || b.access_status === "FREE" ? 1 : 0
+            if (aFeatured !== bFeatured) return bFeatured - aFeatured
+            if (aActive !== bActive) return bActive - aActive
+            return a.name.localeCompare(b.name, "fa")
+          })
+          setAllAgents(sorted)
 
           if (agentId) {
-            const found = data.find((s: AgentService) => s.slug === agentId)
+            const found = sorted.find((s: AgentService) => s.slug === agentId)
             if (found) setCurrentAgent(found)
           }
         }
@@ -183,11 +192,17 @@ export function ChatSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) 
                     <DropdownMenuItem
                       key={agent.id}
                       onClick={() => handleSwitchAgent(agent.slug)}
-                      className="gap-2 p-2 cursor-pointer"
+                      className={cn(
+                        "gap-2 p-2 cursor-pointer",
+                        agent.ui_config?.featured && "bg-amber-50/70 dark:bg-amber-950/10"
+                      )}
                     >
                       <div
                         className={cn(
                           "flex size-6 items-center justify-center rounded-sm border ",
+                          agent.ui_config?.featured
+                            ? "bg-amber-100 border-amber-300/60 dark:bg-amber-900/30 dark:border-amber-700/50"
+                            : "",
                           agent.slug === agentId
                             ? "bg-primary/10 border-primary/20"
                             : "bg-background border-border"
@@ -195,7 +210,14 @@ export function ChatSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) 
                       >
                         <Bot className="size-4 shrink-0 text-muted-foreground" />
                       </div>
-                      <span className="truncate text-xs">{agent.name}</span>
+                      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                        <span className="truncate text-xs">{agent.name}</span>
+                        {agent.ui_config?.featured && (
+                          <span className="shrink-0 rounded-full border border-amber-300/60 bg-amber-100/80 px-1.5 py-0.5 text-[9px] text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/30 dark:text-amber-300">
+                            ویژه
+                          </span>
+                        )}
+                      </div>
                       {agent.slug === agentId && (
                         <Check className="ml-auto size-4 opacity-70" />
                       )}

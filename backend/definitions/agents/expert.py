@@ -39,6 +39,7 @@ AGENT = AgentDef(
     description="دستیار هوشمند متخصص برای مدیریت فرایند جلسات، نقشه راه و پیگیری اجرای برنامه.",
     system_prompt=VANIA_EXPERT_SYSTEM_PROMPT,
     is_free=False,
+    is_public=False,
     tags=["داشبورد"],
     audience="EXPERT",
     eligible_expert_professions=["psychiatrist", "psychologist", "lawyer", "general_doctor"],

@@ -16,6 +16,7 @@ ALL_AUDIENCE_AGENT_SLUGS = [
 LAWYER_AGENT_SLUGS = [
     "supervisor-mashaghel",
     "vakil",
+    "expert-lawyer-assistant",
     "vania-expert-assistant",
 ]
 
@@ -23,6 +24,7 @@ PSYCHIATRIST_AGENT_SLUGS = [
     "ravanyar-motekhases",
     "supervisor-mashaghel",
     "tarahi-jalasat-ravan-darman",
+    "expert-psychiatrist-assistant",
     "vania-expert-assistant",
 ]
 
@@ -36,10 +38,12 @@ PSYCHOLOGIST_AGENT_SLUGS = [
     "tarahi-jalasat-ravan-darman",
     "tashkil-parvande",
     "vania-doctor-assistant",
+    "expert-psychologist-assistant",
     "vania-expert-assistant",
 ]
 
 GENERAL_DOCTOR_AGENT_SLUGS = [
+    "expert-general-doctor-assistant",
     "vania-expert-assistant",
 ]
 

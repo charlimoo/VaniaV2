@@ -8,6 +8,7 @@ import {
   Zap, 
   Play, 
   Info,
+  Sparkles,
 } from "lucide-react";
 import { useAssistantRuntime } from "@assistant-ui/react";
 
@@ -33,6 +34,8 @@ interface AgentCardProps {
 export function AgentCard({ service, trigger }: AgentCardProps) {
   const runtime = useAssistantRuntime();
   const [open, setOpen] = useState(false);
+  const isFeatured = !!service.ui_config?.featured;
+  const featuredLabel = service.ui_config?.featured_label || "ویژه";
   
   const handleQuickAction = (actionName: string) => {
     setOpen(false);
@@ -57,12 +60,18 @@ export function AgentCard({ service, trigger }: AgentCardProps) {
       <SheetContent side="left" className="w-[350px] sm:w-[400px] p-0 flex flex-col font-sans" dir="rtl">
         
         {/* --- Header: Identity --- */}
-        <SheetHeader className="p-6 pb-4 text-right bg-muted/10 border-b">
+        <SheetHeader className={isFeatured ? "p-6 pb-4 text-right border-b bg-gradient-to-br from-amber-50 via-background to-orange-50 dark:from-amber-950/20 dark:via-background dark:to-orange-950/10" : "p-6 pb-4 text-right bg-muted/10 border-b"}>
           <div className="flex items-start gap-4">
-            <div className="h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shrink-0 border border-primary/20 shadow-sm">
+            <div className={isFeatured ? "h-14 w-14 rounded-2xl flex items-center justify-center shrink-0 border shadow-sm bg-amber-100 text-amber-700 border-amber-300/60 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700/50" : "h-14 w-14 rounded-2xl bg-primary/10 flex items-center justify-center text-primary shrink-0 border border-primary/20 shadow-sm"}>
               <Bot className="h-8 w-8" />
             </div>
             <div className="space-y-1">
+              {isFeatured && (
+                <Badge className="mb-1 gap-1 rounded-full border-amber-300/60 bg-amber-100/80 px-2.5 py-0.5 text-[10px] font-medium text-amber-800 shadow-none dark:border-amber-700/50 dark:bg-amber-900/30 dark:text-amber-300">
+                  <Sparkles className="h-3 w-3" />
+                  {featuredLabel}
+                </Badge>
+              )}
               <SheetTitle className="text-lg font-bold leading-none pt-1">
                 {service.name}
               </SheetTitle>

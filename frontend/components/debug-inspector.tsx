@@ -14,9 +14,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Bug, Copy, Check, ChevronRight, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 
 interface DebugInspectorProps {
   service: AgentService | undefined;
+  threadId?: string;
+  resourceId?: string | number | null;
+  doctorId?: string | number | null;
+  caseId?: string | null;
 }
 
 const TOTAL_CONTEXT_LIMIT = 250_000;
@@ -195,10 +200,29 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-US").format(value);
 }
 
-export function DebugInspector({ service }: DebugInspectorProps) {
+type PromptDebugPayload = {
+  service?: {
+    id: number;
+    slug: string;
+    name: string;
+    model_id?: string;
+  } | null;
+  layers?: {
+    shared_prompt?: string;
+    static_prompt?: string;
+    capability_prompt?: string;
+    runtime_injected_context?: string;
+    history_note?: string;
+  } | null;
+  sources?: Record<string, unknown> | null;
+};
+
+export function DebugInspector({ service, threadId, resourceId, doctorId, caseId }: DebugInspectorProps) {
   const messages = useThread((t) => t.messages);
   const [copied, setCopied] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [promptDebug, setPromptDebug] = useState<PromptDebugPayload | null>(null);
 
   // [NEW] Check if running on Localhost
   useEffect(() => {
@@ -214,29 +238,98 @@ export function DebugInspector({ service }: DebugInspectorProps) {
     }
   }, []);
 
+  useEffect(() => {
+    if (!open || !service?.slug) return;
+
+    const headers: Record<string, string> = { ...getAuthHeaders() };
+    if (resourceId != null) headers["X-Target-Resource-ID"] = String(resourceId);
+    if (doctorId != null) {
+      headers["X-Target-Expert-ID"] = String(doctorId);
+      headers["X-Target-Doctor-ID"] = String(doctorId);
+    }
+    if (caseId) headers["X-Target-Case-ID"] = String(caseId);
+
+    const query = new URLSearchParams();
+    if (threadId) query.set("session_id", threadId);
+    if (resourceId != null) query.set("resource_id", String(resourceId));
+    if (doctorId != null) query.set("doctor_id", String(doctorId));
+    if (caseId) query.set("case_id", String(caseId));
+
+    fetch(`${API_BASE_URL}/api/services/debug-context/${service.slug}/${query.toString() ? `?${query.toString()}` : ""}`, {
+      headers,
+    })
+      .then(async (res) => {
+        if (!res.ok) throw new Error("Failed to load debug prompt layers.");
+        return res.json();
+      })
+      .then((data) => setPromptDebug(data))
+      .catch((err) => {
+        console.error(err);
+        setPromptDebug(null);
+      });
+  }, [open, service?.slug, threadId, resourceId, doctorId, caseId]);
+
   // [NEW] Don't render anything if not on localhost
   if (!isVisible) return null;
 
   // 1. Construct the Full Context
   const tokenUsage = summarizeTokenUsage(messages || []);
+  const staticPrompt = promptDebug?.layers?.static_prompt || service?.system_prompt || "";
+  const sharedPrompt = promptDebug?.layers?.shared_prompt || "";
+  const capabilityPrompt = promptDebug?.layers?.capability_prompt || "";
+  const runtimeInjectedContext = promptDebug?.layers?.runtime_injected_context || "";
+  const historyNote = promptDebug?.layers?.history_note || "";
+  const sharedPromptTokens = estimateTokenCount(sharedPrompt);
+  const staticPromptTokens = estimateTokenCount(staticPrompt);
+  const capabilityPromptTokens = estimateTokenCount(capabilityPrompt);
+  const runtimeInjectedTokens = estimateTokenCount(runtimeInjectedContext);
+  const nonHistoryPromptTokens = sharedPromptTokens + staticPromptTokens + capabilityPromptTokens + runtimeInjectedTokens;
+  const totalTokensWithSystemPrompt = tokenUsage.totalTokens + nonHistoryPromptTokens;
+  const contextPercentageWithSystemPrompt = Number(
+    ((totalTokensWithSystemPrompt / TOTAL_CONTEXT_LIMIT) * 100).toFixed(2),
+  );
   const fullDebugData = {
-    service: service
+    service: promptDebug?.service || (service
       ? {
           id: service.id,
           slug: service.slug,
           name: service.name,
           model_id: service.model_id,
         }
-      : null,
+      : null),
     context_usage: {
+      shared_prompt_tokens: sharedPromptTokens,
+      static_prompt_tokens: staticPromptTokens,
+      capability_prompt_tokens: capabilityPromptTokens,
+      runtime_injected_context_tokens: runtimeInjectedTokens,
+      non_history_prompt_tokens: nonHistoryPromptTokens,
       input_tokens: tokenUsage.inputTokens,
       output_tokens: tokenUsage.outputTokens,
-      total_tokens: tokenUsage.totalTokens,
+      message_tokens: tokenUsage.totalTokens,
+      total_tokens: totalTokensWithSystemPrompt,
       total_context_limit: TOTAL_CONTEXT_LIMIT,
-      context_percentage: tokenUsage.contextPercentage,
+      context_percentage: contextPercentageWithSystemPrompt,
       usage_sources: tokenUsage.usageSources,
       estimation_method: tokenUsage.estimationMethod,
     },
+    prompt_layers: {
+      shared_prompt: sharedPrompt,
+      static_prompt: staticPrompt,
+      capability_prompt: capabilityPrompt,
+      runtime_injected_context: runtimeInjectedContext,
+      history_note: historyNote,
+    },
+    prompt_layer_sizes: {
+      shared_prompt_chars: sharedPrompt.length,
+      static_prompt_chars: staticPrompt.length,
+      capability_prompt_chars: capabilityPrompt.length,
+      runtime_injected_context_chars: runtimeInjectedContext.length,
+      shared_prompt_tokens: sharedPromptTokens,
+      static_prompt_tokens: staticPromptTokens,
+      capability_prompt_tokens: capabilityPromptTokens,
+      runtime_injected_context_tokens: runtimeInjectedTokens,
+    },
+    debug_sources: promptDebug?.sources || null,
     messages: [...(messages || [])],
   };
 
@@ -247,7 +340,7 @@ export function DebugInspector({ service }: DebugInspectorProps) {
   };
 
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
           variant="ghost"
@@ -286,7 +379,27 @@ export function DebugInspector({ service }: DebugInspectorProps) {
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto bg-[#1e1e1e] text-[#d4d4d4] font-mono text-xs p-4 selection:bg-blue-500/30">
-          <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <div className="mb-4 grid gap-3 md:grid-cols-7">
+            <UsageCard
+              label="Shared Prompt"
+              value={formatNumber(sharedPromptTokens)}
+              subValue={`${formatNumber(sharedPrompt.length)} chars`}
+            />
+            <UsageCard
+              label="Static Prompt"
+              value={formatNumber(staticPromptTokens)}
+              subValue={`${formatNumber(staticPrompt.length)} chars`}
+            />
+            <UsageCard
+              label="Capability Prompt"
+              value={formatNumber(capabilityPromptTokens)}
+              subValue={`${formatNumber(capabilityPrompt.length)} chars`}
+            />
+            <UsageCard
+              label="Runtime Context"
+              value={formatNumber(runtimeInjectedTokens)}
+              subValue={`${formatNumber(runtimeInjectedContext.length)} chars`}
+            />
             <UsageCard
               label="Input Tokens"
               value={formatNumber(tokenUsage.inputTokens)}
@@ -297,12 +410,13 @@ export function DebugInspector({ service }: DebugInspectorProps) {
             />
             <UsageCard
               label="Total Tokens"
-              value={formatNumber(tokenUsage.totalTokens)}
+              value={formatNumber(totalTokensWithSystemPrompt)}
+              subValue={`Prompt: ${formatNumber(nonHistoryPromptTokens)} | Messages: ${formatNumber(tokenUsage.totalTokens)}`}
             />
             <UsageCard
               label="Context Usage"
-              value={`${tokenUsage.contextPercentage}%`}
-              subValue={`${formatNumber(tokenUsage.totalTokens)} / ${formatNumber(TOTAL_CONTEXT_LIMIT)} (${tokenUsage.estimationMethod})`}
+              value={`${contextPercentageWithSystemPrompt}%`}
+              subValue={`${formatNumber(totalTokensWithSystemPrompt)} / ${formatNumber(TOTAL_CONTEXT_LIMIT)} (${tokenUsage.estimationMethod})`}
             />
           </div>
 

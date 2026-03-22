@@ -1133,9 +1133,9 @@ AGENT = AgentDef(
     description="دستیار هوشمند روانپزشکی ( دارو درمانی ) فقط مخصوص روانپزشکان",
     is_free=False,
     audience="EXPERT",    #ALL #VISITOR #EXPERT
-    eligible_expert_professions=["psychologist"],    #lawyer    #psychiatrist    #psychologist
-    requires_visitor_selector=False,
-    tags=["روانپزشک"],
+    eligible_expert_professions=["psychiatrist"],    #lawyer    #psychiatrist    #psychologist
+    requires_visitor_selector=True,
+    tags=["روانپزشک", "داشبورد"],
     system_prompt=AGENT_PROMPT,
     model_id="gpt-5.1",
     demo_config=DemoConfigDef(
@@ -1150,8 +1150,8 @@ AGENT = AgentDef(
     enable_reasoning=False,
     reasoning_effort="none",
     static_tools=["duckduckgo"],
-    capabilities=[],
-    default_open_canvases=[],
+    capabilities=["vania_expert"],
+    default_open_canvases=["VANIA_PATIENT_MANAGER"],
     extra_config={
         "input_requirements": {
             "requires_context": True,
@@ -1167,4 +1167,3 @@ AGENT = AgentDef(
 )
 
 AGENTS = [AGENT]
-

@@ -30,6 +30,7 @@ AGENT = AgentDef(
     description="همراه هوشمند مراجع برای پیگیری مسیر، تکالیف، مرور جلسات و منابع پیشنهادی.",
     system_prompt=VANIA_VISITOR_SYSTEM_PROMPT,
     is_free=True,
+    is_public=False,
     tags=["داشبورد"],
     audience="VISITOR",
     demo_config=DemoConfigDef(

@@ -43,7 +43,7 @@ class ServiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = AgentService
         fields = [
-            'id', 'name', 'slug', 'description',
+            'id', 'name', 'slug', 'description', 'system_prompt',
             # Marketplace
             'is_free', 'is_owned', 'license_expires_at', 'access_status',
             'audience', 'eligible_expert_professions', 'requires_visitor_selector',

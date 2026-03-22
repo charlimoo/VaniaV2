@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { 
-  Bot, Lock, Zap, ArrowLeft, Clock
+  Bot, Lock, Zap, ArrowLeft, Clock, Sparkles
 } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
@@ -64,9 +64,12 @@ export function AgentGrid() {
       : services;
 
     return [...filtered].sort((a, b) => {
+      const aFeatured = a.ui_config?.featured ? 1 : 0;
+      const bFeatured = b.ui_config?.featured ? 1 : 0;
       const aActive = a.access_status === "OWNED" || a.access_status === "FREE" ? 1 : 0;
       const bActive = b.access_status === "OWNED" || b.access_status === "FREE" ? 1 : 0;
 
+      if (aFeatured !== bFeatured) return bFeatured - aFeatured;
       if (aActive !== bActive) return bActive - aActive;
       return a.name.localeCompare(b.name, "fa");
     });
@@ -114,6 +117,8 @@ export function AgentGrid() {
         const isOwned = status === 'OWNED' || status === 'FREE';
         const isLocked = !isOwned;
         const multiplier = parseFloat(agent.cost_multiplier);
+        const isFeatured = !!agent.ui_config?.featured;
+        const featuredLabel = agent.ui_config?.featured_label || "ویژه";
 
         return (
           <button
@@ -122,17 +127,28 @@ export function AgentGrid() {
             onClick={() => handleAction(agent)}
             className={cn(
               "bg-card text-card-foreground relative overflow-hidden transition-all duration-300 ease-out group flex flex-col gap-6 justify-between h-full min-h-[200px] cursor-pointer rounded-xl border shadow-sm p-5 py-8 text-right",
+              isFeatured && isOwned && "border-amber-300/70 bg-gradient-to-br from-amber-50 via-background to-orange-50 dark:from-amber-950/20 dark:via-background dark:to-orange-950/10",
+              isFeatured && !isOwned && "border-amber-200/60 bg-gradient-to-br from-amber-50/70 via-background to-orange-50/60 dark:from-amber-950/10 dark:via-background dark:to-orange-950/5",
               isOwned
                 ? "bg-card border-border/60 hover:border-primary/50 hover:shadow-lg hover:-translate-y-1 hover:shadow-primary/5" 
                 : "bg-muted/15 border-dashed border-muted/30 hover:border-muted opacity-100"
             )}
           >
+
             {/* --- TOP SECTION: Title & Description --- */}
             <div className="flex flex-col relative z-10 mb-4">
                 <div className="flex justify-between items-start">
-                    <h3 className={cn("font-bold text-lg leading-tight mb-3 transition-colors", isOwned ? "group-hover:text-primary" : "text-muted-foreground")}>
-                        {agent.name}
-                    </h3>
+                    <div className="space-y-2">
+                      {isFeatured && (
+                        <Badge className="w-fit gap-1 rounded-full border-amber-300/60 bg-amber-100/80 px-2.5 py-0.5 text-[10px] font-medium text-amber-800 shadow-none dark:border-amber-700/50 dark:bg-amber-900/30 dark:text-amber-300">
+                          <Sparkles className="h-3 w-3" />
+                          {featuredLabel}
+                        </Badge>
+                      )}
+                      <h3 className={cn("font-bold text-lg leading-tight mb-3 transition-colors", isOwned ? "group-hover:text-primary" : "text-muted-foreground")}>
+                          {agent.name}
+                      </h3>
+                    </div>
                     
                     {/* Optional: Arrow appears top-left on hover for effect */}
                     {isOwned && (
@@ -153,6 +169,7 @@ export function AgentGrid() {
                     {/* Icon Box */}
                     <div className={cn(
                         "h-12 w-12 shrink-0 rounded-2xl flex items-center justify-center shadow-sm transition-all duration-300 border",
+                        isFeatured && isOwned && "bg-amber-100 text-amber-700 border-amber-300/60 group-hover:bg-amber-200/80 dark:bg-amber-900/30 dark:text-amber-300 dark:border-amber-700/50",
                         isOwned 
                             ? "bg-primary/10 text-primary border-primary/20 group-hover:scale-110 group-hover:rotate-3 group-hover:bg-primary/15" 
                             : "bg-muted text-muted-foreground border-border grayscale"

@@ -636,7 +636,13 @@ export default function ChatPage() {
       <div key={threadId} className="flex min-w-0 flex-col h-full w-full bg-background overflow-hidden">
         
         <GlobalHeader variant="chat" title={threadTitle}>
-          <DebugInspector service={service} />
+          <DebugInspector
+            service={service}
+            threadId={threadId}
+            resourceId={effectivePatientId}
+            doctorId={effectiveDoctorId}
+            caseId={effectiveCaseId}
+          />
           {isMobile && showCanvasSection && (
             <Button
                 variant={mobileView === 'canvas' ? "secondary" : "ghost"}

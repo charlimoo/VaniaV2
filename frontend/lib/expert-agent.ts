@@ -9,13 +9,14 @@ export async function resolveExpertCaseAgentSlug(): Promise<string> {
     const res = await fetch(`${API_BASE_URL}/api/services/`, { headers });
     if (!res.ok) return DEFAULT_EXPERT_AGENT_SLUG;
     const services: AgentService[] = await res.json();
-    const target = services.find(
+    const available = services.filter(
       (service) =>
         service.audience === "EXPERT" &&
         service.requires_visitor_selector === true &&
         (service.access_status === "OWNED" || service.access_status === "FREE")
     );
-    return  DEFAULT_EXPERT_AGENT_SLUG || target?.slug;
+    const featured = available.find((service) => service.ui_config?.featured);
+    return featured?.slug || available[0]?.slug || DEFAULT_EXPERT_AGENT_SLUG;
   } catch {
     return DEFAULT_EXPERT_AGENT_SLUG;
   }
