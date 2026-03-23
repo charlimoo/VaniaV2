@@ -2,7 +2,7 @@ import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 
 logger = logging.getLogger(__name__)
@@ -13,6 +13,7 @@ class AIProviderConfig:
     provider: str
     api_key: str
     base_url: Optional[str]
+    timeout: Optional[float]
 
 
 def _clean_base_url(value: Optional[str]) -> Optional[str]:
@@ -20,6 +21,31 @@ def _clean_base_url(value: Optional[str]) -> Optional[str]:
         return None
     cleaned = value.strip()
     return cleaned.rstrip("/") if cleaned else None
+
+
+def _read_timeout_seconds(provider: str) -> Optional[float]:
+    raw_value = (
+        os.getenv(f"{provider.upper()}_TIMEOUT_SECONDS")
+        or os.getenv("AI_TIMEOUT_SECONDS")
+        or ("300" if provider == "gapgpt" else None)
+    )
+    if raw_value in (None, ""):
+        return None
+
+    try:
+        timeout = float(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Invalid timeout value '{raw_value}' for provider '{provider}'. "
+            "Use a positive number of seconds."
+        ) from exc
+
+    if timeout <= 0:
+        raise ValueError(
+            f"Invalid timeout value '{raw_value}' for provider '{provider}'. "
+            "Use a positive number of seconds."
+        )
+    return timeout
 
 
 @lru_cache(maxsize=1)
@@ -42,25 +68,32 @@ def get_ai_provider_config() -> AIProviderConfig:
         base_url = _clean_base_url(os.getenv("OPENAI_BASE_URL"))
 
     logger.info(
-        "AI provider selected: provider=%s, base_url=%s",
+        "AI provider selected: provider=%s, base_url=%s, timeout=%s",
         provider,
         base_url or "default",
+        _read_timeout_seconds(provider) or "default",
     )
-    return AIProviderConfig(provider=provider, api_key=api_key, base_url=base_url)
+    return AIProviderConfig(
+        provider=provider,
+        api_key=api_key,
+        base_url=base_url,
+        timeout=_read_timeout_seconds(provider),
+    )
 
 
-def get_openai_client_kwargs() -> Dict[str, str]:
+def get_openai_client_kwargs() -> Dict[str, Any]:
     cfg = get_ai_provider_config()
-    kwargs: Dict[str, str] = {"api_key": cfg.api_key}
+    kwargs: Dict[str, Any] = {"api_key": cfg.api_key}
     if cfg.base_url:
         kwargs["base_url"] = cfg.base_url
+    if cfg.timeout is not None:
+        kwargs["timeout"] = cfg.timeout
     return kwargs
 
 
-def get_agno_openai_kwargs() -> Dict[str, str]:
+def get_agno_openai_kwargs() -> Dict[str, Any]:
     return get_openai_client_kwargs()
 
 
 def get_transcription_model_id() -> str:
     return (os.getenv("AI_TRANSCRIBE_MODEL") or "whisper-1").strip() or "whisper-1"
-

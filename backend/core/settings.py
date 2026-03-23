@@ -269,9 +269,12 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 # OpenAI (Required for RAG Embeddings/Agno)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
+OPENAI_TIMEOUT_SECONDS = os.getenv("OPENAI_TIMEOUT_SECONDS")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai")
 GAPGPT_API_KEY = os.getenv("GAPGPT_API_KEY")
 GAPGPT_BASE_URL = os.getenv("GAPGPT_BASE_URL", "https://api.gapgpt.app/v1")
+GAPGPT_TIMEOUT_SECONDS = os.getenv("GAPGPT_TIMEOUT_SECONDS", "300")
+AI_TIMEOUT_SECONDS = os.getenv("AI_TIMEOUT_SECONDS")
 AI_TRANSCRIBE_MODEL = os.getenv("AI_TRANSCRIBE_MODEL", "whisper-1")
 
 LANCEDB_URI = "/tmp/lancedb"

@@ -310,6 +310,13 @@ async def update_canvas_instance(
                 user_is_expert = await sync_to_async(is_expert)(user)
                 resolved_doctor_scope = int(selected_doctor_id) if selected_doctor_id else None
 
+                # Draft cases created from the expert canvas do not always carry an
+                # explicit doctor scope on the first PATCH. In that case, treat the
+                # current expert as the owner so the draft case list can be persisted
+                # before we enforce case-level edit permissions.
+                if resolved_doctor_scope is None and user_is_expert:
+                    resolved_doctor_scope = int(user.id)
+
                 if "cases" in delta and resolved_doctor_scope:
                     await sync_to_async(CaseService.save_cases)(
                         patient,
