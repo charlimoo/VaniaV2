@@ -25,6 +25,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useVaniaStore } from "@/lib/vania/store";
 
 interface Props {
+  canvasId?: string;
   data: PatientManagerState;
   onEdit: (delta: Partial<PatientManagerState>) => void;
   isLocked: boolean;
@@ -94,10 +95,12 @@ const replaceCaseScopedEntries = <T extends { case_id?: string | null }>(
   return [...caseEntries, ...untouchedEntries];
 };
 
-export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) {
+export default function PatientManagerCanvas({ canvasId, data, onEdit, isLocked }: Props) {
   const params = useParams();
   const router = useRouter();
   const setInstances = useCanvasStore((s) => s.setInstances);
+  const updateCanvasInstance = useCanvasStore((s) => s.updateCanvas);
+  const syncCanvasInstance = useCanvasStore((s) => s.syncCanvasInstance);
   const { activePatientId, setActivePatient } = useVaniaStore();
 
   const threadId = params.threadId as string | undefined;
@@ -456,7 +459,7 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
 
   const handleCreateCase = async () => {
     const title = draftTitle.trim();
-    if (!title) return;
+    if (!title || !canvasId) return;
 
     const id = `draft-${Date.now()}`;
     const now = new Date().toISOString();
@@ -474,7 +477,7 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
       ...(data.cases || []),
     ];
 
-    onEdit({
+    const delta = {
       active_view: "CASES",
       active_tab: nextActiveTab,
       selected_case_id: id,
@@ -488,7 +491,10 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
         testMode: selectedCase?.test_mode || data.test_mode,
         featurePolicy: selectedCase?.feature_policy || data.feature_policy,
       }) as any,
-    });
+    } as Partial<PatientManagerState>;
+
+    updateCanvasInstance(canvasId, delta, false, "AGENT");
+    await syncCanvasInstance(canvasId, delta);
 
     setDialogMode(null);
     setDraftTitle("");
@@ -497,7 +503,7 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
 
   const handleRenameCase = () => {
     const title = draftTitle.trim();
-    if (!title || !selectedCaseMeta) return;
+    if (!title || !selectedCaseMeta || !canvasId) return;
 
     const nextCases = (data.cases || []).map((item) =>
       item.id === selectedCaseMeta.id
@@ -505,22 +511,25 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
         : item
     );
 
-    onEdit({
+    const delta = {
       cases: nextCases,
       selected_case: selectedCase ? ({ ...selectedCase, title } as any) : selectedCase,
-    });
+    } as Partial<PatientManagerState>;
+
+    updateCanvasInstance(canvasId, delta, false, "AGENT");
+    void syncCanvasInstance(canvasId, delta);
 
     setDialogMode(null);
     setDraftTitle("");
   };
 
   const handleDeleteCase = async () => {
-    if (!selectedCaseMeta) return;
+    if (!selectedCaseMeta || !canvasId) return;
 
     const nextCases = (data.cases || []).filter((item) => item.id !== selectedCaseMeta.id);
     const fallbackCase = nextCases[0] || null;
 
-    onEdit({
+    const delta = {
       cases: nextCases,
       selected_case_id: fallbackCase?.id || null,
       selected_case: fallbackCase
@@ -545,7 +554,10 @@ export default function PatientManagerCanvas({ data, onEdit, isLocked }: Props) 
           } as any)
         : null,
       active_view: fallbackCase ? "CASES" : "BASE",
-    });
+    } as Partial<PatientManagerState>;
+
+    updateCanvasInstance(canvasId, delta, false, "AGENT");
+    await syncCanvasInstance(canvasId, delta);
 
     setDialogMode(null);
     setDraftTitle("");

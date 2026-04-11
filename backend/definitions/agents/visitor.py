@@ -26,7 +26,7 @@ Your mission is to help the developer debug the tools and capabilities that you 
 AGENT = AgentDef(
     slug="vania-visitor-companion",
     name="پرونده مراجع",
-    model_id="gpt-5.1",
+    model_id="gpt-5.4",
     description="همراه هوشمند مراجع برای پیگیری مسیر، تکالیف، مرور جلسات و منابع پیشنهادی.",
     system_prompt=VANIA_VISITOR_SYSTEM_PROMPT,
     is_free=True,

@@ -6,6 +6,7 @@ import { useMemo } from "react";
 
 // 1. Define the interface for the props passed to the dynamic component
 export interface DynamicCanvasProps {
+  canvasId?: string;
   data: any;
   onEdit: (newData: any) => void;
   isLocked: boolean;
@@ -13,6 +14,7 @@ export interface DynamicCanvasProps {
 
 interface CanvasRegistryProps extends DynamicCanvasProps {
   componentKey: string;
+  canvasId?: string;
 }
 
 const CanvasLoading = () => (
@@ -37,7 +39,7 @@ const CanvasError = ({ name }: { name: string }) => (
   </div>
 );
 
-export function CanvasRegistry({ componentKey, data, onEdit, isLocked }: CanvasRegistryProps) {
+export function CanvasRegistry({ componentKey, canvasId, data, onEdit, isLocked }: CanvasRegistryProps) {
   
   const DynamicCanvas = useMemo(() => {
     if (!componentKey) return null;
@@ -93,6 +95,7 @@ export function CanvasRegistry({ componentKey, data, onEdit, isLocked }: CanvasR
 
   return (
     <DynamicCanvas 
+      canvasId={canvasId}
       data={data} 
       onEdit={onEdit} 
       isLocked={isLocked} 

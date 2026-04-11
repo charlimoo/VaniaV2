@@ -113,7 +113,7 @@ export function StepRegistration({
             <Mail className="absolute right-3 top-2.5 h-4 w-4 text-zinc-500 group-focus-within:text-white transition-colors" />
             <Input 
                 {...form.register("email")} 
-                placeholder="ایمیل (اختیاری)" 
+                placeholder="ایمیل (اختیاری، قابل تکمیل در تنظیمات)" 
                 className="h-10 pr-9 text-sm bg-white/5 border-white/10 focus:border-white/30 rounded-lg placeholder:text-zinc-600 transition-all ltr text-left"
             />
           </div>

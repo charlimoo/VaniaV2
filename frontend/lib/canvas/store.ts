@@ -42,6 +42,7 @@ interface CanvasState {
   setLocked: (locked: boolean) => void;
   getOrderedInstances: () => CanvasData[];
   clear: () => void;
+  syncCanvasInstance: (id: string, delta: Record<string, any>) => Promise<any>;
   
   // [FIX] New Action
   setContextResourceId: (id: string | null) => void;
@@ -51,6 +52,31 @@ interface CanvasState {
 
 function hasOwn(obj: Record<string, any>, key: string) {
   return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function buildCanvasSyncHeaders(
+  token: string,
+  resourceId: string | null,
+  doctorId: string | null,
+  caseId: string | null
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Authorization": `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+
+  if (resourceId) {
+    headers["X-Target-Resource-ID"] = resourceId;
+  }
+  if (doctorId) {
+    headers["X-Target-Expert-ID"] = doctorId;
+    headers["X-Target-Doctor-ID"] = doctorId;
+  }
+  if (caseId) {
+    headers["X-Target-Case-ID"] = caseId;
+  }
+
+  return headers;
 }
 
 // --- Utility: Deep Merge ---
@@ -99,6 +125,27 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
   setContextResourceId: (id) => set({ contextResourceId: id }),
   setContextDoctorId: (id) => set({ contextDoctorId: id }),
   setContextCaseId: (id) => set({ contextCaseId: id }),
+  syncCanvasInstance: async (id, delta) => {
+    const token = localStorage.getItem("accessToken");
+    if (!token) return null;
+
+    const resourceId = get().contextResourceId;
+    const doctorId = get().contextDoctorId;
+    const caseId = get().contextCaseId;
+    const headers = buildCanvasSyncHeaders(token, resourceId, doctorId, caseId);
+
+    const response = await fetch(`${API_BASE}/agent/canvas/instance/${id}`, {
+      method: "PATCH",
+      headers,
+      body: JSON.stringify({ delta }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Canvas sync failed with status ${response.status}`);
+    }
+
+    return response.json().catch(() => null);
+  },
 
   setInstances: (canvases) => {
     console.log(`[CanvasStore] 🌊 Hydrating ${canvases?.length || 0} instances from backend.`);
@@ -253,39 +300,9 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     // Network Sync (Fire-and-Forget)
     // Only performed if the update originated from the User (e.g. typing)
     if (source === 'USER') {
-      const token = localStorage.getItem("accessToken");
-      
-      // Get the resource ID from store state
-      const resourceId = get().contextResourceId;
-      const doctorId = get().contextDoctorId;
-      const caseId = get().contextCaseId;
-
-      if (token) {
-        const headers: Record<string, string> = {
-            "Authorization": `Bearer ${token}`,
-            "Content-Type": "application/json",
-        };
-
-        // Inject the header if we have a patient context
-        if (resourceId) {
-            headers["X-Target-Resource-ID"] = resourceId;
-        }
-        if (doctorId) {
-            headers["X-Target-Expert-ID"] = doctorId;
-            headers["X-Target-Doctor-ID"] = doctorId;
-        }
-        if (caseId) {
-            headers["X-Target-Case-ID"] = caseId;
-        }
-
-        fetch(`${API_BASE}/agent/canvas/instance/${id}`, {
-          method: "PATCH",
-          headers: headers,
-          body: JSON.stringify({ delta }),
-        }).catch((err) => {
-          console.error("[CanvasStore] ❌ Background Sync Failed:", err);
-        });
-      }
+      void get().syncCanvasInstance(id, delta).catch((err) => {
+        console.error("[CanvasStore] ❌ Background Sync Failed:", err);
+      });
     }
   },
 

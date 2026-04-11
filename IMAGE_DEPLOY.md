@@ -103,8 +103,8 @@ If the server does not have internet access and also needs infra images locally,
 On the server, go to the directory containing the files and run:
 
 ```bash
-docker load -i images/vaniaapp-backend-prod.tar
-docker load -i images/vaniaapp-frontend-prod.tar
+docker load -i vaniaapp-backend-prod.tar
+docker load -i vaniaapp-frontend-prod.tar
 ```
 
 Confirm the tags after loading:

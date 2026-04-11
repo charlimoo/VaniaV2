@@ -544,6 +544,9 @@ function ProfileForm({ user, refreshUser }: { user: any, refreshUser: () => Prom
                 placeholder="ali@example.com"
                 className="text-left ltr"
               />
+              <p className="text-xs text-muted-foreground">
+                وارد کردن ایمیل اختیاری است و هر زمان بخواهید می‌توانید آن را ثبت یا ویرایش کنید.
+              </p>
             </div>
           </div>
         </CardContent>

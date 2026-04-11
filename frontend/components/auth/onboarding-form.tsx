@@ -55,7 +55,7 @@ export function OnboardingForm({ onComplete, phoneNumber }: OnboardingFormProps)
         },
         body: JSON.stringify({
           full_name: formData.full_name,
-          email: formData.email,
+          email: formData.email.trim(),
           password: formData.password
         }),
       })
@@ -139,13 +139,15 @@ export function OnboardingForm({ onComplete, phoneNumber }: OnboardingFormProps)
               type="email"
               name="email"
               autoComplete="email" // Explicitly NOT 'username'
-              placeholder="ali@example.com"
+              placeholder="اختیاری - ali@example.com"
               className="pr-9 ltr text-left" 
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              required
             />
           </div>
+          <p className="text-xs text-muted-foreground">
+            می‌توانید ایمیل را بعداً در تنظیمات حساب وارد کنید.
+          </p>
         </div>
 
         <div className="grid gap-2">

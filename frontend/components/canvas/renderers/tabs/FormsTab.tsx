@@ -351,7 +351,7 @@ export function FormsTab({
 
           const uploadRes = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/file/`, {
             method: "POST",
-            headers: { ...getAuthHeaders() },
+            headers: { ...getAuthHeaders(), ...(caseId ? { "X-Target-Case-ID": String(caseId) } : {}) },
             body: fd,
           });
           if (!uploadRes.ok) throw new Error(`آپلود فایل «${file.name}» ناموفق بود.`);

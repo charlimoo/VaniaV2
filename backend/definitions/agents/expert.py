@@ -35,7 +35,7 @@ You are **Vania (وانیا)**, an advanced expert assistant that helps a human 
 AGENT = AgentDef(
     slug="vania-expert-assistant",
     name="دستیار متخصص",
-    model_id="gpt-5.1",
+    model_id="gpt-5.4",
     description="دستیار هوشمند متخصص برای مدیریت فرایند جلسات، نقشه راه و پیگیری اجرای برنامه.",
     system_prompt=VANIA_EXPERT_SYSTEM_PROMPT,
     is_free=False,

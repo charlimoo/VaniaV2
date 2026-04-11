@@ -3,6 +3,7 @@ from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from .models import CustomUser, UserProfile
 from billing.models import UserWallet
+from vania_core.profile_sync import sync_visitor_base_profile_identity
 from .roles import (
     normalize_role_slug,
     CANONICAL_EXPERT_SLUG,
@@ -86,12 +87,24 @@ class UserSerializer(serializers.ModelSerializer):
             'is_verified_doctor', 'is_expert_verified', 'expert_profession_slug', 'expert_profession_label'
         )
 
+    def validate_email(self, value):
+        if value in ("", None):
+            return None
+        return value.strip().lower()
+
     def update(self, instance, validated_data):
         password = validated_data.pop('password', None)
+        should_sync_base_profile = any(field in validated_data for field in ("full_name", "email"))
         instance = super().update(instance, validated_data)
         if password:
             instance.set_password(password)
             instance.save()
+        if should_sync_base_profile:
+            sync_visitor_base_profile_identity(
+                instance,
+                full_name=instance.full_name if "full_name" in validated_data else None,
+                email=instance.email if "email" in validated_data else None,
+            )
         return instance
 
     def get_has_password(self, obj):

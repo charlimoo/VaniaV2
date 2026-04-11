@@ -1010,7 +1010,13 @@ class ClinicalTestFileUploadView(APIView):
         if not is_doctor:
             return request.user
 
-        patient_id = request.data.get("visitor_id") or request.data.get("patient_id")
+        patient_id = (
+            request.data.get("visitor_id")
+            or request.data.get("patient_id")
+            or request.query_params.get("visitor_id")
+            or request.query_params.get("patient_id")
+            or request.headers.get("X-Target-Resource-ID")
+        )
         if not patient_id:
             return None
         patient = get_object_or_404(CustomUser, pk=patient_id)

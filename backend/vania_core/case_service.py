@@ -1,6 +1,7 @@
 import copy
 import re
 import uuid
+import hashlib
 from typing import Any, Dict, List, Optional
 
 from django.utils import timezone
@@ -19,8 +20,9 @@ def build_base_profile_key() -> str:
 
 
 def build_case_scoped_key(base_key: str, doctor_id: int, case_id: str) -> str:
-    compact_case_id = (case_id or "").replace("-", "")[:10]
-    return f"{base_key}__d{doctor_id}__c{compact_case_id}"
+    normalized_case_id = str(case_id or "").strip()
+    digest = hashlib.sha1(normalized_case_id.encode("utf-8")).hexdigest()[:12]
+    return f"{base_key}__d{doctor_id}__c{digest}"
 
 
 class CaseService:

@@ -20,6 +20,7 @@ from .roles import (
     CANONICAL_VISITOR_SLUG,
 )
 from .expert_validation import validate_profession_credential
+from vania_core.profile_sync import sync_visitor_base_profile_identity
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,7 @@ class VerifyOTPView(APIView):
 
         # 3. Get or Create User
         user_created = False
+        normalized_email = (signup_data.get('email') or "").strip().lower() if signup_data else ""
         try:
             user = CustomUser.objects.get(phone_number=phone_number)
         except CustomUser.DoesNotExist:
@@ -148,7 +150,7 @@ class VerifyOTPView(APIView):
                         phone_number=phone_number,
                         password=signup_data.get('password'),
                         full_name=signup_data.get('fullName'),
-                        email=signup_data.get('email', '') or None
+                        email=normalized_email or None
                     )
                     
                     role_obj, _ = UserRole.objects.get_or_create(
@@ -157,6 +159,11 @@ class VerifyOTPView(APIView):
                     )
                     user.role = role_obj
                     user.save()
+                    sync_visitor_base_profile_identity(
+                        user,
+                        full_name=user.full_name or "",
+                        email=user.email or "",
+                    )
                     user_created = True
             
             except IntegrityError as e:

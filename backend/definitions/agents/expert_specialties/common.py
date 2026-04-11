@@ -103,7 +103,7 @@ def build_specialty_agent(
     return AgentDef(
         slug=slug,
         name=name,
-        model_id="gpt-5.1",
+        model_id="gpt-5.4",
         description=description,
         system_prompt=compose_prompt(
             profession_name=profession_name,

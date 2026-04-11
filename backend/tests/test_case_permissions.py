@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from users.models import CustomUser, ExpertProfession, UserRole
 from capabilities.test_attachment_media import build_case_file_tool_result, build_test_attachment_tool_result
-from vania_core.case_service import CaseService
+from vania_core.case_service import CaseService, build_case_scoped_key
 from vania_core.models import TreatmentConnection
 from vania_core.patient_service import PatientDataService
 from vania_core.case_files_service import CaseFilesService
@@ -80,6 +80,14 @@ class CasePermissionsTests(TestCase):
         shared_case = next(item for item in accessible_for_reader if item["id"] == self.case["id"])
         self.assertTrue(shared_case["is_read_only"])
         self.assertFalse(shared_case["can_edit"])
+
+    def test_draft_case_ids_generate_distinct_case_scope_keys(self):
+        key_a = build_case_scoped_key("clinical_summary", self.owner.id, "draft-1774314357424")
+        key_b = build_case_scoped_key("clinical_summary", self.owner.id, "draft-1774314367403")
+
+        self.assertNotEqual(key_a, key_b)
+        self.assertLessEqual(len(key_a), 50)
+        self.assertLessEqual(len(key_b), 50)
 
     def test_visitor_can_only_share_with_same_profession(self):
         self.client.force_authenticate(self.visitor)

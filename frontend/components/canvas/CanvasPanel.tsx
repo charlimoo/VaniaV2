@@ -126,6 +126,7 @@ export function CanvasPanel({ onCollapse, isPreviewMode = false, demoConfig }: C
         {activeInstance ? (
           <CanvasRegistry
             componentKey={activeInstance.component_key}
+            canvasId={activeInstance.id}
             data={activeInstance.current_state}
             onEdit={(delta) => updateCanvas(activeInstance.id, delta, false, 'USER')}
             isLocked={isLocked || shouldLock}
