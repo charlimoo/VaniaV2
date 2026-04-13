@@ -111,7 +111,7 @@ export function WalletOverview({
 
                         {/* Top Ups */}
                         <div className="flex flex-col items-center gap-3 w-full">
-                            <div className="flex items-center gap-1.5 text-[10px] text-zinc-600 font-medium">
+                        <div className="flex items-center gap-1.5 text-[10px] text-zinc-600 font-medium">
                                 <Zap className="w-3 h-3 text-amber-500/70" />
                                 افزایش سریع
                             </div>
@@ -137,7 +137,7 @@ export function WalletOverview({
                                                     )}
                                                 </Button>
                                             </TooltipTrigger>
-                                            <TooltipContent className="text-xs">
+                                              <TooltipContent className="text-xs">
                                                 خرید {parseInt(pack.credit_amount).toLocaleString()} {APP_CONFIG.CREDITS.NAME_SINGULAR}
                                             </TooltipContent>
                                         </Tooltip>
@@ -160,7 +160,7 @@ export function WalletOverview({
                     </div>
                     <div>
                         <h3 className="text-lg font-bold text-foreground">اشتراک فعال ندارید</h3>
-                        <p className="text-sm text-muted-foreground">برای دسترسی نامحدود، یکی از طرح‌های زیر را انتخاب کنید.</p>
+                        <p className="text-sm text-muted-foreground">برای استفاده بیشتر، یکی از طرح‌های زیر را انتخاب کنید.</p>
                     </div>
                 </div>
             </CardContent>

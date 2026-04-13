@@ -1,6 +1,15 @@
 # backend/definitions/billing.py
 from .base import ProductDef, DiscountDef, PlanDef
 
+
+def _merge_agent_slugs(*groups: list[str]) -> list[str]:
+    merged: list[str] = []
+    for group in groups:
+        for slug in group:
+            if slug not in merged:
+                merged.append(slug)
+    return merged
+
 ALL_AUDIENCE_AGENT_SLUGS = [
     "HAM-edalat",
     "fal",
@@ -19,14 +28,19 @@ LAWYER_AGENT_SLUGS = [
     "expert-lawyer-assistant",
     "vania-expert-assistant",
 ]
+LAWYER_PLAN_AGENT_SLUGS = _merge_agent_slugs(ALL_AUDIENCE_AGENT_SLUGS, LAWYER_AGENT_SLUGS)
 
 PSYCHIATRIST_AGENT_SLUGS = [
     "ravanyar-motekhases",
     "supervisor-mashaghel",
-    "tarahi-jalasat-ravan-darman",
+    "tarahi-darman",
+    "tarahi-jalasat-darman",
+    "tarahi-jalasat-daro-darman",
     "expert-psychiatrist-assistant",
     "vania-expert-assistant",
+    "tashkil-parvande",
 ]
+PSYCHIATRIST_PLAN_AGENT_SLUGS = _merge_agent_slugs(ALL_AUDIENCE_AGENT_SLUGS, PSYCHIATRIST_AGENT_SLUGS)
 
 PSYCHOLOGIST_AGENT_SLUGS = [
     "ravanyar-motekhases",
@@ -41,20 +55,22 @@ PSYCHOLOGIST_AGENT_SLUGS = [
     "expert-psychologist-assistant",
     "vania-expert-assistant",
 ]
+PSYCHOLOGIST_PLAN_AGENT_SLUGS = _merge_agent_slugs(ALL_AUDIENCE_AGENT_SLUGS, PSYCHOLOGIST_AGENT_SLUGS)
 
 GENERAL_DOCTOR_AGENT_SLUGS = [
     "expert-general-doctor-assistant",
     "vania-expert-assistant",
 ]
+GENERAL_DOCTOR_PLAN_AGENT_SLUGS = _merge_agent_slugs(ALL_AUDIENCE_AGENT_SLUGS, GENERAL_DOCTOR_AGENT_SLUGS)
 
 # --- 1. Subscription Plans ---
 # These define the tiers. Agents are linked here by their slugs.
 PLANS = [
     PlanDef(
         slug="visitor-30d",
-        name="اشتراک مراجعین ۳۰ روزه",
-        description="پلن پایه مراجعین با دسترسی به ایجنت‌های عمومی و مراجع.",
-        price=490000,
+        name="اشتراک عمومی ماهانه",
+        description="طرح عمومی ماهانه برای استفاده از دستیارهای عمومی وانیا.",
+        price=690000,
         duration_days=30,
         monthly_credits=600,
         included_agent_slugs=ALL_AUDIENCE_AGENT_SLUGS,
@@ -62,9 +78,9 @@ PLANS = [
     ),
     PlanDef(
         slug="visitor-90d",
-        name="اشتراک مراجعین ۹۰ روزه",
-        description="پلن اقتصادی مراجعین برای استفاده پایدار سه‌ماهه.",
-        price=1290000,
+        name="اشتراک عمومی ۳ ماهه",
+        description="طرح عمومی سه ماهه با قیمت مقرون‌به‌صرفه‌تر برای استفاده پایدار.",
+        price=1966500,
         duration_days=90,
         monthly_credits=700,
         included_agent_slugs=ALL_AUDIENCE_AGENT_SLUGS,
@@ -72,9 +88,9 @@ PLANS = [
     ),
     PlanDef(
         slug="visitor-365d",
-        name="اشتراک مراجعین سالانه",
-        description="پلن کامل مراجعین با بهترین قیمت برای استفاده یک‌ساله.",
-        price=4590000,
+        name="اشتراک عمومی سالانه",
+        description="طرح عمومی سالانه با ۲۰٪ صرفه‌جویی نسبت به خرید ماهانه.",
+        price=6624000,
         duration_days=365,
         monthly_credits=900,
         included_agent_slugs=ALL_AUDIENCE_AGENT_SLUGS,
@@ -82,133 +98,133 @@ PLANS = [
     ),
     PlanDef(
         slug="expert-lawyer-30d",
-        name="اشتراک وکلا ۳۰ روزه",
-        description="پلن پایه وکلا با دسترسی به ایجنت‌های تخصصی حقوقی.",
-        price=790000,
+        name="اشتراک حرفه‌ای وکلا - ماهانه",
+        description="طرح حرفه‌ای ماهانه شامل همه دستیارهای عمومی وانیا به‌علاوه دستیارهای تخصصی حقوقی.",
+        price=2000000,
         duration_days=30,
         monthly_credits=1500,
-        included_agent_slugs=LAWYER_AGENT_SLUGS,
+        included_agent_slugs=LAWYER_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["lawyer"],
     ),
     PlanDef(
         slug="expert-lawyer-90d",
-        name="اشتراک وکلا ۹۰ روزه",
-        description="پلن اقتصادی وکلا برای استفاده سه‌ماهه.",
-        price=2090000,
+        name="اشتراک حرفه‌ای وکلا - ۳ ماهه",
+        description="طرح حرفه‌ای سه ماهه شامل همه دستیارهای عمومی وانیا به‌علاوه ابزارهای تخصصی حقوقی.",
+        price=5700000,
         duration_days=90,
         monthly_credits=1800,
-        included_agent_slugs=LAWYER_AGENT_SLUGS,
+        included_agent_slugs=LAWYER_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["lawyer"],
     ),
     PlanDef(
         slug="expert-lawyer-365d",
-        name="اشتراک وکلا سالانه",
-        description="پلن کامل وکلا با بهترین صرفه اقتصادی سالانه.",
-        price=7590000,
+        name="اشتراک حرفه‌ای وکلا - سالانه",
+        description="طرح حرفه‌ای سالانه برای وکلا با دسترسی به همه دستیارهای عمومی و تخصصی حقوقی.",
+        price=19200000,
         duration_days=365,
         monthly_credits=2400,
-        included_agent_slugs=LAWYER_AGENT_SLUGS,
+        included_agent_slugs=LAWYER_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["lawyer"],
     ),
     PlanDef(
         slug="expert-psychiatrist-30d",
-        name="اشتراک روانپزشکان ۳۰ روزه",
-        description="پلن پایه روانپزشکان با دسترسی به ایجنت‌های تخصصی مربوط.",
-        price=890000,
+        name="اشتراک حرفه‌ای روانپزشکان - ماهانه",
+        description="طرح حرفه‌ای ماهانه شامل همه دستیارهای عمومی وانیا به‌علاوه دستیارهای تخصصی روانپزشکی.",
+        price=2000000,
         duration_days=30,
         monthly_credits=1700,
-        included_agent_slugs=PSYCHIATRIST_AGENT_SLUGS,
+        included_agent_slugs=PSYCHIATRIST_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["psychiatrist"],
     ),
     PlanDef(
         slug="expert-psychiatrist-90d",
-        name="اشتراک روانپزشکان ۹۰ روزه",
-        description="پلن حرفه‌ای روانپزشکان برای استفاده پیوسته سه‌ماهه.",
-        price=2390000,
+        name="اشتراک حرفه‌ای روانپزشکان - ۳ ماهه",
+        description="طرح حرفه‌ای سه ماهه شامل همه دستیارهای عمومی وانیا به‌علاوه ابزارهای تخصصی روانپزشکی.",
+        price=5700000,
         duration_days=90,
         monthly_credits=2000,
-        included_agent_slugs=PSYCHIATRIST_AGENT_SLUGS,
+        included_agent_slugs=PSYCHIATRIST_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["psychiatrist"],
     ),
     PlanDef(
         slug="expert-psychiatrist-365d",
-        name="اشتراک روانپزشکان سالانه",
-        description="پلن کامل روانپزشکان با صرفه اقتصادی سالانه.",
-        price=8690000,
+        name="اشتراک حرفه‌ای روانپزشکان - سالانه",
+        description="طرح حرفه‌ای سالانه برای روانپزشکان با دسترسی به همه دستیارهای عمومی و تخصصی.",
+        price=19200000,
         duration_days=365,
         monthly_credits=2700,
-        included_agent_slugs=PSYCHIATRIST_AGENT_SLUGS,
+        included_agent_slugs=PSYCHIATRIST_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["psychiatrist"],
     ),
     PlanDef(
         slug="expert-psychologist-30d",
-        name="اشتراک روانشناسان ۳۰ روزه",
-        description="پلن پایه روانشناسان با دسترسی به ایجنت‌های تخصصی روانشناسی.",
-        price=990000,
+        name="اشتراک حرفه‌ای روانشناسان - ماهانه",
+        description="طرح حرفه‌ای ماهانه شامل همه دستیارهای عمومی وانیا به‌علاوه دستیارهای تخصصی روانشناسی.",
+        price=2000000,
         duration_days=30,
         monthly_credits=1800,
-        included_agent_slugs=PSYCHOLOGIST_AGENT_SLUGS,
+        included_agent_slugs=PSYCHOLOGIST_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["psychologist"],
     ),
     PlanDef(
         slug="expert-psychologist-90d",
-        name="اشتراک روانشناسان ۹۰ روزه",
-        description="پلن حرفه‌ای روانشناسان برای استفاده سه‌ماهه.",
-        price=2690000,
+        name="اشتراک حرفه‌ای روانشناسان - ۳ ماهه",
+        description="طرح حرفه‌ای سه ماهه شامل همه دستیارهای عمومی وانیا به‌علاوه ابزارهای تخصصی روانشناسی.",
+        price=5700000,
         duration_days=90,
         monthly_credits=2200,
-        included_agent_slugs=PSYCHOLOGIST_AGENT_SLUGS,
+        included_agent_slugs=PSYCHOLOGIST_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["psychologist"],
     ),
     PlanDef(
         slug="expert-psychologist-365d",
-        name="اشتراک روانشناسان سالانه",
-        description="پلن کامل روانشناسان با بیشترین صرفه اقتصادی سالانه.",
-        price=9990000,
+        name="اشتراک حرفه‌ای روانشناسان - سالانه",
+        description="طرح حرفه‌ای سالانه برای روانشناسان با دسترسی به همه دستیارهای عمومی و تخصصی.",
+        price=19200000,
         duration_days=365,
         monthly_credits=3000,
-        included_agent_slugs=PSYCHOLOGIST_AGENT_SLUGS,
+        included_agent_slugs=PSYCHOLOGIST_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["psychologist"],
     ),
     PlanDef(
         slug="expert-general-doctor-30d",
-        name="اشتراک پزشکان عمومی ۳۰ روزه",
-        description="پلن پایه پزشکان عمومی با دسترسی به دستیار تخصصی پرونده.",
-        price=790000,
+        name="اشتراک حرفه‌ای پزشکان - ماهانه",
+        description="طرح حرفه‌ای ماهانه شامل همه دستیارهای عمومی وانیا به‌علاوه دستیارهای تخصصی پزشکی.",
+        price=2000000,
         duration_days=30,
         monthly_credits=1400,
-        included_agent_slugs=GENERAL_DOCTOR_AGENT_SLUGS,
+        included_agent_slugs=GENERAL_DOCTOR_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["general_doctor"],
     ),
     PlanDef(
         slug="expert-general-doctor-90d",
-        name="اشتراک پزشکان عمومی ۹۰ روزه",
-        description="پلن اقتصادی پزشکان عمومی برای استفاده سه‌ماهه.",
-        price=2090000,
+        name="اشتراک حرفه‌ای پزشکان - ۳ ماهه",
+        description="طرح حرفه‌ای سه ماهه شامل همه دستیارهای عمومی وانیا به‌علاوه ابزارهای تخصصی پزشکی.",
+        price=5700000,
         duration_days=90,
         monthly_credits=1700,
-        included_agent_slugs=GENERAL_DOCTOR_AGENT_SLUGS,
+        included_agent_slugs=GENERAL_DOCTOR_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["general_doctor"],
     ),
     PlanDef(
         slug="expert-general-doctor-365d",
-        name="اشتراک پزشکان عمومی سالانه",
-        description="پلن کامل پزشکان عمومی با صرفه اقتصادی سالانه.",
-        price=7590000,
+        name="اشتراک حرفه‌ای پزشکان - سالانه",
+        description="طرح حرفه‌ای سالانه برای پزشکان با دسترسی به همه دستیارهای عمومی و تخصصی.",
+        price=19200000,
         duration_days=365,
         monthly_credits=2200,
-        included_agent_slugs=GENERAL_DOCTOR_AGENT_SLUGS,
+        included_agent_slugs=GENERAL_DOCTOR_PLAN_AGENT_SLUGS,
         audience="EXPERT",
         eligible_expert_professions=["general_doctor"],
     ),
@@ -232,28 +248,28 @@ PLAN_PRODUCTS = [
 # These appear in the "Top-up" section. They add to 'balance_paid'.
 CREDIT_PACKS = [
     ProductDef(
-        name="بسته ۵۰ سرمایه گفت‌وگو", 
+        name="بسته ۵۰ اعتبار گفتگو", 
         credits=50, 
         price=75000, 
-        description="افزایش اعتبار حساب به میزان ۵۰ سرمایه گفت‌وگو (بدون انقضا)."
+        description="افزایش اعتبار قابل مصرف حساب به میزان ۵۰ اعتبار گفتگو (بدون انقضا)."
     ),
     ProductDef(
-        name="بسته ۱۰۰ سرمایه گفت‌وگو", 
+        name="بسته ۱۰۰ اعتبار گفتگو", 
         credits=100, 
         price=140000, 
-        description="افزایش اعتبار حساب به میزان ۱۰۰ سرمایه گفت‌وگو (بدون انقضا)."
+        description="افزایش اعتبار قابل مصرف حساب به میزان ۱۰۰ اعتبار گفتگو (بدون انقضا)."
     ),
     ProductDef(
-        name="بسته ۲۵۰ سرمایه گفت‌وگو", 
+        name="بسته ۲۵۰ اعتبار گفتگو", 
         credits=250, 
         price=300000, 
-        description="افزایش اعتبار حساب به میزان ۲۵۰ سرمایه گفت‌وگو (بدون انقضا)."
+        description="افزایش اعتبار قابل مصرف حساب به میزان ۲۵۰ اعتبار گفتگو (بدون انقضا)."
     ),
     ProductDef(
-        name="بسته ۵۰۰ سرمایه گفت‌وگو", 
+        name="بسته ۵۰۰ اعتبار گفتگو", 
         credits=500, 
         price=500000, 
-        description="افزایش اعتبار حساب به میزان ۵۰۰ سرمایه گفت‌وگو (بدون انقضا)."
+        description="افزایش اعتبار قابل مصرف حساب به میزان ۵۰۰ اعتبار گفتگو (بدون انقضا)."
     ),
 ]
 

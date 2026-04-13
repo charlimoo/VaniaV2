@@ -7,6 +7,7 @@ import {
   MapPin, 
   DollarSign, 
   CalendarPlus, 
+  FileText,
   Loader2, 
   AlertCircle,
   ArrowRight,
@@ -147,6 +148,7 @@ export default function FindDoctorPage() {
   const [professionOptions, setProfessionOptions] = useState<ProfessionOption[]>([]);
   
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
+  const [profileDoctor, setProfileDoctor] = useState<Doctor | null>(null);
   const [isRequesting, setIsRequesting] = useState(false);
   
   const [formData, setFormData] = useState({
@@ -442,7 +444,7 @@ export default function FindDoctorPage() {
                 </div>
               </CardContent>
 
-              <CardFooter className="pt-0">
+              <CardFooter className="pt-0 flex-col gap-2">
                 <Button 
                     className="w-full gap-2" 
                     onClick={() => setSelectedDoctor(doc)}
@@ -456,6 +458,14 @@ export default function FindDoctorPage() {
                     ) : (
                         "عدم پذیرش مراجع جدید"
                     )}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={() => setProfileDoctor(doc)}
+                >
+                  <FileText className="h-4 w-4" />
+                  مشاهده اطلاعات کامل متخصص
                 </Button>
               </CardFooter>
             </Card>
@@ -508,6 +518,76 @@ export default function FindDoctorPage() {
                     {isRequesting ? <Loader2 className="h-4 w-4 animate-spin" /> : "ارسال درخواست"}
                 </Button>
             </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* --- Expert Full Profile Modal --- */}
+      <Dialog open={!!profileDoctor} onOpenChange={(o) => !o && setProfileDoctor(null)}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto" dir="rtl">
+          <DialogHeader className="text-right">
+            <DialogTitle>اطلاعات کامل متخصص</DialogTitle>
+            <DialogDescription>
+              جزئیات کامل پروفایلی که متخصص در تنظیمات خود ثبت کرده است.
+            </DialogDescription>
+          </DialogHeader>
+
+          {profileDoctor && (
+            <div className="space-y-5 py-1">
+              <div className="flex items-start gap-3 rounded-lg border p-3 bg-muted/20">
+                <Avatar className="h-14 w-14 border">
+                  <AvatarImage src={fixAvatarUrl(profileDoctor.avatar) || ""} alt={profileDoctor.full_name} className="object-cover" />
+                  <AvatarFallback className="bg-primary/10 text-primary text-lg">
+                    {profileDoctor.full_name ? profileDoctor.full_name.slice(0, 1) : "D"}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="space-y-1 min-w-0">
+                  <h3 className="font-semibold text-base truncate">{profileDoctor.full_name || "متخصص"}</h3>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <Badge variant="secondary" className="font-normal">{profileDoctor.specialty || "—"}</Badge>
+                    {profileDoctor.expert_profession_label && (
+                      <Badge variant="outline" className="font-normal">{profileDoctor.expert_profession_label}</Badge>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2 text-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-1 sm:gap-3">
+                  <span className="text-muted-foreground">موقعیت مکانی</span>
+                  <span>{profileDoctor.location_name || "ثبت نشده"}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-1 sm:gap-3">
+                  <span className="text-muted-foreground">آدرس مطب</span>
+                  <span>{profileDoctor.clinic_address || "ثبت نشده"}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-1 sm:gap-3">
+                  <span className="text-muted-foreground">پذیرش مراجعه‌کننده جدید</span>
+                  <span>{profileDoctor.accepting_new_patients ? "فعال" : "غیرفعال"}</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-1 sm:gap-3">
+                  <span className="text-muted-foreground">هزینه جلسه</span>
+                  <span>
+                    {(() => {
+                      const meetingPrice = getMeetingPriceDisplay(profileDoctor.meeting_price);
+                      if (!meetingPrice) return "ثبت نشده";
+                      return `${meetingPrice.full} (${meetingPrice.words})`;
+                    })()}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium">درباره متخصص</h4>
+                <div className="rounded-lg border p-3 text-sm leading-7 whitespace-pre-wrap">
+                  {profileDoctor.bio || "متخصص توضیحی ثبت نکرده است."}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setProfileDoctor(null)}>بستن</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

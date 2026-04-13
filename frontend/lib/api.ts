@@ -1,3 +1,5 @@
+import { normalizePhoneNumberInput } from "@/lib/phone";
+
 // --- Custom Error for API Responses ---
 /**
  * Extends the native Error class to include an HTTP status code.
@@ -91,7 +93,7 @@ export async function fetcher<T = any>(url: string, options: RequestInit = {}): 
 export async function checkUserExistence(phone: string) {
   return fetcher<{ exists: boolean }>('/api/auth/check-exists/', {
     method: 'POST',
-    body: JSON.stringify({ phone_number: phone })
+    body: JSON.stringify({ phone_number: normalizePhoneNumberInput(phone) })
   });
 }
 
@@ -102,7 +104,7 @@ export async function lookupVisitorForExpert(phone: string) {
     existing_connection_status?: string | null;
   }>('/api/vania/visitors/lookup/', {
     method: 'POST',
-    body: JSON.stringify({ phone_number: phone })
+    body: JSON.stringify({ phone_number: normalizePhoneNumberInput(phone) })
   });
 }
 
@@ -147,18 +149,27 @@ export async function getExpertProfessions() {
   }>>('/api/auth/expert-professions/');
 }
 
-export async function upgradeExpert(fullName: string, professionSlug: string, credentialCode: string) {
+export async function upgradeExpert(
+  fullName: string,
+  professionSlug: string,
+  credentialCode: string,
+  nationalCode: string
+) {
   return fetcher<{
     verified: boolean;
     message: string;
     profession_slug?: string;
     profession_label?: string;
+    user?: {
+      expert_verification_status?: 'none' | 'pending' | 'approved' | 'rejected';
+    };
   }>('/api/auth/upgrade-expert/', {
     method: 'POST',
     body: JSON.stringify({
       full_name: fullName,
       profession_slug: professionSlug,
       credential_code: credentialCode,
+      national_code: nationalCode,
     }),
   });
 }

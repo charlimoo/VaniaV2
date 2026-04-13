@@ -33,13 +33,19 @@ export function DashboardSidebar({ ...props }: React.ComponentProps<typeof Sideb
 
   const handleSharePlatform = React.useCallback(async () => {
     const shareUrl = window.location.origin
-    const shareTitle = `${APP_CONFIG.BRANDING.APP_NAME}`
-    const shareText = `سلام!
+    const shareTitle = "«معرفی به دوستان»"
+    const shareText = `«معرفی به دوستان»
 
-من ${APP_CONFIG.BRANDING.APP_NAME} رو پیدا کردم؛ یه پلتفرم فارسی برای همکاری با دستیارهای هوش مصنوعی در کارها و گفتگوهای روزمره.
+من مدتی است از پلتفرم وانیا آپ استفاده می‌کنم.
+وانیا یک دستیار هوشمند (IA)* است که به شما کمک می‌کند در موضوعاتی مثل سلامت روان، مسائل شغلی، تحصیلی و حقوقی بهتر تصمیم بگیرید و در صورت نیاز با متخصصان ارتباط داشته باشید.
 
-اگر دوست داشتی، از اینجا ببینش:
-${shareUrl}`
+اگر دوست دارید یک همراه هوشمند برای مدیریت مسائل مهم زندگی و کارتان داشته باشید، پیشنهاد می‌کنم وانیا آپ را امتحان کنید.
+
+ورود و ثبت‌نام:
+panel.vaniaapp.app
+
+وانیا آپ
+همراه هوشمند شما`
 
     try {
       if (navigator.share) {

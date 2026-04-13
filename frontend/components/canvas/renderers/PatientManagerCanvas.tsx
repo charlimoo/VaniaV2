@@ -55,6 +55,7 @@ const EMPTY_CASE = (
   id,
   title,
   clinical_summary: "",
+  summary_voice_notes: [],
   forms_tests_analysis: "",
   roadmap_data: {
     current_phase: "PHASE_1_ANALYSIS" as const,
@@ -706,6 +707,7 @@ export default function PatientManagerCanvas({ canvasId, data, onEdit, isLocked 
               patientProfile={data.patient_profile}
               caseId={selectedCase.id}
               clinicalSummary={selectedCase.clinical_summary || ""}
+              summaryVoiceNotes={selectedCase.summary_voice_notes || []}
               formsTestsAnalysis={selectedCase.forms_tests_analysis || ""}
               forms={caseOverviewSections.includes("forms") ? selectedCase.forms || [] : []}
               tests={caseOverviewSections.includes("tests") ? selectedCase.tests || [] : []}

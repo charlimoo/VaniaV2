@@ -62,7 +62,7 @@ from .serializers import (
 
 # --- User Imports ---
 from users.models import CustomUser, UserContextEntry
-from users.roles import is_expert, is_visitor
+from users.roles import has_visitor_features, is_expert
 from capabilities.vania_visitor.forms import FORM_BASE_PROFILE
 from .case_service import CaseService
 from services.models_canvas import CanvasInstance
@@ -237,7 +237,7 @@ class DoctorPatientLookupView(APIView):
         serializer = PatientLookupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        phone = serializer.validated_data["phone_number"].strip()
+        phone = serializer.validated_data["phone_number"]
         patient = CustomUser.objects.filter(phone_number=phone).first()
         if not patient:
             return Response({"exists": False})
@@ -313,7 +313,7 @@ class MyBaseProfileView(APIView):
     parser_classes = [JSONParser]
 
     def get(self, request):
-        if not is_visitor(request.user):
+        if not has_visitor_features(request.user):
             return Response({"error": "این بخش فقط برای مراجعان فعال است."}, status=status.HTTP_403_FORBIDDEN)
 
         entry = CaseService.get_latest_base_profile_entry(request.user)
@@ -332,7 +332,7 @@ class MyBaseProfileView(APIView):
         })
 
     def patch(self, request):
-        if not is_visitor(request.user):
+        if not has_visitor_features(request.user):
             return Response({"error": "این بخش فقط برای مراجعان فعال است."}, status=status.HTTP_403_FORBIDDEN)
 
         incoming = request.data if isinstance(request.data, dict) else {}
@@ -379,7 +379,7 @@ class CaseShareOptionsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, case_id):
-        if not is_visitor(request.user):
+        if not has_visitor_features(request.user):
             return Response({"error": "Only visitors can manage case shares."}, status=status.HTTP_403_FORBIDDEN)
         payload = CaseService.get_case_share_options_for_patient(request.user, case_id)
         if not payload:
@@ -391,7 +391,7 @@ class CaseShareGrantView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, case_id):
-        if not is_visitor(request.user):
+        if not has_visitor_features(request.user):
             return Response({"error": "Only visitors can manage case shares."}, status=status.HTTP_403_FORBIDDEN)
         expert_id = request.data.get("expert_id") or request.data.get("doctor_id")
         if not expert_id:
@@ -409,7 +409,7 @@ class CaseShareGrantView(APIView):
         return Response(payload, status=status.HTTP_201_CREATED)
 
     def delete(self, request, case_id, expert_id=None):
-        if not is_visitor(request.user):
+        if not has_visitor_features(request.user):
             return Response({"error": "Only visitors can manage case shares."}, status=status.HTTP_403_FORBIDDEN)
         target_expert_id = expert_id or request.data.get("expert_id") or request.query_params.get("expert_id")
         if not target_expert_id:
@@ -1731,24 +1731,65 @@ class SessionManagementView(APIView):
 
 class CaseProfileNotesView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
 
-    def put(self, request):
-        patient_id = request.data.get("visitor_id") or request.data.get("patient_id")
-        case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
-        summary_text = request.data.get("clinical_summary")
-        analysis_text = request.data.get("forms_tests_analysis")
+    def _resolve_case_profile_context(self, request):
+        patient_id = (
+            request.data.get("visitor_id")
+            or request.data.get("patient_id")
+            or request.query_params.get("visitor_id")
+            or request.query_params.get("patient_id")
+        )
+        case_id = (
+            request.data.get("case_id")
+            or request.query_params.get("case_id")
+            or request.headers.get("X-Target-Case-ID")
+        )
 
         if not patient_id or not case_id:
-            return Response({"error": "patient_id and case_id are required."}, status=status.HTTP_400_BAD_REQUEST)
-        if summary_text is None and analysis_text is None:
-            return Response({"error": "No case profile fields provided."}, status=status.HTTP_400_BAD_REQUEST)
+            return None, None, None, None, Response(
+                {"error": "patient_id and case_id are required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         patient = get_object_or_404(CustomUser, pk=patient_id)
         if not VaniaAccessControl.verify_doctor_access(request.user, patient):
-            return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+            return None, None, None, None, Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
         _, doctor_scope, can_edit = _resolve_expert_case_scope(request, patient, case_id)
         if not doctor_scope:
-            return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+            # Allow draft cases from canvas-local flows while still enforcing active doctor-patient relationship.
+            if isinstance(case_id, str) and case_id.startswith("draft-"):
+                doctor_scope = int(request.user.id)
+                can_edit = True
+            else:
+                return None, None, None, None, Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+        return patient, case_id, doctor_scope, can_edit, None
+
+    def _build_case_profile_payload(self, patient, doctor_scope: int, case_id: str):
+        return {
+            "clinical_summary": ProfileService.get_summary(patient, doctor_id=doctor_scope, case_id=case_id),
+            "forms_tests_analysis": ProfileService.get_forms_tests_analysis(patient, doctor_id=doctor_scope, case_id=case_id),
+            "summary_voice_notes": ProfileService.get_summary_voice_notes(patient, doctor_id=doctor_scope, case_id=case_id),
+        }
+
+    def get(self, request):
+        patient, case_id, doctor_scope, _, error = self._resolve_case_profile_context(request)
+        if error:
+            return error
+        return Response(self._build_case_profile_payload(patient, doctor_scope, case_id))
+
+    def put(self, request):
+        patient, case_id, doctor_scope, can_edit, error = self._resolve_case_profile_context(request)
+        if error:
+            return error
+
+        summary_text = request.data.get("clinical_summary")
+        analysis_text = request.data.get("forms_tests_analysis")
+
+        if summary_text is None and analysis_text is None:
+            return Response({"error": "No case profile fields provided."}, status=status.HTTP_400_BAD_REQUEST)
+
         if not can_edit:
             return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -1757,12 +1798,105 @@ class CaseProfileNotesView(APIView):
         if analysis_text is not None:
             ProfileService.update_forms_tests_analysis(patient, str(analysis_text), doctor_id=doctor_scope, case_id=case_id)
 
-        payload = {
-            "clinical_summary": ProfileService.get_summary(patient, doctor_id=doctor_scope, case_id=case_id),
-            "forms_tests_analysis": ProfileService.get_forms_tests_analysis(patient, doctor_id=doctor_scope, case_id=case_id),
-        }
+        payload = self._build_case_profile_payload(patient, doctor_scope, case_id)
         SessionReportView._refresh_visitor_dashboard_canvas(patient, doctor_scope, case_id)
         return Response(payload)
+
+    def post(self, request):
+        patient, case_id, doctor_scope, can_edit, error = self._resolve_case_profile_context(request)
+        if error:
+            return error
+        if not can_edit:
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+
+        uploaded_file = request.FILES.get("file")
+        if not uploaded_file:
+            return Response({"error": "File is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if not (uploaded_file.content_type or "").startswith("audio/"):
+            return Response({"error": "Only audio files are allowed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            duration_seconds = float(request.data.get("duration_seconds") or 0.0)
+        except (TypeError, ValueError):
+            duration_seconds = 0.0
+
+        ProfileService.add_summary_voice_note(
+            patient=patient,
+            uploaded_file=uploaded_file,
+            doctor_id=doctor_scope,
+            case_id=case_id,
+            uploaded_by_user_id=request.user.id,
+            duration_seconds=duration_seconds,
+            creator=request.user,
+        )
+        payload = self._build_case_profile_payload(patient, doctor_scope, case_id)
+        SessionReportView._refresh_visitor_dashboard_canvas(patient, doctor_scope, case_id)
+        return Response(payload, status=status.HTTP_201_CREATED)
+
+    def delete(self, request):
+        patient, case_id, doctor_scope, can_edit, error = self._resolve_case_profile_context(request)
+        if error:
+            return error
+        if not can_edit:
+            return Response({"error": "This case is read-only for you."}, status=status.HTTP_403_FORBIDDEN)
+
+        voice_note_id = (
+            request.data.get("voice_note_id")
+            or request.query_params.get("voice_note_id")
+        )
+        if not voice_note_id:
+            return Response({"error": "voice_note_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        deleted = ProfileService.delete_summary_voice_note(
+            patient=patient,
+            voice_note_id=str(voice_note_id),
+            doctor_id=doctor_scope,
+            case_id=case_id,
+            creator=request.user,
+        )
+        if not deleted:
+            return Response({"error": "Voice note not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        payload = self._build_case_profile_payload(patient, doctor_scope, case_id)
+        SessionReportView._refresh_visitor_dashboard_canvas(patient, doctor_scope, case_id)
+        return Response(payload)
+
+
+class CaseProfileVoiceNoteDownloadView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+
+    def get(self, request, voice_note_id):
+        patient_id = request.query_params.get("visitor_id") or request.query_params.get("patient_id")
+        case_id = request.query_params.get("case_id") or request.headers.get("X-Target-Case-ID")
+        if not patient_id or not case_id:
+            return Response({"error": "patient_id and case_id are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        patient = get_object_or_404(CustomUser, pk=patient_id)
+        if not VaniaAccessControl.verify_doctor_access(request.user, patient):
+            return Response({"error": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        _, doctor_scope, _ = _resolve_expert_case_scope(request, patient, case_id)
+        if not doctor_scope:
+            if isinstance(case_id, str) and case_id.startswith("draft-"):
+                doctor_scope = int(request.user.id)
+            else:
+                return Response({"error": "Access denied for this case."}, status=status.HTTP_403_FORBIDDEN)
+
+        notes = ProfileService.get_summary_voice_notes(patient, doctor_id=doctor_scope, case_id=case_id)
+        target = next((item for item in notes if item.get("id") == voice_note_id), None)
+        if not target:
+            return Response({"error": "Voice note not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        storage_path = target.get("storage_path")
+        if not storage_path or not default_storage.exists(storage_path):
+            return Response({"error": "Stored file missing."}, status=status.HTTP_404_NOT_FOUND)
+
+        file_name = target.get("file_name") or "voice-note.webm"
+        content_type = target.get("content_type") or mimetypes.guess_type(file_name)[0] or "audio/webm"
+        file_obj = default_storage.open(storage_path, "rb")
+        response = FileResponse(file_obj, content_type=content_type)
+        response["Content-Disposition"] = f'inline; filename="{file_name}"'
+        return response
 
 class CompleteTaskView(APIView):
     permission_classes = [permissions.IsAuthenticated]

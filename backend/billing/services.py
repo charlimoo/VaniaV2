@@ -20,6 +20,7 @@ def process_usage_charge(user, input_tokens: int, output_tokens: int, run_id: st
     Logic:
     - IF Plan Active: Priority = Plan Balance -> Paid Balance (No Free Tier).
     - IF No Plan: Priority = Daily Free Tier ONLY (Cannot use Paid Balance).
+    - If final usage exceeds usable credit, deduct the remaining usable amount and leave the wallet at zero.
     """
     cost = calculate_credit_cost(input_tokens, output_tokens)
     
@@ -38,6 +39,7 @@ def process_usage_charge(user, input_tokens: int, output_tokens: int, run_id: st
         wallet, _ = UserWallet.objects.select_for_update().get_or_create(user=user)
         
         remaining_cost = cost
+        deducted_total = Decimal("0")
         
         # Check Plan Status
         is_plan_active = (
@@ -53,12 +55,14 @@ def process_usage_charge(user, input_tokens: int, output_tokens: int, run_id: st
                 deduct = min(wallet.balance_plan, remaining_cost)
                 wallet.balance_plan -= deduct
                 remaining_cost -= deduct
+                deducted_total += deduct
             
             # 2. Use Paid Balance (Overage)
             if remaining_cost > 0 and wallet.balance_paid > 0:
                 deduct = min(wallet.balance_paid, remaining_cost)
                 wallet.balance_paid -= deduct
                 remaining_cost -= deduct
+                deducted_total += deduct
                 
         else:
             # --- SCENARIO B: FREE USER ---
@@ -68,37 +72,43 @@ def process_usage_charge(user, input_tokens: int, output_tokens: int, run_id: st
                 deduct = min(free_available, remaining_cost)
                 wallet.daily_free_used += deduct
                 remaining_cost -= deduct
+                deducted_total += deduct
             
             # Note: Paid balance is intentionally ignored here per requirements.
-            
-        # Check Shortfall
+
+        wallet.save()
+
+        if deducted_total > 0:
+            # Log only the amount that was actually deducted.
+            Transaction.objects.create(
+                wallet=wallet,
+                amount=-deducted_total,
+                transaction_type=Transaction.TransactionType.SPEND,
+                description=f"Run {run_id or 'N/A'}",
+                reference_id=run_id
+            )
+
+        result = {
+            "success": True,
+            "deducted": deducted_total,
+            "wallet_id": wallet.id,
+            "new_daily_used": wallet.daily_free_used,
+        }
+
         if remaining_cost > 0:
             msg = "Insufficient credits."
             if not is_plan_active and wallet.balance_paid > 0:
                 msg = "Active plan required to use top-up balance."
-                
-            return {
-                "success": False, 
-                "message": msg, 
-                "shortfall": remaining_cost
-            }
-            
-        wallet.save()
-        
-        # Log Transaction
-        Transaction.objects.create(
-            wallet=wallet,
-            amount=-cost,
-            transaction_type=Transaction.TransactionType.SPEND,
-            description=f"Run {run_id or 'N/A'}",
-            reference_id=run_id
-        )
-        
+            result.update(
+                {
+                    "partial": True,
+                    "message": msg,
+                    "shortfall": remaining_cost,
+                }
+            )
+
         return {
-            "success": True, 
-            "deducted": cost,
-            "wallet_id": wallet.id,
-            "new_daily_used": wallet.daily_free_used
+            **result
         }
 
 def process_service_charge(user, amount: Decimal, description: str) -> dict:
@@ -275,7 +285,7 @@ class FulfillmentService:
             
             # Async Notification
             try:
-                send_generic_sms.delay(user.phone_number, f"مبلغ {int(product.credit_amount)} سرمایه گفت‌وگو به حساب شما اضافه شد.")
+                send_generic_sms.delay(user.phone_number, f"مبلغ {int(product.credit_amount)} اعتبار گفتگو به حساب شما اضافه شد.")
             except Exception as e:
                 logger.error(f"SMS Error: {e}")
             

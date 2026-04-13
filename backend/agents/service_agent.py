@@ -5,6 +5,7 @@ import json
 import re
 import traceback
 import time
+import asyncio
 from decimal import Decimal
 from typing import Optional, List, Any, AsyncGenerator
 
@@ -105,6 +106,50 @@ def _detect_expert_field_write_instruction(agent_id: str, message: Optional[str]
         "- After successful tool calls, do not dump the saved text into chat.",
     ])
 
+
+def _extract_token_counts(payload: Any) -> tuple[int, int]:
+    if payload is None:
+        return 0, 0
+
+    if isinstance(payload, dict):
+        data = payload
+    elif hasattr(payload, "to_dict"):
+        data = payload.to_dict()
+    elif hasattr(payload, "model_dump"):
+        data = payload.model_dump()
+    elif hasattr(payload, "__dict__"):
+        data = payload.__dict__
+    else:
+        return 0, 0
+
+    input_tokens = data.get("input_tokens", data.get("prompt_tokens", 0)) or 0
+    output_tokens = data.get("output_tokens", data.get("completion_tokens", 0)) or 0
+
+    try:
+        return int(input_tokens), int(output_tokens)
+    except (TypeError, ValueError):
+        return 0, 0
+
+
+def _extract_model_usage_metrics(model: Any) -> dict[str, int]:
+    usage = getattr(model, "last_usage_metrics", None)
+    if not usage:
+        return {}
+
+    input_tokens, output_tokens = _extract_token_counts(usage)
+    total_tokens = usage.get("total_tokens", 0) if isinstance(usage, dict) else 0
+
+    try:
+        total_tokens = int(total_tokens or 0)
+    except (TypeError, ValueError):
+        total_tokens = 0
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens or (input_tokens + output_tokens),
+    }
+
 class ServiceAgent(Agent):
     
     def __init__(self, user, service_config, session_id: str = None, db=None, storage=None, extra_instructions: str = "", *args, **kwargs):
@@ -174,6 +219,7 @@ class ServiceAgent(Agent):
         # Snapshot metrics at startup to enable Delta Billing
         self._initial_session_metrics = self._snapshot_session_metrics()
         self._captured_run_metrics = None
+        self._captured_usage_totals = {"input_tokens": 0, "output_tokens": 0}
         
         # Persist Metadata
         if db_to_use and session_id:
@@ -223,6 +269,9 @@ class ServiceAgent(Agent):
         
         full_response_accumulator = ""
         self._captured_run_metrics = None  # Reset for this run
+        self._captured_usage_totals = {"input_tokens": 0, "output_tokens": 0}
+        if hasattr(self.model, "reset_usage_metrics"):
+            self.model.reset_usage_metrics()
         
         if message:
             logger.info(f"{run_log} 🟢 User Input: {message[:50]}...")
@@ -288,6 +337,14 @@ class ServiceAgent(Agent):
                             logger.debug(f"{run_log} 📦 Received Metrics Chunk: {m}")
 
                     if hasattr(chunk, 'usage') and chunk.usage:
+                         usage_input_t, usage_output_t = _extract_token_counts(chunk.usage)
+                         if usage_input_t or usage_output_t:
+                             self._captured_usage_totals["input_tokens"] = max(
+                                 self._captured_usage_totals["input_tokens"], usage_input_t
+                             )
+                             self._captured_usage_totals["output_tokens"] = max(
+                                 self._captured_usage_totals["output_tokens"], usage_output_t
+                             )
                          logger.debug(f"{run_log} 🔌 Raw OpenAI Usage Event: {chunk.usage}")
 
                     # --- Content Accumulation ---
@@ -300,6 +357,7 @@ class ServiceAgent(Agent):
                     if hasattr(chunk, 'event') and chunk.event == RunEvent.tool_call_started:
                          tool_name = getattr(chunk, 'tool_call', {}).get('function', {}).get('name', 'unknown')
                          logger.info(f"{run_log} 🛠️  Model is calling Tool: {tool_name}")
+
             finally:
                 self.additional_input = previous_additional_input
                 self.suppress_plaintext_response = previous_suppress_plaintext
@@ -315,7 +373,9 @@ class ServiceAgent(Agent):
         
         finally:
             # 4. Precise Billing
-            await self._finalize_billing(run_log)
+            # Billing should not keep the stream open after content generation is done.
+            # Run it in the background so the UI can unlock as soon as the model finishes.
+            asyncio.create_task(self._finalize_billing(run_log))
 
     @sync_to_async
     def _check_access(self) -> tuple[bool, str]:
@@ -381,6 +441,23 @@ class ServiceAgent(Agent):
                     final_metrics = {'input_tokens': input_t, 'output_tokens': output_t}
                     logger.warning(f"{log_prefix} ⚠️ Used Delta Billing (End {i_end} - Start {i_start})")
 
+            if not final_metrics and (
+                self._captured_usage_totals["input_tokens"] > 0
+                or self._captured_usage_totals["output_tokens"] > 0
+            ):
+                input_t = self._captured_usage_totals["input_tokens"]
+                output_t = self._captured_usage_totals["output_tokens"]
+                final_metrics = {"input_tokens": input_t, "output_tokens": output_t}
+                source = "UsageEvent"
+
+            if not final_metrics:
+                model_metrics = _extract_model_usage_metrics(self.model)
+                if model_metrics.get("input_tokens", 0) > 0 or model_metrics.get("output_tokens", 0) > 0:
+                    input_t = model_metrics["input_tokens"]
+                    output_t = model_metrics["output_tokens"]
+                    final_metrics = model_metrics
+                    source = "ModelUsageCache"
+
             if final_metrics:
                 if input_t == 0 and output_t == 0:
                     input_t = final_metrics.get('input_tokens', final_metrics.get('prompt_tokens', 0))
@@ -396,8 +473,18 @@ class ServiceAgent(Agent):
                     result = await sync_to_async(process_usage_charge)(
                         self.user, input_tokens=input_t, output_tokens=output_t, run_id=self.session_id
                     )
-                    cost = result.get('deducted', 0)
-                    logger.info(f"{log_prefix} 💸 DEBIT: {cost} Credits | New Balance: {result.get('new_daily_used', 0)}")
+                    if result.get("success"):
+                        cost = result.get('deducted', 0)
+                        logger.info(
+                            f"{log_prefix} 💸 DEBIT: {cost} Credits | New Balance: {result.get('new_daily_used', 0)}"
+                        )
+                    else:
+                        logger.warning(
+                            "%s ⚠️ Billing charge was not applied: message=%s shortfall=%s",
+                            log_prefix,
+                            result.get("message", "Unknown billing failure"),
+                            result.get("shortfall", 0),
+                        )
                 except Exception as e:
                     logger.error(f"{log_prefix} ❌ DB Transaction Failed: {e}")
             else:

@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api"
 import { useUser } from "@/hooks/use-user"
+import { extractErrorMessage } from "@/lib/error-utils"
+import { PASSWORD_POLICY_HINT, getPasswordPolicyErrors } from "@/lib/password-policy"
 
 interface OnboardingFormProps {
   onComplete: () => void;
@@ -38,8 +40,9 @@ export function OnboardingForm({ onComplete, phoneNumber }: OnboardingFormProps)
       return
     }
 
-    if (formData.password.length < 8) {
-      setError("رمز عبور باید حداقل ۸ کاراکتر باشد.")
+    const passwordErrors = getPasswordPolicyErrors(formData.password)
+    if (passwordErrors.length > 0) {
+      setError(passwordErrors[0])
       setIsLoading(false)
       return
     }
@@ -61,11 +64,8 @@ export function OnboardingForm({ onComplete, phoneNumber }: OnboardingFormProps)
       })
 
       if (!res.ok) {
-        const data = await res.json()
-        const msg = typeof data === 'object' 
-          ? Object.values(data).flat().join(" ") 
-          : "خطا در بروزرسانی پروفایل."
-        throw new Error(msg)
+        const data = await res.json().catch(() => null)
+        throw new Error(extractErrorMessage(data, "خطا در بروزرسانی پروفایل."))
       }
 
       await refreshUser()
@@ -166,6 +166,9 @@ export function OnboardingForm({ onComplete, phoneNumber }: OnboardingFormProps)
               required
             />
           </div>
+          <p className="text-xs text-muted-foreground">
+            {PASSWORD_POLICY_HINT}
+          </p>
         </div>
 
         <div className="grid gap-2">

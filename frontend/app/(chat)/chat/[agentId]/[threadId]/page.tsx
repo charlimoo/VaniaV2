@@ -90,6 +90,8 @@ export default function ChatPage() {
   const chatPanelRef = useRef<ImperativePanelHandle>(null);
   const canvasPanelRef = useRef<ImperativePanelHandle>(null);
   const isPollingTitle = useRef(false);
+  const pendingAutoTitle = useRef(false);
+  const optimisticAutoTitle = useRef<string | null>(null);
   const isLayoutTransitioning = useRef(false);
   const restoredContextRef = useRef<string | null>(null);
 
@@ -261,6 +263,9 @@ export default function ChatPage() {
     resetTradeFilters();
     setAccessDenied(null);
     setSessionUsageDelta(0);
+    isPollingTitle.current = false;
+    pendingAutoTitle.current = false;
+    optimisticAutoTitle.current = null;
     return () => { clearCanvas(); };
   }, [threadId, clearCanvas, resetTradeFilters]);
 
@@ -382,13 +387,14 @@ export default function ChatPage() {
         }
 
         const defaultTitle = APP_CONFIG.TEXT.NEW_THREAD_TITLE;
-        if (threadTitle === defaultTitle && !isPollingTitle.current) {
+        if (pendingAutoTitle.current && !isPollingTitle.current) {
             isPollingTitle.current = true;
-            const pollAttempts = 5;
+            const pollAttempts = 20;
             let attempt = 0;
 
             const checkTitle = async () => {
                 if (attempt >= pollAttempts) {
+                    pendingAutoTitle.current = false;
                     isPollingTitle.current = false;
                     return;
                 }
@@ -396,10 +402,17 @@ export default function ChatPage() {
                     const token = localStorage.getItem("accessToken");
                     if (!token) return;
                     const { title } = await threadManager.getThreadMetadata(threadId, token);
-                    
-                    if (title && title !== defaultTitle && title !== "New Conversation" && title !== "Untitled") {
+
+                    const hasResolvedTitle = !!title
+                      && title !== defaultTitle
+                      && title !== "New Conversation"
+                      && title !== "Untitled";
+
+                    if (hasResolvedTitle) {
                         setThreadTitle(title);
                         refreshThreads();
+                        pendingAutoTitle.current = false;
+                        optimisticAutoTitle.current = null;
                         isPollingTitle.current = false;
                     } else {
                         attempt++;
@@ -431,24 +444,9 @@ export default function ChatPage() {
 
   const handleNewMessage = useCallback(async (message: AppendMessage) => {
     const token = localStorage.getItem("accessToken");
-    
-    let tempTitle = APP_CONFIG.TEXT.NEW_THREAD_TITLE;
-    try {
-        let userText = "";
-        if (typeof message.content === 'string') userText = message.content;
-        else if (Array.isArray(message.content)) {
-            const textPart = message.content.find((p: any) => p.type === 'text');
-            if (textPart && 'text' in textPart) userText = textPart.text;
-        }
-
-        if (userText?.trim()) {
-            const clean = userText.trim();
-            tempTitle = clean.length > 30 ? clean.substring(0, 30) + "..." : clean;
-        }
-    } catch (e) { /* ignore */ }
+    const tempTitle = APP_CONFIG.TEXT.NEW_THREAD_TITLE;
 
     if (threadId.startsWith("local-") && token) {
-        // [FIX] Pass patientId when creating the thread on backend
         await threadManager.createThreadOnBackend(
           threadId,
           tempTitle,
@@ -461,6 +459,8 @@ export default function ChatPage() {
         );
         setIsCreatedOnBackend(true);
         setThreadTitle(tempTitle);
+        pendingAutoTitle.current = true;
+        optimisticAutoTitle.current = null;
         refreshThreads();
     }
   }, [threadId, agentId, refreshThreads, effectivePatientId, effectiveDoctorId, effectiveCaseId, sessionContextLabels]);
@@ -617,7 +617,7 @@ export default function ChatPage() {
           <p className="text-muted-foreground">{accessDenied}</p>
           <div className="pt-4 flex flex-col sm:flex-row gap-3 w-full">
             <Button size="lg" className="flex-1" asChild>
-              <Link href="/dashboard/billing">خرید اشتراک</Link>
+              <Link href="/dashboard/billing">طرح‌ها و اعتبار</Link>
             </Button>
             <Button variant="outline" size="lg" className="flex-1" onClick={() => router.push('/dashboard')}>
               بازگشت به پیشخوان

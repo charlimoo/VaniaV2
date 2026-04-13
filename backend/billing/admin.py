@@ -14,7 +14,7 @@ class BillingConfigAdmin(admin.ModelAdmin):
             'fields': ('currency_name', 'currency_symbol')
         }),
         ('Support Contact Info', {
-            'fields': ('support_phone', 'support_email', 'support_address'),
+            'fields': ('support_phone', 'support_email', 'support_address', 'support_postal_code', 'support_contacts'),
             'description': 'Visible in the Support Page and Footer.'
         }),
         ('Economy Logic', {

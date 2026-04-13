@@ -53,6 +53,7 @@ import { API_BASE_URL, getAuthHeaders, lookupVisitorForExpert } from "@/lib/api"
 import { resolveExpertCaseAgentSlug } from "@/lib/expert-agent";
 import { useVaniaStore } from "@/lib/vania/store";
 import { cn } from "@/lib/utils";
+import { getNormalizedValidPhoneOrNull, sanitizePhoneInputForDisplay } from "@/lib/phone";
 
 // --- Types ---
 interface PatientRow {
@@ -172,14 +173,16 @@ function PatientsContent() {
 
   // Step 1: Check Phone Number
   const handleCheckAndInvite = async () => {
-    if (!invitePhone || invitePhone.length < 10) {
+    const normalizedPhone = getNormalizedValidPhoneOrNull(invitePhone);
+    if (!normalizedPhone) {
       toast.error("شماره موبایل وارد شده معتبر نیست.");
       return;
     }
 
+    setInvitePhone(normalizedPhone);
     setIsChecking(true);
     try {
-      const lookup = await lookupVisitorForExpert(invitePhone);
+      const lookup = await lookupVisitorForExpert(normalizedPhone);
       if (lookup.exists && lookup.patient) {
         setExistingPatient({
           id: lookup.patient.id,
@@ -203,9 +206,15 @@ function PatientsContent() {
   // Step 2: Execute Invitation (With or Without Profile Data)
   const executeInvite = async (skipProfile = false) => {
     setIsInviting(true);
+    const normalizedPhone = getNormalizedValidPhoneOrNull(invitePhone);
+    if (!normalizedPhone) {
+      toast.error("شماره موبایل وارد شده معتبر نیست.");
+      setIsInviting(false);
+      return;
+    }
 
     const payload = {
-      phone_number: invitePhone,
+      phone_number: normalizedPhone,
       ...(skipProfile ? {} : {
         full_name: profileData.fullName,
         password: profileData.password,
@@ -368,13 +377,16 @@ function PatientsContent() {
                   placeholder="09123456789" 
                   className="pr-10 text-left ltr font-mono text-lg"
                   value={invitePhone}
-                  onChange={(e) => setInvitePhone(e.target.value)}
+                  onChange={(e) => setInvitePhone(sanitizePhoneInputForDisplay(e.target.value))}
                   autoFocus
+                  type="tel"
+                  inputMode="numeric"
+                  maxLength={11}
                 />
               </div>
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
-              <Button onClick={handleCheckAndInvite} disabled={isChecking || invitePhone.length < 10} className="w-full">
+              <Button onClick={handleCheckAndInvite} disabled={isChecking || !getNormalizedValidPhoneOrNull(invitePhone)} className="w-full">
                 {isChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : "بررسی و ادامه"}
               </Button>
             </DialogFooter>

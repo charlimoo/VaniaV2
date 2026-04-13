@@ -6,8 +6,11 @@ import { motion, AnimatePresence } from "framer-motion"
 import { toast } from "sonner"
 import { useUser } from "@/hooks/use-user"
 import { API_BASE_URL, checkUserExistence } from "@/lib/api"
+import { extractErrorMessage } from "@/lib/error-utils"
 import { StepPhone, StepOtp, StepPassword, StepRegistration } from "./auth-steps"
 import Link from "next/link"
+import { getNormalizedValidPhoneOrNull, normalizePhoneNumberInput } from "@/lib/phone"
+import { GuideModal } from "@/components/guide/GuideModal"
 
 type AuthStage = "PHONE" | "REGISTRATION" | "OTP" | "PASSWORD"
 
@@ -19,6 +22,7 @@ export function AuthContainer() {
   const [phoneNumber, setPhoneNumber] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [signupData, setSignupData] = useState<any>(null) // Stores reg data between steps
+  const [signupError, setSignupError] = useState<string | null>(null)
 
   // If user is already logged in, redirect
   useEffect(() => {
@@ -31,21 +35,27 @@ export function AuthContainer() {
 
   // 1. Phone Submit -> Check Existence
   const handlePhoneSubmit = async (phone: string) => {
+    const normalizedPhone = getNormalizedValidPhoneOrNull(phone)
+    if (!normalizedPhone) {
+      toast.error("شماره موبایل باید با فرمت 09123456789 باشد")
+      return
+    }
     setIsLoading(true)
     try {
-      const { exists } = await checkUserExistence(phone)
-      setPhoneNumber(phone)
+      const { exists } = await checkUserExistence(normalizedPhone)
+      setPhoneNumber(normalizedPhone)
+      setSignupError(null)
       
       if (exists) {
         // User exists -> Trigger OTP for Login
-        await requestOtp(phone)
+        await requestOtp(normalizedPhone)
         // Stage set inside requestOtp
       } else {
         // New User -> Go to Registration Form
         setStage("REGISTRATION")
       }
     } catch (e) {
-      toast.error("خطا در بررسی وضعیت حساب کاربری")
+      toast.error(e instanceof Error ? e.message : "خطا در بررسی وضعیت حساب کاربری")
     } finally {
       setIsLoading(false)
     }
@@ -53,25 +63,28 @@ export function AuthContainer() {
 
   // 2. Registration Submit -> Request OTP
   const handleRegistrationSubmit = async (data: any) => {
+    setSignupError(null)
     setSignupData(data) // Save for later
     await requestOtp(phoneNumber)
   }
 
   // 3. Request OTP API
   const requestOtp = async (phone: string) => {
+    const normalizedPhone = normalizePhoneNumberInput(phone)
     setIsLoading(true)
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/request-otp/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone_number: phone }),
+        body: JSON.stringify({ phone_number: normalizedPhone }),
       })
-      if (!res.ok) throw new Error("خطا در ارسال کد")
+      const data = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(extractErrorMessage(data, "خطا در ارسال کد"))
       
       setStage("OTP")
       toast.success("کد تایید ارسال شد")
     } catch (e) {
-      toast.error("ارسال کد با خطا مواجه شد.")
+      toast.error(e instanceof Error ? e.message : "ارسال کد با خطا مواجه شد.")
     } finally {
       setIsLoading(false)
     }
@@ -97,9 +110,15 @@ export function AuthContainer() {
         body: JSON.stringify(payload),
       })
       
-      const data = await res.json()
+      const data = await res.json().catch(() => null)
       
-      if (!res.ok) throw new Error(data.detail || "کد تایید نامعتبر است")
+      if (!res.ok) {
+        if (signupData && data?.signup_data) {
+          setSignupError(extractErrorMessage(data.signup_data, "اطلاعات ثبت‌نام معتبر نیست."))
+          setStage("REGISTRATION")
+        }
+        throw new Error(extractErrorMessage(data, "کد تایید نامعتبر است"))
+      }
 
       // Success
       localStorage.setItem("accessToken", data.access)
@@ -112,7 +131,7 @@ export function AuthContainer() {
       router.push("/dashboard")
 
     } catch (e: any) {
-      toast.error(e.message || "خطا در اعتبار سنجی")
+      toast.error(e?.message || "خطا در اعتبار سنجی")
     } finally {
       setIsLoading(false)
     }
@@ -127,8 +146,8 @@ export function AuthContainer() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phone_number: phoneNumber, password }),
       })
-      const data = await res.json()
-      if (!res.ok) throw new Error("رمز عبور اشتباه است")
+      const data = await res.json().catch(() => null)
+      if (!res.ok) throw new Error(extractErrorMessage(data, "رمز عبور اشتباه است"))
 
       localStorage.setItem("accessToken", data.access)
       if (data.refresh) localStorage.setItem("refreshToken", data.refresh)
@@ -171,14 +190,20 @@ export function AuthContainer() {
               <StepRegistration 
                 phoneNumber={phoneNumber} 
                 onSubmit={handleRegistrationSubmit} 
-                isLoading={isLoading} 
+                isLoading={isLoading}
+                initialValues={signupData ?? undefined}
+                serverError={signupError}
               />
             )}
 
             {stage === "OTP" && (
               <StepOtp 
                 phoneNumber={phoneNumber} 
-                onBack={() => setStage("PHONE")} 
+                onBack={() => {
+                  setSignupData(null)
+                  setSignupError(null)
+                  setStage("PHONE")
+                }} 
                 // Only show Password login option if NOT signing up
                 onPasswordLogin={!signupData ? () => setStage("PASSWORD") : undefined}
                 onSubmit={verifyOtp} 
@@ -198,11 +223,17 @@ export function AuthContainer() {
 
         <motion.div 
           layout 
-          className="mt-8 pt-6 border-t border-white/5 flex justify-center gap-8 text-[11px] font-medium text-zinc-500"
+          className="mt-8 pt-6 border-t border-white/5 flex justify-center items-center gap-4 text-[11px] font-medium text-zinc-500"
         >
           <Link href="/terms" className="hover:text-zinc-300 transition-colors">قوانین و مقررات</Link>
-          <div className="w-px h-3 bg-zinc-800 my-auto" />
+          <div className="w-px h-3 bg-zinc-800" />
           <Link href="/support" className="hover:text-zinc-300 transition-colors">پشتیبانی</Link>
+          <div className="w-px h-3 bg-zinc-800" />
+          <GuideModal
+            triggerMode="text"
+            triggerLabel="راهنما"
+            triggerClassName="text-[11px] font-medium text-zinc-500 hover:text-zinc-300"
+          />
         </motion.div>
       </motion.div>
     </div>

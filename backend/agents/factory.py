@@ -20,18 +20,14 @@ from services.rag_service import get_sanitized_table_name, get_session_knowledge
 from services.models_canvas import CanvasType, CanvasInstance
 from services.access_service import access_service
 from core.ai_provider import get_agno_openai_kwargs
-from users.roles import is_expert
-from vania_core.profile_snapshots import (
-    format_expert_profile_context,
-    format_visitor_profile_context,
-)
-
 # --- Capability System ---
 from capabilities.registry import CapabilityRegistry
 
 # --- Context ---
 from .context import resource_context
+from .global_profile_tools import get_global_profile_tools
 from .models import SanitizedOpenAIChat
+from .profile_context import build_default_profile_context, get_session_data_for_profile_context
 from .storage import get_session_safe
 
 # --- Agent Import ---
@@ -170,9 +166,24 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
         logger.warning(f"⚠️ [Factory] Canvas hydration failed: {e}")
 
     # =========================================================================
-    # 3. Tool Injection
+    # 3. Storage Engine
+    # =========================================================================
+    if "sqlite" in settings.DATABASE_CONNECTION_STRING:
+        storage_instance = SqliteDb(
+            db_file=settings.DATABASE_CONNECTION_STRING.replace("sqlite:///", ""),
+            session_table="agent_sessions"
+        )
+    else:
+        storage_instance = PostgresDb(
+            db_url=settings.DATABASE_CONNECTION_STRING,
+            session_table="agent_sessions"
+        )
+
+    # =========================================================================
+    # 4. Tool Injection
     # =========================================================================
     agent_tools = ToolFactory.get_all_tools(service, user)
+    agent_tools.extend(get_global_profile_tools())
     
     if active_caps:
         dynamic_tools = CapabilityRegistry.get_tools_for_domains(
@@ -184,38 +195,34 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
         logger.info(f"   [Factory] 🔌 Injected tools for: {active_caps}")
 
     # =========================================================================
-    # 4. Prompt Engineering & Instructions
+    # 5. Prompt Engineering & Instructions
     # =========================================================================
     dynamic_instructions = []
     
     # A. User Context
     try:
-        u_real_name = getattr(user, 'full_name', None)
-        u_phone = getattr(user, 'phone_number', 'User')
-        user_display_name = u_real_name if u_real_name else u_phone
-        
-        user_context_prompt = [f"User Name: {user_display_name}", f"User Phone: {u_phone}"]
-        user_context_prompt.extend(format_expert_profile_context(user))
-        if not is_expert(user):
-            user_context_prompt.extend(format_visitor_profile_context(user))
-        if user_context_prompt:
-            context_block = "\n### USER CONTEXT (System Injected)\n" + "\n".join([f"- {line}" for line in user_context_prompt])
-            dynamic_instructions.append(context_block)
-            
-    except Exception as e:
-        logger.warning(f"⚠️ [Factory] Failed to inject user context: {e}")
-
-    try:
         storage_for_context = get_session_safe(storage_instance, session_id, str(user.id))
-        if storage_for_context and getattr(storage_for_context, "session_data", None):
-            session_selection_context = _build_session_selection_context(storage_for_context.session_data)
+        session_data_for_context = get_session_data_for_profile_context(
+            user,
+            session_id,
+            getattr(storage_for_context, "session_data", None) if storage_for_context else None,
+        )
+        profile_context_block = build_default_profile_context(
+            user,
+            session_id=session_id,
+            session_data=session_data_for_context,
+        )
+        if profile_context_block:
+            dynamic_instructions.append(profile_context_block)
+        if session_data_for_context:
+            session_selection_context = _build_session_selection_context(session_data_for_context)
             if session_selection_context:
                 dynamic_instructions.append(
                     "\n### ACTIVE FRONTEND SELECTIONS (System Injected)\n"
                     + "\n".join([f"- {line}" for line in session_selection_context])
                 )
     except Exception as e:
-        logger.warning(f"⚠️ [Factory] Failed to inject frontend selection context: {e}")
+        logger.warning(f"⚠️ [Factory] Failed to inject profile/session context: {e}")
         
     # B. Capability General Instructions
     cap_instructions = CapabilityRegistry.get_prompt_additions_for_domains(active_caps, user)
@@ -234,7 +241,7 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
             logger.debug(f"   [Factory] Injected Resource Context ({len(resource_prompt)} chars)")
 
     # =========================================================================
-    # 5. Hybrid Reasoning & Model Sanitization
+    # 6. Hybrid Reasoning & Model Sanitization
     # =========================================================================
     model_id_lower = (target_model_id or "gpt-4o").lower()
     is_native_reasoning = any(m in model_id_lower for m in NATIVE_REASONING_MODELS)
@@ -261,20 +268,6 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
             use_agno_reasoning_wrapper = True
 
     llm_model = SanitizedOpenAIChat(**llm_kwargs)
-
-    # =========================================================================
-    # 6. Storage Engine
-    # =========================================================================
-    if "sqlite" in settings.DATABASE_CONNECTION_STRING:
-        storage_instance = SqliteDb(
-            db_file=settings.DATABASE_CONNECTION_STRING.replace("sqlite:///", ""),
-            session_table="agent_sessions"
-        )
-    else:
-        storage_instance = PostgresDb(
-            db_url=settings.DATABASE_CONNECTION_STRING,
-            session_table="agent_sessions"
-        )
 
     # =========================================================================
     # 7. Knowledge Base (RAG)

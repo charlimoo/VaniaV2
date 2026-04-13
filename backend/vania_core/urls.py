@@ -26,6 +26,7 @@ from .views import (
     TaskManagementView, 
     SessionManagementView,
     CaseProfileNotesView,
+    CaseProfileVoiceNoteDownloadView,
     MedicationManagementView,
     LocationListView,
     RoadmapView,
@@ -88,6 +89,7 @@ urlpatterns = [
     path('sessions/manage/', SessionManagementView.as_view(), name='session-create'),
     path('sessions/manage/<int:entry_id>/', SessionManagementView.as_view(), name='session-update-delete'),
     path('case-profile/', CaseProfileNotesView.as_view(), name='case-profile-notes'),
+    path('case-profile/voice-notes/<str:voice_note_id>/download/', CaseProfileVoiceNoteDownloadView.as_view(), name='case-profile-voice-note-download'),
     path('locations/', LocationListView.as_view(), name='location-list'),
 
     # --- [NEW] Endpoints for Vania Clinical Operating System (VCOS) ---

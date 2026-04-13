@@ -13,6 +13,10 @@ def _user_profession_slug(user) -> str | None:
     return getattr(profession, "slug", None)
 
 
+def _has_visitor_audience_access(role_slug: str | None) -> bool:
+    return role_slug in {CANONICAL_VISITOR_SLUG, CANONICAL_EXPERT_SLUG}
+
+
 def is_user_eligible_for_agent(user, agent) -> bool:
     audience = getattr(agent, "audience", "ALL")
     role_slug = _user_role_slug(user)
@@ -20,7 +24,7 @@ def is_user_eligible_for_agent(user, agent) -> bool:
     if audience == "ALL":
         return True
     if audience == "VISITOR":
-        return role_slug == CANONICAL_VISITOR_SLUG
+        return _has_visitor_audience_access(role_slug)
     if audience == "EXPERT":
         if role_slug != CANONICAL_EXPERT_SLUG:
             return False

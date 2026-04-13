@@ -6,6 +6,8 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+from .password_policy import validate_password_policy
+from .phone_utils import normalize_and_validate_phone_number
 
 # --- 1. Minimal Role Model (Identity) ---
 class UserRole(models.Model):
@@ -43,9 +45,11 @@ class CustomUserManager(BaseUserManager):
     def create_user(self, phone_number, password=None, **extra_fields):
         if not phone_number:
             raise ValueError('The Phone Number must be set')
-        
-        user = self.model(phone_number=phone_number, **extra_fields)
-        if password:
+
+        normalized_phone_number = normalize_and_validate_phone_number(phone_number)
+        user = self.model(phone_number=normalized_phone_number, **extra_fields)
+        if password is not None:
+            validate_password_policy(password, user=user)
             user.set_password(password)
         user.save(using=self._db)
         return user
@@ -70,6 +74,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     )
     email = models.EmailField(max_length=255, blank=True, null=True, unique=True)
     full_name = models.CharField(max_length=255, blank=True, null=True)
+    national_code = models.CharField(max_length=10, blank=True, null=True, db_index=True)
 
     # The Active Context Role
     role = models.ForeignKey(

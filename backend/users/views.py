@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework import status, generics
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from .models import CustomUser, UserProfile, OTPRequest, UserRole, ExpertProfession
 from billing.models import UserWallet
@@ -13,6 +14,8 @@ from .serializers import (
     PhoneSerializer, VerifyOTPSerializer, UserSerializer, PasswordLoginSerializer,
     UserProfileSerializer, ChangePasswordSerializer, UserWalletSerializer
 )
+from .serializers import SignupDataSerializer
+from .phone_utils import normalize_and_validate_phone_number
 from .otp_service import otp_service
 from .roles import (
     normalize_role_slug,
@@ -21,8 +24,28 @@ from .roles import (
 )
 from .expert_validation import validate_profession_credential
 from vania_core.profile_sync import sync_visitor_base_profile_identity
+from vania_core.models import RoleVerificationRequest
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_national_code(value: str) -> str:
+    translation = str.maketrans("۰۱۲۳۴۵۶۷۸۹٠١٢٣٤٥٦٧٨٩", "01234567890123456789")
+    return (value or "").translate(translation).strip()
+
+
+def _is_valid_iranian_national_code(value: str) -> bool:
+    code = _normalize_national_code(value)
+    if len(code) != 10 or not code.isdigit():
+        return False
+    if code == code[0] * 10:
+        return False
+    check = int(code[9])
+    total = sum(int(code[i]) * (10 - i) for i in range(9))
+    remainder = total % 11
+    if remainder < 2:
+        return check == remainder
+    return check == (11 - remainder)
 
 # --- AUTH FLOW STEP 1: CHECK EXISTENCE ---
 class CheckUserExistenceView(APIView):
@@ -31,7 +54,11 @@ class CheckUserExistenceView(APIView):
     def post(self, request):
         phone = request.data.get('phone_number')
         if not phone:
-            return Response({"error": "Phone number required"}, status=400)
+            return Response({"error": "شماره موبایل الزامی است."}, status=400)
+        try:
+            phone = normalize_and_validate_phone_number(phone)
+        except DjangoValidationError as exc:
+            return Response({"error": exc.messages[0]}, status=400)
         exists = CustomUser.objects.filter(phone_number=phone).exists()
         return Response({"exists": exists})
 
@@ -41,6 +68,11 @@ class VerifyDoctorView(APIView):
 
     def post(self, request):
         full_name = (request.data.get('full_name') or "").strip()
+        national_code = _normalize_national_code(
+            request.data.get("national_code")
+            or request.data.get("meli_code")
+            or ""
+        )
         credential_code = (
             request.data.get('credential_code')
             or request.data.get('license_code')
@@ -68,6 +100,7 @@ class VerifyDoctorView(APIView):
             "profession_slug": profession.slug,
             "profession_label": profession.name,
             "meta": result.meta,
+            "national_code": national_code or None,
         })
 
 
@@ -103,7 +136,7 @@ class RequestOTPView(APIView):
         if serializer.is_valid():
             phone_number = serializer.validated_data['phone_number']
             otp_service.send_otp(phone_number)
-            return Response({"message": "OTP sent."}, status=status.HTTP_200_OK)
+            return Response({"message": "کد تایید ارسال شد."}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # --- AUTH FLOW STEP 4: VERIFY OTP & CREATE USER ---
@@ -111,13 +144,13 @@ class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        phone_number = request.data.get('phone_number')
-        otp_code = request.data.get('otp_code')
-        signup_data = request.data.get('signup_data')
+        verification_serializer = VerifyOTPSerializer(data=request.data)
+        if not verification_serializer.is_valid():
+            return Response(verification_serializer.errors, status=400)
 
-        # 1. Validate Inputs
-        if not phone_number or not otp_code:
-            return Response({'detail': 'Phone and OTP required.'}, status=400)
+        phone_number = verification_serializer.validated_data.get('phone_number')
+        otp_code = verification_serializer.validated_data.get('otp_code')
+        signup_data = request.data.get('signup_data')
 
         # 2. Validate OTP
         is_otp_valid = False
@@ -137,19 +170,28 @@ class VerifyOTPView(APIView):
 
         # 3. Get or Create User
         user_created = False
-        normalized_email = (signup_data.get('email') or "").strip().lower() if signup_data else ""
         try:
             user = CustomUser.objects.get(phone_number=phone_number)
         except CustomUser.DoesNotExist:
             if not signup_data:
-                return Response({'detail': 'Signup data missing for new user.'}, status=400)
+                return Response({'detail': 'اطلاعات ثبت‌نام برای کاربر جدید الزامی است.'}, status=400)
+
+            signup_serializer = SignupDataSerializer(
+                data=signup_data,
+                context={"phone_number": phone_number},
+            )
+            if not signup_serializer.is_valid():
+                return Response({"signup_data": signup_serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+            validated_signup_data = signup_serializer.validated_data
+            normalized_email = validated_signup_data.get("email")
             
             try:
                 with transaction.atomic():
                     user = CustomUser.objects.create_user(
                         phone_number=phone_number,
-                        password=signup_data.get('password'),
-                        full_name=signup_data.get('fullName'),
+                        password=validated_signup_data.get('password'),
+                        full_name=validated_signup_data.get('fullName'),
                         email=normalized_email or None
                     )
                     
@@ -165,7 +207,11 @@ class VerifyOTPView(APIView):
                         email=user.email or "",
                     )
                     user_created = True
-            
+            except DjangoValidationError as exc:
+                return Response(
+                    {"signup_data": {"password": exc.messages}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             except IntegrityError as e:
                 if 'email' in str(e):
                     return Response({'detail': 'ایمیل تکراری است.'}, status=400)
@@ -213,6 +259,11 @@ class UpgradeExpertView(APIView):
     def post(self, request):
         full_name = (request.data.get("full_name") or request.user.full_name or "").strip()
         profession_slug = (request.data.get("profession_slug") or "").strip()
+        national_code = _normalize_national_code(
+            request.data.get("national_code")
+            or request.data.get("meli_code")
+            or ""
+        )
         credential_code = (
             request.data.get("credential_code")
             or request.data.get("license_code")
@@ -221,6 +272,10 @@ class UpgradeExpertView(APIView):
 
         if not profession_slug:
             return Response({"detail": "profession_slug is required."}, status=400)
+        if not national_code:
+            return Response({"detail": "national_code is required."}, status=400)
+        if not _is_valid_iranian_national_code(national_code):
+            return Response({"detail": "national_code is invalid."}, status=400)
 
         profession = ExpertProfession.objects.filter(slug=profession_slug, is_active=True).first()
         if not profession:
@@ -247,13 +302,54 @@ class UpgradeExpertView(APIView):
                 defaults={"name": "متخصص"},
             )
             user = request.user
-            user.role = expert_role
+            requires_manual_review = bool((result.meta or {}).get("manual_review"))
+            request_snapshot = {
+                **(result.meta or {}),
+                "profession_slug": profession.slug,
+                "profession_label": profession.name,
+                "credential_code": str(credential_code).strip(),
+                "national_code": national_code,
+                "full_name": full_name,
+                "validation_kind": profession.validation_kind,
+            }
+
+            latest_request = None
+            if requires_manual_review:
+                RoleVerificationRequest.objects.filter(
+                    user=user,
+                    target_role=expert_role,
+                    status=RoleVerificationRequest.Status.PENDING,
+                ).update(
+                    status=RoleVerificationRequest.Status.REJECTED,
+                    admin_notes="Superseded by a newer verification submission.",
+                )
+                latest_request = RoleVerificationRequest.objects.create(
+                    user=user,
+                    target_role=expert_role,
+                    data=request_snapshot,
+                    status=RoleVerificationRequest.Status.PENDING,
+                )
+
+            if not requires_manual_review:
+                user.role = expert_role
             user.expert_profession = profession
-            user.is_expert_verified = True
-            user.expert_verified_at = timezone.now()
-            user.expert_verification_meta = result.meta or {}
+            user.national_code = national_code
+            user.is_expert_verified = not requires_manual_review
+            user.expert_verified_at = timezone.now() if not requires_manual_review else None
+            user.expert_verification_meta = {
+                **(result.meta or {}),
+                "submitted_credential_code": str(credential_code).strip(),
+                "submitted_national_code": national_code,
+                "submitted_profession_slug": profession.slug,
+                "submitted_at": timezone.now().isoformat(),
+                "validation_kind": profession.validation_kind,
+                "admin_review_recommended": requires_manual_review,
+                "status": "pending" if requires_manual_review else "approved",
+                "latest_message": result.message,
+                "role_verification_request_id": latest_request.id if latest_request else None,
+            }
             # keep legacy fields in sync for temporary compatibility
-            user.is_verified_doctor = True
+            user.is_verified_doctor = not requires_manual_review
             user.medical_license = str(credential_code).strip() or user.medical_license
             if result.normalized_name and not user.full_name:
                 user.full_name = result.normalized_name
@@ -286,7 +382,7 @@ class ChangePasswordView(APIView):
             user = request.user
             user.set_password(serializer.validated_data['new_password'])
             user.save()
-            return Response({"message": "Password updated."}, status=200)
+            return Response({"message": "رمز عبور با موفقیت به‌روزرسانی شد."}, status=200)
         return Response(serializer.errors, status=400)
 
 class UserWalletDetailView(generics.RetrieveAPIView):

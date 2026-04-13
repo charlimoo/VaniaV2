@@ -129,7 +129,7 @@ export function UserProfileMenu({ user, onLogout }: UserProfileMenuProps) {
                         /* SCENARIO B: FREE USER */
                         <div className="flex justify-between items-center text-xs">
                             <span className="flex items-center gap-2 text-muted-foreground">
-                                <Zap className="size-3.5 text-blue-500" /> هدیه روزانه
+                                <Zap className="size-3.5 text-blue-500" /> سهمیه روزانه
                             </span>
                             <span className="font-medium text-blue-600">{fmt(freeRemaining)}</span>
                         </div>

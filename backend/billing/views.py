@@ -333,4 +333,5 @@ class FAQListView(generics.ListAPIView):
     """
     permission_classes = [AllowAny]
     serializer_class = FAQSerializer
+    pagination_class = None
     queryset = FAQ.objects.filter(is_active=True).order_by('order')

@@ -19,7 +19,7 @@ from .models import (
 
 @admin.register(RoleVerificationRequest)
 class RoleVerificationRequestAdmin(admin.ModelAdmin):
-    list_display = ('user', 'target_role', 'status', 'created_at')
+    list_display = ('user', 'target_role', 'profession_label', 'submitted_code', 'status', 'created_at')
     list_filter = ('status', 'target_role', 'created_at')
     search_fields = ('user__phone_number', 'user__full_name')
     readonly_fields = ('user', 'target_role', 'created_at')
@@ -33,6 +33,14 @@ class RoleVerificationRequestAdmin(admin.ModelAdmin):
             'description': "Changing status to APPROVED will automatically trigger side effects via signals."
         }),
     )
+
+    def profession_label(self, obj):
+        return obj.data.get("profession_label") or obj.data.get("profession_slug") or "-"
+    profession_label.short_description = "Profession"
+
+    def submitted_code(self, obj):
+        return obj.data.get("credential_code") or "-"
+    submitted_code.short_description = "Submitted Code"
 
 @admin.register(Location)
 class LocationAdmin(admin.ModelAdmin):

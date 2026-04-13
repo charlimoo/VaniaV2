@@ -27,3 +27,10 @@ def is_visitor(user) -> bool:
     role = getattr(user, "role", None)
     slug = getattr(role, "slug", None)
     return normalize_role_slug(slug) == CANONICAL_VISITOR_SLUG
+
+
+def has_visitor_features(user) -> bool:
+    """
+    Visitor features are available to pure visitors and upgraded experts.
+    """
+    return is_visitor(user) or is_expert(user)

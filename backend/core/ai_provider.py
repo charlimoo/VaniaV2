@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 
 logger = logging.getLogger(__name__)
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ def get_ai_provider_config() -> AIProviderConfig:
         api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
         if not api_key:
             raise ValueError("Missing OPENAI_API_KEY while AI_PROVIDER='openai'.")
-        base_url = _clean_base_url(os.getenv("OPENAI_BASE_URL"))
+        base_url = _clean_base_url(os.getenv("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL))
 
     logger.info(
         "AI provider selected: provider=%s, base_url=%s, timeout=%s",

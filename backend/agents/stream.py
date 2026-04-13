@@ -49,11 +49,37 @@ from .tool_result_sanitizer import sanitize_tool_result_content
 logger = logging.getLogger(__name__)
 
 TOOL_ONLY_CHAT_AGENT_SLUGS = {"vania-expert-assistant"}
+active_naming_tasks: set[str] = set()
+ASSISTANT_OUTPUT_COMPLETE_SENTINEL = "__assistant_output_complete__"
+
+
+def _extract_naming_messages(messages: list | None) -> list[dict[str, Any]]:
+    """
+    Build the smallest useful snapshot for title generation.
+    We only need the opening user message, so naming can start in parallel
+    with the first agent run instead of waiting for the full turn to finish.
+    """
+    if not messages:
+        return []
+
+    formatted_msgs: list[dict[str, Any]] = []
+    for message in messages:
+        msg = safe_serialize(message)
+        if not isinstance(msg, dict):
+            continue
+
+        role = msg.get("role")
+        content = msg.get("content")
+        if role == "user" and content:
+            formatted_msgs.append({"role": "user", "content": content})
+            break
+
+    return formatted_msgs
+
 
 async def background_naming_task(thread_id: str, user_id: str, agent_messages: list):
     """
-    Runs in the background after the stream closes.
-    Generates a title and updates the database.
+    Runs in the background and updates the session title without blocking chat.
     """
     logger.info(f"🏷️ [Background] Starting auto-naming for {thread_id}...")
     try:
@@ -99,7 +125,10 @@ async def background_naming_task(thread_id: str, user_id: str, agent_messages: l
                         'content': m_dict.get('content')
                     })
                 
-                new_title = await sync_to_async(title_generator.generate_title)(
+                # Naming is best-effort background work and should not occupy the
+                # thread-sensitive executor that the main run may still need for
+                # session persistence and teardown.
+                new_title = await sync_to_async(title_generator.generate_title, thread_sensitive=False)(
                     formatted_msgs, 
                     user, 
                     thread_id
@@ -108,6 +137,7 @@ async def background_naming_task(thread_id: str, user_id: str, agent_messages: l
                 if new_title and new_title not in ["گفتگوی جدید", "Untitled"]:
                     if not session.session_data: session.session_data = {}
                     session.session_data["name"] = new_title
+                    session.session_data["session_name"] = new_title
                     
                     if hasattr(storage, 'upsert_session'):
                         await sync_to_async(storage.upsert_session)(session=session)
@@ -124,6 +154,21 @@ async def background_naming_task(thread_id: str, user_id: str, agent_messages: l
 
     except Exception as e:
         logger.error(f"❌ [Background] Naming failed: {e}")
+    finally:
+        active_naming_tasks.discard(thread_id)
+
+
+def schedule_background_naming(thread_id: str, user_id: str, agent_messages: list) -> None:
+    """
+    Fire-and-forget wrapper so title generation never blocks the main run.
+    Only one naming task per thread is allowed at a time.
+    """
+    if thread_id in active_naming_tasks:
+        logger.info(f"🏷️ [Background] Naming already scheduled for {thread_id}, skipping duplicate trigger.")
+        return
+
+    active_naming_tasks.add(thread_id)
+    asyncio.create_task(background_naming_task(thread_id, user_id, agent_messages))
 
 
 async def persist_ui_attachments(agent, thread_id: str, attachment_metadata: list[dict], message_id: str | None = None):
@@ -211,6 +256,10 @@ async def agui_stream_generator(
     
     logger.info(f"🌊 [Stream] Starting Active Generator for Run: {run_id} (Thread: {thread_id})")
 
+    naming_messages = _extract_naming_messages(input_data.messages)
+    if naming_messages:
+        schedule_background_naming(thread_id, str(agent.user.id), naming_messages)
+
     yield encoder.encode(
         RunStartedEvent(
             type=EventType.RUN_STARTED,
@@ -222,6 +271,34 @@ async def agui_stream_generator(
 
     # 1. Create a Queue to bridge the Agent's output to the Stream
     output_queue = asyncio.Queue()
+    idle_output_complete_task: asyncio.Task | None = None
+    output_complete_emitted = False
+
+    def cancel_idle_output_complete_task() -> None:
+        nonlocal idle_output_complete_task
+        if idle_output_complete_task and not idle_output_complete_task.done():
+            idle_output_complete_task.cancel()
+        idle_output_complete_task = None
+
+    def schedule_idle_output_complete() -> None:
+        nonlocal idle_output_complete_task, output_complete_emitted
+        if output_complete_emitted or state["current_tool_id"]:
+            return
+
+        cancel_idle_output_complete_task()
+
+        async def emit_when_idle() -> None:
+            nonlocal output_complete_emitted
+            try:
+                await asyncio.sleep(1.0)
+                if output_complete_emitted or state["current_tool_id"]:
+                    return
+                output_complete_emitted = True
+                await output_queue.put(ASSISTANT_OUTPUT_COMPLETE_SENTINEL)
+            except asyncio.CancelledError:
+                return
+
+        idle_output_complete_task = asyncio.create_task(emit_when_idle())
     
     # 2. Define the Background Agent Task
     async def run_agent_task():
@@ -331,6 +408,17 @@ async def agui_stream_generator(
             if queue_task in done:
                 item = queue_task.result()
                 
+                if item == ASSISTANT_OUTPUT_COMPLETE_SENTINEL:
+                    logger.info("🎨 [Stream] Emitting idle output-complete event.")
+                    yield encoder.encode(
+                        AguiCustomEvent(
+                            type=EventType.CUSTOM,
+                            name="assistant_output_complete",
+                            value={"thread_id": thread_id, "run_id": run_id},
+                        )
+                    )
+                    continue
+
                 if item == "DONE":
                     break
                 
@@ -374,6 +462,7 @@ async def agui_stream_generator(
                             yield encoder.encode(TextMessageContentEvent(
                                 type=EventType.TEXT_MESSAGE_CONTENT, message_id=assistant_msg_id, delta=chunk
                             ))
+                            schedule_idle_output_complete()
                     continue
 
                 # --- CASE C: Standard Events ---
@@ -391,8 +480,10 @@ async def agui_stream_generator(
                             yield encoder.encode(TextMessageContentEvent(
                                 type=EventType.TEXT_MESSAGE_CONTENT, message_id=assistant_msg_id, delta=str(chunk.content)
                             ))
+                            schedule_idle_output_complete()
 
                 elif chunk.event == RunEvent.tool_call_started:
+                    cancel_idle_output_complete_task()
                     tc_id, tc_name, tc_args = extract_tool_info(chunk)
                     if not tc_id or tc_id == "unknown_id": tc_id = str(uuid.uuid4())
                     state["current_tool_id"] = tc_id
@@ -445,6 +536,7 @@ async def agui_stream_generator(
                     
                     yield encoder.encode(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tc_id))
                     state["current_tool_id"] = None
+                    schedule_idle_output_complete()
 
         # --- Completion Logic ---
         if state["suppress_text_output"] and not state["tool_called"] and not state["always_suppress_text_output"]:
@@ -466,16 +558,20 @@ async def agui_stream_generator(
                 await demo_usage_service.increment_usage(agent.user, agent.service_config)
             except Exception as usage_err:
                 logger.error(f"⚠️ [Stream] Failed to increment demo usage: {usage_err}")
-                
-        # Naming Trigger
-        msgs_snapshot = []
-        if hasattr(agent, 'memory') and agent.memory:
-             msgs_snapshot = agent.memory.messages
-        
-        asyncio.create_task(
-            background_naming_task(thread_id, str(agent.user.id), msgs_snapshot)
-        )
 
+        latest_messages = []
+        if hasattr(agent, "memory") and agent.memory and hasattr(agent.memory, "messages"):
+            latest_messages = agent.memory.messages or []
+        elif hasattr(agent, "messages"):
+            latest_messages = agent.messages or []
+
+        # Re-apply naming after the run has fully persisted. Some downstream
+        # session saves can overwrite the early background rename with the
+        # initial generic title, so we schedule one more non-blocking pass here.
+        final_naming_messages = latest_messages or naming_messages
+        if final_naming_messages:
+            schedule_background_naming(thread_id, str(agent.user.id), final_naming_messages)
+                
         yield encoder.encode(
             RunFinishedEvent(
                 type=EventType.RUN_FINISHED,
@@ -495,6 +591,7 @@ async def agui_stream_generator(
         yield encoder.encode(RunErrorEvent(type=EventType.RUN_ERROR, message=str(e)))
     finally:
         # Cleanup tasks
+        cancel_idle_output_complete_task()
         if not agent_task.done():
             agent_task.cancel()
         if not disconnect_task.done():

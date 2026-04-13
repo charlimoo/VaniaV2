@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from users.models import CustomUser, UserContextEntry
-from users.roles import is_visitor
+from users.roles import has_visitor_features
 
 from .case_service import CaseService
 
@@ -17,7 +17,7 @@ def sync_visitor_base_profile_identity(
     """
     Keep visitor account identity fields mirrored into the shared base profile.
     """
-    if not is_visitor(user):
+    if not has_visitor_features(user):
         return None
 
     existing_entry = CaseService.get_latest_base_profile_entry(user)

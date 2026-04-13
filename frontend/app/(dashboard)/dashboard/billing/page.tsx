@@ -232,9 +232,9 @@ const { user, loading: userLoading, refreshUser } = useUser();
                                 {parseInt(plan.included_credits) > 0 && (
                                     <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground opacity-80 mt-1">
                                         <Zap className="w-3 h-3 text-amber-500 fill-amber-500" />
-                                        <span>شامل ماهانه</span>
+                                        <span>شامل</span>
                                         <span className="font-mono font-bold text-foreground">{parseInt(plan.included_credits).toLocaleString()}</span>
-                                        <span>{config.currency_symbol} سرمایه گفت‌وگو </span>
+                                        <span>{config.currency_name}</span>
                                     </div>
                                 )}
                             </CardFooter>

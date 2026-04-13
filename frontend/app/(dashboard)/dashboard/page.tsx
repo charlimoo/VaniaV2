@@ -74,7 +74,7 @@ export default function DashboardOverviewPage() {
                 <Zap className="h-5 w-5 fill-current" />
             </div>
             <div className="text-sm">
-                <span className="font-bold text-indigo-900 dark:text-indigo-200">هدیه روزانه: </span>
+                <span className="font-bold text-indigo-900 dark:text-indigo-200">سهمیه روزانه: </span>
                 <span className="text-indigo-700 dark:text-indigo-300">
                     روزانه <strong>{parseFloat(config.daily_free_credits)} {config.currency_symbol}</strong> اعتبار رایگان دریافت کنید. 
                     (بازنشانی هر شب ساعت ۰۰:۰۰)

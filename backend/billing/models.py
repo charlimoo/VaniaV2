@@ -35,6 +35,12 @@ class BillingConfig(models.Model):
     support_phone = models.CharField(max_length=50, default="09123456789", blank=True)
     support_email = models.EmailField(default="support@example.com", blank=True)
     support_address = models.TextField(default="تهران، خیابان ولیعصر", blank=True)
+    support_postal_code = models.CharField(max_length=20, default="", blank=True)
+    support_contacts = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Structured support contacts for UI display (role/name/phone).",
+    )
     
     updated_at = models.DateTimeField(auto_now=True)
 

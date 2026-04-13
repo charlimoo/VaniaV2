@@ -8,7 +8,7 @@ import { Fragment } from "react";
 // Mapping for known static routes
 const ROUTE_MAP: Record<string, string> = {
   dashboard: "پیشخوان",
-  billing: "خرید اشتراک",
+  billing: "طرح‌ها و اعتبار",
   invoices: "سفارشات",
   settings: "تنظیمات",
   faq: "مرکز راهنما",

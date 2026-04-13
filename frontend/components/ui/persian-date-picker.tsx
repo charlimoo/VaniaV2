@@ -38,6 +38,7 @@ export function PersianDatePicker({
         locale={persian_fa}
         calendarPosition="bottom-right"
         disabled={disabled}
+        editable={false}
         format="YYYY/MM/DD"
         containerClassName="w-full"
         inputClass={cn(

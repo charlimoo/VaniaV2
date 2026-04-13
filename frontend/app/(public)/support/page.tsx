@@ -27,6 +27,7 @@ interface FAQItem {
 
 export default function PublicSupportPage() {
   const { config } = useConfig(); 
+  const contacts = Array.isArray(config.support_contacts) ? config.support_contacts : [];
   
   const [faqs, setFaqs] = useState<FAQItem[]>([]);
   const [loadingFaqs, setLoadingFaqs] = useState(true);
@@ -117,11 +118,31 @@ export default function PublicSupportPage() {
               <MapPin className="mb-3 h-6 w-6 text-neutral-500 transition-colors group-hover:text-indigo-400" />
               <span className="mb-1 text-sm font-medium text-neutral-400">دفتر مرکزی</span>
               <span className="text-center text-sm font-semibold text-white">
-                {config.support_address ? (config.support_address.split("،")[1] || config.support_address) : "---"}
+                {config.support_address || "---"}
               </span>
+              {config.support_postal_code && (
+                <span className="mt-1 text-xs text-neutral-400">کد پستی: {config.support_postal_code}</span>
+              )}
             </div>
 
           </div>
+
+          {contacts.length > 0 && (
+            <div className="mt-6 w-full rounded-2xl border border-white/5 bg-white/[0.02] p-4 backdrop-blur-sm">
+              <h3 className="text-right text-sm font-semibold text-white mb-3">مسئولان پاسخگویی</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {contacts.map((contact, index) => (
+                  <div key={`${contact.name}-${index}`} className="rounded-xl border border-white/10 bg-black/10 p-3 text-right">
+                    {contact.role && <p className="text-xs text-neutral-400">{contact.role}</p>}
+                    <p className="text-sm font-semibold text-white mt-0.5">{contact.name}</p>
+                    <a href={`tel:${contact.phone}`} className="inline-flex mt-1 text-xs font-mono text-indigo-300 hover:text-indigo-200 transition-colors" dir="ltr">
+                      {contact.phone}
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

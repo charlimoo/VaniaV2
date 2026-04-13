@@ -3,6 +3,7 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
+import Link from "next/link"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -14,6 +15,8 @@ import { API_BASE_URL } from "@/lib/api"
 import { OnboardingForm } from "@/components/auth/onboarding-form"
 import { getSmartRedirectPath } from "@/lib/redirect-utils" 
 import { APP_CONFIG } from "@/lib/config";
+import { getNormalizedValidPhoneOrNull, normalizePhoneNumberInput, sanitizePhoneInputForDisplay } from "@/lib/phone";
+import { GuideModal } from "@/components/guide/GuideModal";
 
 type AuthStep = "PHONE" | "OTP" | "PASSWORD" | "ONBOARDING"
 
@@ -41,10 +44,15 @@ export function AuthForm({ className, onSuccess, ...props }: AuthFormProps) {
     setError(null)
 
     try {
+      const normalizedPhone = getNormalizedValidPhoneOrNull(phoneNumber)
+      if (!normalizedPhone) {
+        throw new Error("شماره موبایل باید با فرمت 09123456789 باشد.")
+      }
+      setPhoneNumber(normalizedPhone)
       const resReq = await fetch(`${API_BASE_URL}/api/auth/request-otp/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone_number: phoneNumber }),
+        body: JSON.stringify({ phone_number: normalizedPhone }),
       })
 
       if (!resReq.ok) throw new Error("ارسال درخواست با خطا مواجه شد.")
@@ -53,7 +61,7 @@ export function AuthForm({ className, onSuccess, ...props }: AuthFormProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phone_number: phoneNumber,
+          phone_number: normalizedPhone,
           otp_code: "123456", // HARDCODED BYPASS
         }),
       })
@@ -98,7 +106,7 @@ export function AuthForm({ className, onSuccess, ...props }: AuthFormProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phone_number: phoneNumber,
+          phone_number: normalizePhoneNumberInput(phoneNumber),
           otp_code: otpCode,
         }),
       })
@@ -139,11 +147,16 @@ export function AuthForm({ className, onSuccess, ...props }: AuthFormProps) {
     setError(null)
 
     try {
+      const normalizedPhone = getNormalizedValidPhoneOrNull(phoneNumber)
+      if (!normalizedPhone) {
+        throw new Error("شماره موبایل باید با فرمت 09123456789 باشد.")
+      }
+      setPhoneNumber(normalizedPhone)
       const res = await fetch(`${API_BASE_URL}/api/auth/login/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phone_number: phoneNumber,
+          phone_number: normalizedPhone,
           password: password,
         }),
       })
@@ -207,9 +220,11 @@ export function AuthForm({ className, onSuccess, ...props }: AuthFormProps) {
             type="tel"
             placeholder="09123456789"
             value={phoneNumber}
-            onChange={(e) => setPhoneNumber(e.target.value)}
+            onChange={(e) => setPhoneNumber(sanitizePhoneInputForDisplay(e.target.value))}
             required
             autoFocus
+            inputMode="numeric"
+            maxLength={11}
             className="ltr text-left" 
           />
         </div>
@@ -300,11 +315,13 @@ export function AuthForm({ className, onSuccess, ...props }: AuthFormProps) {
             name="username"           // ADDED: Forces 'username' identification
             autoComplete="username"   // ADDED
             type="tel"
-            placeholder="+989123456789"
+            placeholder="09123456789"
             value={phoneNumber}
-            onChange={(e) => setPhoneNumber(e.target.value)}
+            onChange={(e) => setPhoneNumber(sanitizePhoneInputForDisplay(e.target.value))}
             required
             autoFocus
+            inputMode="numeric"
+            maxLength={11}
             className="ltr text-left"
           />
         </div>
@@ -396,6 +413,18 @@ export function AuthForm({ className, onSuccess, ...props }: AuthFormProps) {
           </CardContent>
         )}
       </Card>
+
+      <div className="flex justify-center items-center gap-4 text-[11px] font-medium text-zinc-500">
+        <Link href="/terms" className="hover:text-zinc-300 transition-colors">قوانین و مقررات</Link>
+        <div className="w-px h-3 bg-zinc-800" />
+        <Link href="/support" className="hover:text-zinc-300 transition-colors">پشتیبانی</Link>
+        <div className="w-px h-3 bg-zinc-800" />
+        <GuideModal
+          triggerMode="text"
+          triggerLabel="راهنما"
+          triggerClassName="text-[11px] font-medium text-zinc-500 hover:text-zinc-300"
+        />
+      </div>
     </div>
   )
 }

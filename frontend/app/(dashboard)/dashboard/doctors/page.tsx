@@ -105,7 +105,7 @@ export default function MyDoctorsPage() {
   );
 
   return (
-    <RoleGuard allowedRoles={['visitor']}>
+    <RoleGuard allowedRoles={['visitor', 'expert']}>
     <div className="mx-auto flex h-full w-full max-w-6xl flex-col space-y-8 pb-10 pt-6" dir="rtl">
       
       {/* Header */}

@@ -49,7 +49,7 @@ class DefinitionSync:
         User = get_user_model()
         
         admin_phone = "09123456789"
-        admin_pass = "adminadmin"
+        admin_pass = "Adminadmin@123"
 
         if not User.objects.filter(phone_number=admin_phone).exists():
             try:
@@ -200,8 +200,8 @@ class DefinitionSync:
         BillingConfig.objects.update_or_create(
             pk=1,
             defaults={
-                "currency_name": "سرمایه گفت‌وگو",
-                "currency_symbol": "🪙",
+                "currency_symbol": "اعتبار",
+                "currency_name": "اعتبار گفتگو",
                 
                 # --- ECONOMY SETTINGS ---
                 # Defined here instead of Environment Variables
@@ -215,6 +215,8 @@ class DefinitionSync:
                 "support_phone": SUPPORT_INFO["phone"],
                 "support_email": SUPPORT_INFO["email"],
                 "support_address": SUPPORT_INFO["address"],
+                "support_postal_code": SUPPORT_INFO.get("postal_code", ""),
+                "support_contacts": SUPPORT_INFO.get("contacts", []),
             }
         )
 
@@ -255,51 +257,48 @@ class DefinitionSync:
                 "slug": "psychologist",
                 "name": "روان شناس",
                 "description": "متخصص روان شناسی",
-                "validation_kind": "mock_psychologist",
+                "validation_kind": "real_psychologist",
                 "validation_config": {
-                    "required_prefix": "PSY-",
                     "credential_label": "کد نظام روان‌شناسی",
-                    "credential_placeholder": "مثال: PSY-12345",
+                    "credential_placeholder": "شماره عضویت نظام روان‌شناسی را وارد کنید",
                     "credential_help": "کدی که از سازمان نظام روان‌شناسی دریافت کرده‌اید را وارد کنید.",
-                    "sample_code": "PSY-12345",
+                    "sample_code": "",
                 },
             },
             {
                 "slug": "psychiatrist",
                 "name": "روان پزشک",
                 "description": "متخصص روان پزشکی",
-                "validation_kind": "mock_psychiatrist",
+                "validation_kind": "manual_psychiatrist",
                 "validation_config": {
-                    "required_prefix": "PSYCH-",
                     "credential_label": "کد نظام پزشکی",
-                    "credential_placeholder": "مثال: PSYCH-98765",
-                    "credential_help": "کد نظام پزشکی خود را برای تایید تخصص وارد کنید.",
-                    "sample_code": "PSYCH-98765",
+                    "credential_placeholder": "شماره نظام پزشکی را وارد کنید",
+                    "credential_help": "اطلاعات این حوزه به صورت دستی بررسی می‌شود. کد نظام پزشکی خود را وارد کنید.",
+                    "sample_code": "",
                 },
             },
             {
                 "slug": "lawyer",
                 "name": "وکیل",
                 "description": "متخصص حقوق",
-                "validation_kind": "mock_lawyer",
+                "validation_kind": "real_lawyer",
                 "validation_config": {
-                    "required_prefix": "LAW-",
                     "credential_label": "شناسه پروانه وکالت",
-                    "credential_placeholder": "مثال: LAW-44556",
+                    "credential_placeholder": "شناسه پروانه وکالت را وارد کنید",
                     "credential_help": "شماره پروانه معتبر وکالت را وارد کنید.",
-                    "sample_code": "LAW-44556",
+                    "sample_code": "",
                 },
             },
             {
                 "slug": "general_doctor",
-                "name": "پزشک عمومی",
-                "description": "پزشک عمومی",
-                "validation_kind": "mock_general_doctor",
+                "name": "پزشک",
+                "description": "پزشک",
+                "validation_kind": "manual_general_doctor",
                 "validation_config": {
                     "accepted_codes": ["123456"],
-                    "credential_label": "کد اعتبارسنجی پزشک عمومی",
-                    "credential_placeholder": "فعلا کد 123456 را وارد کنید",
-                    "credential_help": "تا زمان اتصال به اعتبارسنجی اصلی، برای پزشک عمومی از کد 123456 استفاده کنید.",
+                    "credential_label": "کد اعتبارسنجی پزشک",
+                    "credential_placeholder": "شماره نظام پزشکی را وارد کنید",
+                    "credential_help": "اطلاعات این حوزه به صورت دستی بررسی می‌شود. برای تست همچنان می‌توانید از کد 123456 استفاده کنید.",
                     "sample_code": "123456",
                 },
             },

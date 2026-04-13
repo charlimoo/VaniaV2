@@ -2,6 +2,7 @@
 import json
 import logging
 from rest_framework import serializers
+from django.core.exceptions import ValidationError as DjangoValidationError
 from .models import (
     TreatmentConnection, 
     DoctorProfile, 
@@ -11,6 +12,7 @@ from .models import (
     Location 
 )
 from users.models import UserRole, CustomUser
+from users.phone_utils import normalize_and_validate_phone_number
 from .schemas import RescueDimension, ResourceType, TherapyPhase
 
 logger = logging.getLogger(__name__)
@@ -101,6 +103,12 @@ class InvitePatientSerializer(serializers.Serializer):
     education = serializers.CharField(required=False, allow_blank=True)
     job = serializers.CharField(required=False, allow_blank=True)
 
+    def validate_phone_number(self, value):
+        try:
+            return normalize_and_validate_phone_number(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages[0])
+
 class ConnectionListSerializer(serializers.ModelSerializer):
     """
     Used for dashboards to list patient connections and pending requests.
@@ -134,6 +142,12 @@ class RespondConnectionSerializer(serializers.Serializer):
 class PatientLookupSerializer(serializers.Serializer):
     """Validates lookup input for checking patient existence by phone."""
     phone_number = serializers.CharField(max_length=20, required=True)
+
+    def validate_phone_number(self, value):
+        try:
+            return normalize_and_validate_phone_number(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages[0])
 
 
 class UpdateConnectionStatusSerializer(serializers.Serializer):

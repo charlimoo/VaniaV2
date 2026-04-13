@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -200,6 +201,7 @@ Do not send localized or freeform values such as `کتاب`, `فیلم`, or `ش�
         medications = MedicationService.get_plan(patient, doctor_id=doctor_id, case_id=case_id)
         return {
             "clinical_summary": ProfileService.get_summary(patient, doctor_id=doctor_id, case_id=case_id),
+            "summary_voice_notes": ProfileService.get_summary_voice_notes(patient, doctor_id=doctor_id, case_id=case_id),
             "forms_tests_analysis": ProfileService.get_forms_tests_analysis(patient, doctor_id=doctor_id, case_id=case_id),
             "roadmap_data": roadmap.model_dump(),
             "appendix_data": appendix.model_dump(),
@@ -222,8 +224,14 @@ Do not send localized or freeform values such as `کتاب`, `فیلم`, or `ش�
             storage_doctor_id = int((selected_case or {}).get("doctor_id") or user.id)
             base_profile = CaseService.get_latest_base_profile_entry(patient)
             base_lines = []
+            base_payload: Dict[str, Any] = {}
             if base_profile and isinstance(base_profile.data, dict):
                 data = base_profile.data
+                base_payload = {
+                    key: value
+                    for key, value in data.items()
+                    if value not in (None, "", [], {})
+                }
                 base_lines.extend([
                     f"- Name: {data.get('full_name', patient.full_name or patient.phone_number)}",
                     f"- Mobile: {data.get('mobile_phone', patient.phone_number)}",
@@ -267,6 +275,7 @@ Do not send localized or freeform values such as `کتاب`, `فیلم`, or `ش�
 
 ### SHARED BASE PROFILE
 {chr(10).join(base_lines) if base_lines else "- No shared base profile recorded yet. Fill `BASE_PROFILE_V1` when needed."}
+- Full shared profile payload: {json.dumps(base_payload, ensure_ascii=False)}
 
 ### CASE CONTEXT
 - Case forms visible to you: {len(case_forms)}

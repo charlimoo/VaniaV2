@@ -1,6 +1,12 @@
 // frontend/lib/types.ts
 
 // --- Economy Configuration ---
+export interface SupportContact {
+  role?: string;
+  name: string;
+  phone: string;
+}
+
 export interface EconomyConfig {
   currency_name: string;
   currency_symbol: string;
@@ -12,6 +18,8 @@ export interface EconomyConfig {
   support_phone?: string;
   support_email?: string;
   support_address?: string;
+  support_postal_code?: string;
+  support_contacts?: SupportContact[];
 }
 
 export interface FAQItem {
@@ -60,9 +68,14 @@ export interface UserData {
   date_joined: string;
   role_slug?: string;  // e.g., 'expert' | 'visitor' (legacy aliases may still appear)
   role_label?: string; // e.g., 'متخصص' | 'مراجعه‌کننده'
+  national_code?: string | null;
   is_expert_verified?: boolean;
   expert_profession_slug?: string | null;
   expert_profession_label?: string | null;
+  expert_verification_status?: 'none' | 'pending' | 'approved' | 'rejected';
+  expert_verification_message?: string | null;
+  expert_verification_requested_at?: string | null;
+  expert_verification_can_retry?: boolean;
   // Single Wallet Object (No more roles list or primary_wallet_info)
   wallet?: WalletInfo;
 }

@@ -144,6 +144,11 @@ Treat the frontend labels above as the source of truth.
     def get_context_prompt(self, user: Any, resource_id: str) -> str:
         try:
             visitor_profile = get_visitor_base_profile_payload(user)
+            visitor_profile_full_payload = {
+                key: value
+                for key, value in visitor_profile.items()
+                if value not in (None, "", [], {})
+            }
             selected_case = self._resolve_selected_case(user)
             active_expert = get_expert_profile_payload(CustomUser.objects.get(pk=selected_case["doctor_id"])) if selected_case and selected_case.get("doctor_id") else None
 
@@ -167,6 +172,7 @@ Treat the frontend labels above as the source of truth.
             return f"""
 ### VISITOR PROFILE
 {chr(10).join(visitor_lines)}
+- Full shared profile payload: {json.dumps(visitor_profile_full_payload, ensure_ascii=False)}
 
 ### ACTIVE EXPERT
 {chr(10).join(expert_lines) if expert_lines else "- No active expert selected."}

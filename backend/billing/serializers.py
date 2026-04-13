@@ -18,7 +18,9 @@ class BillingConfigSerializer(serializers.ModelSerializer):
             'manual_payment_tips',
             'support_phone',
             'support_email',
-            'support_address'
+            'support_address',
+            'support_postal_code',
+            'support_contacts',
         )
 
 class FAQSerializer(serializers.ModelSerializer):

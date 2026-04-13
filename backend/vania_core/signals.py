@@ -14,7 +14,7 @@ from .models import (
     Notification,
     SecureMessage
 )
-from users.models import UserRole
+from users.models import ExpertProfession, UserRole
 from users.roles import is_expert
 
 logger = logging.getLogger(__name__)
@@ -25,20 +25,41 @@ def process_role_approval(sender, instance, created, **kwargs):
     Signal Handler: When an admin approves a verification request, this logic runs
     to automatically update the user's role and create their professional profile.
     """
-    if not created and instance.status == RoleVerificationRequest.Status.APPROVED:
+    if created:
+        return
+
+    user = instance.user
+    role = instance.target_role
+
+    if instance.status == RoleVerificationRequest.Status.APPROVED:
         logger.info(f"✅ [Signal] Processing approved verification for User {instance.user.id}")
-        user = instance.user
-        role = instance.target_role
-        
         try:
             with transaction.atomic():
-                # 1. Update Identity: Set the user's primary active role
-                if user.role != role:
-                    user.role = role
-                    user.save(update_fields=['role'])
-                    logger.info(f"   -> Role set to '{role.slug}' for User {user.id}")
+                profession_slug = instance.data.get("profession_slug")
+                profession = None
+                if profession_slug:
+                    profession = ExpertProfession.objects.filter(slug=profession_slug).first()
 
-                # 2. Create Profile (if the role is 'doctor')
+                user.role = role
+                user.is_expert_verified = True
+                user.is_verified_doctor = True
+                user.expert_profession = profession or user.expert_profession
+                user.national_code = instance.data.get("national_code") or user.national_code
+                user.medical_license = instance.data.get("credential_code") or user.medical_license
+                user.expert_verification_meta = {
+                    **(getattr(user, "expert_verification_meta", None) or {}),
+                    "status": "approved",
+                    "latest_message": "درخواست شما توسط ادمین تایید شد.",
+                    "submitted_profession_slug": profession_slug or getattr(getattr(user, "expert_profession", None), "slug", None),
+                    "submitted_credential_code": instance.data.get("credential_code") or user.medical_license,
+                    "submitted_national_code": instance.data.get("national_code") or user.national_code,
+                    "validation_kind": instance.data.get("validation_kind"),
+                    "role_verification_request_id": instance.id,
+                    "admin_review_recommended": False,
+                }
+                user.save()
+                logger.info(f"   -> Expert verification synced for User {user.id}")
+
                 if is_expert(user):
                     specialty = instance.data.get('specialty', 'General Practice')
                     profile, created_profile = DoctorProfile.objects.get_or_create(
@@ -48,16 +69,30 @@ def process_role_approval(sender, instance, created, **kwargs):
                     if created_profile:
                         logger.info(f"   -> DoctorProfile created for User {user.id}")
                 
-                # [FIX] 3. Notify User of Approval
                 Notification.objects.create(
                     recipient=user,
                     type=Notification.Type.SYSTEM,
-                    title="درخواست شما تایید شد", # "Your request was approved"
+                    title="درخواست شما تایید شد",
                     message=f"درخواست شما برای نقش '{role.name}' توسط ادمین تایید شد."
                 )
 
         except Exception as e:
             logger.error(f"❌ [Signal] Failed to process role approval for {user.id}: {e}", exc_info=True)
+
+    if instance.status == RoleVerificationRequest.Status.REJECTED:
+        try:
+            user.expert_verification_meta = {
+                **(getattr(user, "expert_verification_meta", None) or {}),
+                "status": "rejected",
+                "latest_message": instance.admin_notes or "درخواست شما رد شد.",
+                "role_verification_request_id": instance.id,
+                "admin_notes": instance.admin_notes,
+            }
+            user.is_expert_verified = False
+            user.is_verified_doctor = False
+            user.save(update_fields=["expert_verification_meta", "is_expert_verified", "is_verified_doctor"])
+        except Exception as e:
+            logger.error(f"❌ [Signal] Failed to process role rejection for {user.id}: {e}", exc_info=True)
 
 @receiver(post_save, sender=settings.AUTH_USER_MODEL)
 def link_invites_on_signup(sender, instance, created, **kwargs):

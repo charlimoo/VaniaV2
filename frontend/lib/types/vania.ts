@@ -174,6 +174,17 @@ export interface CaseFileEntry {
   text_stats: CaseFileTextStats;
 }
 
+export interface CaseVoiceNote {
+  id: string;
+  file_name: string;
+  storage_path?: string;
+  content_type?: string;
+  size_bytes: number;
+  duration_seconds: number;
+  created_at: string;
+  uploaded_by_user_id?: number;
+}
+
 export interface BaseProfileState {
   form: Record<string, any>;
   forms: any[];
@@ -232,6 +243,7 @@ export interface ExpertCaseState {
   test_mode?: TestMode;
   feature_policy?: ProfessionFeaturePolicy;
   clinical_summary?: string;
+  summary_voice_notes?: CaseVoiceNote[];
   forms_tests_analysis?: string;
   roadmap_data: TherapyRoadmap;
   active_goals: string[];

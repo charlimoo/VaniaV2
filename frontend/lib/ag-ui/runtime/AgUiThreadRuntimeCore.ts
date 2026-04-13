@@ -329,7 +329,7 @@ export class AgUiThreadRuntimeCore {
     const threadId = this.threadId;
 
     const sourceMessages = historyMessages ?? this.messages;
-    const messages = toAgUiMessages(sourceMessages.slice(-1));
+    const messages = toAgUiMessages(sourceMessages);
 
     const context = this.runtime?.thread.getModelContext();
 
@@ -410,6 +410,9 @@ export class AgUiThreadRuntimeCore {
     if (touched) {
       this.notifyUpdate();
       if (this.isTerminalStatus(latestStatus)) {
+        // Unlock the composer as soon as the assistant message itself is done,
+        // even if the underlying request is still wrapping up bookkeeping.
+        this.setRunning(false);
         this.persistAssistantHistory(messageId);
       }
     }
@@ -444,6 +447,15 @@ export class AgUiThreadRuntimeCore {
 
   private handleEvent(aggregator: RunAggregator, event: AgUiEvent) {
     switch (event.type) {
+      case "CUSTOM": {
+        if (event.name === "assistant_output_complete") {
+          this.setRunning(false);
+          this.markLatestAssistantComplete();
+          return;
+        }
+        aggregator.handle(event);
+        return;
+      }
       case "STATE_SNAPSHOT": {
         this.stateSnapshot = event.snapshot as ReadonlyJSONValue;
         this.notifyUpdate();
@@ -496,6 +508,26 @@ export class AgUiThreadRuntimeCore {
 
   private isTerminalStatus(status?: MessageStatus): boolean {
     return status?.type === "complete" || status?.type === "incomplete";
+  }
+
+  private markLatestAssistantComplete() {
+    let touched = false;
+    for (let i = this.messages.length - 1; i >= 0; i -= 1) {
+      const message = this.messages[i];
+      if (message.role !== "assistant") continue;
+      if (message.status?.type !== "running") break;
+      this.messages = this.messages.map((entry, index) =>
+        index === i
+          ? { ...entry, status: { type: "complete", reason: "unknown" } as MessageStatus }
+          : entry,
+      );
+      touched = true;
+      this.persistAssistantHistory(message.id);
+      break;
+    }
+    if (touched) {
+      this.notifyUpdate();
+    }
   }
 
   private recordHistoryEntry(parentId: string | null, message: ThreadMessage) {

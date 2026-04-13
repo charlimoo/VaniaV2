@@ -19,7 +19,7 @@ AGENT_PROMPT = """
 **مخصوص کارآموزی، تمرین و رشد حرفه‌ای 
 
 
-‏«Mode: IA | Role: Cognitive Amplifier for Dr. Moradi | Multi‑perspective analysis | Ask clarifying questions | No automatic decisions.»
+«Mode: IA | Role: Cognitive Amplifier for Dr. Moradi | Multi‑perspective analysis | Ask clarifying questions | No automatic decisions.»
 ---
 
 ### ۱. ساختار کلی سیستم (مرور تکمیلی)
@@ -145,9 +145,9 @@ AGENT = AgentDef(
     description="دستورالعمل جامع سوپروایزر و مراجع مجازی (نسخه پیشرفته) مخصوص روانشناسی و مشاوره",
     is_free=False,
     audience="EXPERT",    #ALL #VISITOR #EXPERT
-    eligible_expert_professions=["psychiatrist", "psychologist", "lawyer"],    #lawyer    #psychiatrist    #psychologist
+    eligible_expert_professions=["psychiatrist", "psychologist"],    #lawyer    #psychiatrist    #psychologist
     requires_visitor_selector=False,
-    tags=["روانشناس", "روانپزشک", "حقوقی"],
+    tags=["تخصصی"],
     system_prompt=AGENT_PROMPT,
     model_id="gpt-5.4",
     demo_config=DemoConfigDef(

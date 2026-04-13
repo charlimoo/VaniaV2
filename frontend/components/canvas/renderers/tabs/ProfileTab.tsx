@@ -1,14 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { FileText, Loader2, BrainCircuit, Expand, Save } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { FileText, Loader2, BrainCircuit, Expand, Save, Mic, Square, Trash2, AudioLines, Play, Pause, WandSparkles } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import { useAssistantRuntime } from "@assistant-ui/react";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
+import { useAudioRecorder } from "@/hooks/use-audio-recorder";
+import { CaseVoiceNote } from "@/lib/types/vania";
 
 interface PatientProfile {
   id: number;
@@ -19,6 +22,7 @@ interface PatientProfile {
 interface ProfileTabProps {
   patientProfile: PatientProfile;
   clinicalSummary: string;
+  summaryVoiceNotes: CaseVoiceNote[];
   formsTestsAnalysis: string;
   forms: any[];
   tests: any[];
@@ -40,6 +44,7 @@ const previewText = (value: string, placeholder: string) => {
 export function ProfileTab({
   patientProfile,
   clinicalSummary,
+  summaryVoiceNotes,
   formsTestsAnalysis,
   forms,
   tests,
@@ -52,10 +57,27 @@ export function ProfileTab({
   const runtime = useAssistantRuntime();
 
   const [summary, setSummary] = useState(clinicalSummary || "");
+  const [voiceNotes, setVoiceNotes] = useState<CaseVoiceNote[]>(summaryVoiceNotes || []);
   const [analysis, setAnalysis] = useState(formsTestsAnalysis || "");
   const [activeModal, setActiveModal] = useState<ModalType>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isSavingVoiceNote, setIsSavingVoiceNote] = useState(false);
+  const [isDeletingVoiceNoteId, setIsDeletingVoiceNoteId] = useState<string | null>(null);
+  const [isTranscribingVoiceNoteId, setIsTranscribingVoiceNoteId] = useState<string | null>(null);
+  const [activeVoiceNoteId, setActiveVoiceNoteId] = useState<string | null>(null);
+  const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+  const [activeVoicePreviewUrl, setActiveVoicePreviewUrl] = useState<string | null>(null);
+  const [isLoadingPreviewId, setIsLoadingPreviewId] = useState<string | null>(null);
+  const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
+  const {
+    isRecording,
+    recordingTime,
+    audioBlob,
+    startRecording,
+    stopRecording,
+    reset: resetAudioRecording,
+  } = useAudioRecorder();
 
   useEffect(() => {
     setSummary(clinicalSummary || "");
@@ -65,9 +87,30 @@ export function ProfileTab({
     setAnalysis(formsTestsAnalysis || "");
   }, [formsTestsAnalysis]);
 
+  useEffect(() => {
+    setVoiceNotes(summaryVoiceNotes || []);
+  }, [summaryVoiceNotes]);
+
   const isSummaryDirty = summary !== (clinicalSummary || "");
   const isAnalysisDirty = analysis !== (formsTestsAnalysis || "");
   const canGenerateAnalysis = showFormsTestsAnalysis && (forms?.length || 0) > 0 && (tests?.length || 0) > 0;
+  const activeVoiceNote = voiceNotes.find((item) => item.id === activeVoiceNoteId) || null;
+
+  const formatDuration = (seconds: number) => {
+    const safe = Math.max(0, Math.floor(seconds || 0));
+    const mins = Math.floor(safe / 60);
+    const secs = safe % 60;
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+
+  const buildVoiceNoteUrl = (voiceNoteId: string) =>
+    `${API_BASE_URL}/api/vania/case-profile/voice-notes/${voiceNoteId}/download/?patient_id=${patientProfile.id}&case_id=${encodeURIComponent(caseId || "")}`;
+
+  const syncVoiceNotesFromPayload = (body: any) => {
+    const notes = Array.isArray(body?.summary_voice_notes) ? body.summary_voice_notes : [];
+    setVoiceNotes(notes);
+    onEdit({ summary_voice_notes: notes });
+  };
 
   const saveSummary = () => {
     if (!isSummaryDirty || isLocked) return;
@@ -87,7 +130,13 @@ export function ProfileTab({
       }).then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body?.error || "خطا در ذخیره سازی.");
-        onEdit({ clinical_summary: body?.clinical_summary ?? summary });
+        onEdit({
+          clinical_summary: body?.clinical_summary ?? summary,
+          summary_voice_notes: Array.isArray(body?.summary_voice_notes) ? body.summary_voice_notes : voiceNotes,
+        });
+        if (Array.isArray(body?.summary_voice_notes)) {
+          setVoiceNotes(body.summary_voice_notes);
+        }
       }),
       {
         loading: "در حال ذخیره متن...",
@@ -97,6 +146,159 @@ export function ProfileTab({
       }
     );
   };
+
+  const saveRecordedVoiceNote = async (blob: Blob, durationSeconds: number) => {
+    if (!blob || isLocked || !caseId || isSavingVoiceNote) return;
+    setIsSavingVoiceNote(true);
+    try {
+      const formData = new FormData();
+      formData.append("patient_id", String(patientProfile.id));
+      formData.append("case_id", caseId);
+      formData.append("duration_seconds", String(durationSeconds || 0));
+      formData.append("file", blob, `summary-voice-note-${Date.now()}.webm`);
+
+      const res = await fetch(`${API_BASE_URL}/api/vania/case-profile/`, {
+        method: "POST",
+        headers: { ...getAuthHeaders() },
+        body: formData,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || "خطا در ذخیره یادداشت صوتی.");
+
+      syncVoiceNotesFromPayload(body);
+      resetAudioRecording();
+      toast.success("یادداشت صوتی ذخیره شد.");
+    } catch (error: any) {
+      toast.error(error?.message || "خطا در ذخیره یادداشت صوتی.");
+    } finally {
+      setIsSavingVoiceNote(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!audioBlob || isRecording || isLocked) return;
+    void saveRecordedVoiceNote(audioBlob, recordingTime);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [audioBlob, isRecording, isLocked]);
+
+  const deleteVoiceNote = async (voiceNoteId: string) => {
+    if (isLocked || !caseId || isDeletingVoiceNoteId) return;
+    setIsDeletingVoiceNoteId(voiceNoteId);
+    try {
+      const query = new URLSearchParams({
+        patient_id: String(patientProfile.id),
+        case_id: String(caseId),
+        voice_note_id: voiceNoteId,
+      });
+      const res = await fetch(`${API_BASE_URL}/api/vania/case-profile/?${query.toString()}`, {
+        method: "DELETE",
+        headers: { ...getAuthHeaders() },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error || "حذف یادداشت صوتی ناموفق بود.");
+
+      syncVoiceNotesFromPayload(body);
+      if (activeVoiceNoteId === voiceNoteId) {
+        setActiveVoiceNoteId(null);
+        setIsPreviewPlaying(false);
+      }
+      toast.success("یادداشت صوتی حذف شد.");
+    } catch (error: any) {
+      toast.error(error?.message || "حذف یادداشت صوتی ناموفق بود.");
+    } finally {
+      setIsDeletingVoiceNoteId(null);
+    }
+  };
+
+  const transcribeVoiceNote = async (voiceNote: CaseVoiceNote) => {
+    if (isLocked || isTranscribingVoiceNoteId) return;
+    setIsTranscribingVoiceNoteId(voiceNote.id);
+    try {
+      const noteBlob = await fetchVoiceNoteBlob(voiceNote);
+
+      const formData = new FormData();
+      formData.append("file", noteBlob, voiceNote.file_name || "recording.webm");
+
+      const transcribeResponse = await fetch(`${API_BASE_URL}/agent/transcribe`, {
+        method: "POST",
+        headers: { ...getAuthHeaders() },
+        body: formData,
+      });
+      const transcribeBody = await transcribeResponse.json().catch(() => ({}));
+      if (!transcribeResponse.ok) throw new Error(transcribeBody?.detail || "تبدیل گفتار به متن ناموفق بود.");
+
+      const text = String(transcribeBody?.text || "").trim();
+      if (!text) {
+        toast.error("متنی از فایل صوتی استخراج نشد.");
+        return;
+      }
+      setSummary((prev) => (prev?.trim() ? `${prev.trim()}\n${text}` : text));
+      toast.success("متن به بخش شرح حال اضافه شد.");
+    } catch (error: any) {
+      toast.error(error?.message || "تبدیل گفتار به متن ناموفق بود.");
+    } finally {
+      setIsTranscribingVoiceNoteId(null);
+    }
+  };
+
+  const fetchVoiceNoteBlob = async (voiceNote: CaseVoiceNote) => {
+    const noteResponse = await fetch(buildVoiceNoteUrl(voiceNote.id), {
+      headers: { ...getAuthHeaders() },
+    });
+    if (!noteResponse.ok) {
+      const body = await noteResponse.json().catch(() => ({}));
+      throw new Error(body?.error || "دریافت فایل صوتی ناموفق بود.");
+    }
+    return await noteResponse.blob();
+  };
+
+  const toggleVoicePreview = async (voiceNote: CaseVoiceNote) => {
+    const audioEl = audioPreviewRef.current;
+    if (!audioEl) return;
+
+    if (activeVoiceNoteId === voiceNote.id) {
+      if (isPreviewPlaying) {
+        audioEl.pause();
+      } else {
+        try {
+          await audioEl.play();
+        } catch {
+          toast.error("پخش فایل صوتی ناموفق بود.");
+        }
+      }
+      return;
+    }
+
+    setIsLoadingPreviewId(voiceNote.id);
+    try {
+      const blob = await fetchVoiceNoteBlob(voiceNote);
+      const nextUrl = URL.createObjectURL(blob);
+      setActiveVoicePreviewUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return nextUrl;
+      });
+    } catch (error: any) {
+      toast.error(error?.message || "پخش فایل صوتی ناموفق بود.");
+      setIsLoadingPreviewId(null);
+      return;
+    }
+    setIsLoadingPreviewId(null);
+    setActiveVoiceNoteId(voiceNote.id);
+    setIsPreviewPlaying(false);
+  };
+
+  useEffect(() => {
+    if (!activeVoiceNoteId || !audioPreviewRef.current || !activeVoicePreviewUrl) return;
+    const audioEl = audioPreviewRef.current;
+    audioEl.load();
+    void audioEl.play().then(() => setIsPreviewPlaying(true)).catch(() => setIsPreviewPlaying(false));
+  }, [activeVoiceNoteId, activeVoicePreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (activeVoicePreviewUrl) URL.revokeObjectURL(activeVoicePreviewUrl);
+    };
+  }, [activeVoicePreviewUrl]);
 
   const saveAnalysis = () => {
     if (!isAnalysisDirty || isLocked) return;
@@ -116,7 +318,13 @@ export function ProfileTab({
       }).then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body?.error || "خطا در ذخیره سازی.");
-        onEdit({ forms_tests_analysis: body?.forms_tests_analysis ?? analysis });
+        onEdit({
+          forms_tests_analysis: body?.forms_tests_analysis ?? analysis,
+          summary_voice_notes: Array.isArray(body?.summary_voice_notes) ? body.summary_voice_notes : voiceNotes,
+        });
+        if (Array.isArray(body?.summary_voice_notes)) {
+          setVoiceNotes(body.summary_voice_notes);
+        }
       }),
       {
         loading: "در حال ذخیره تحلیل...",
@@ -265,12 +473,142 @@ export function ProfileTab({
             <DialogDescription>شرح حال، مشاهده‌ها، و فرمول‌بندی اولیه مسئله را در این بخش ثبت کنید.</DialogDescription>
           </DialogHeader>
 
+          <div className="rounded-xl border border-border/60 bg-muted/10 p-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground">
+                <AudioLines className="h-3.5 w-3.5" />
+                یادداشت‌های صوتی
+                <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                  {voiceNotes.length.toLocaleString("fa-IR")}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-2">
+                {isSavingVoiceNote ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
+                {!isRecording ? (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="outline"
+                    className="h-8 w-8 rounded-full"
+                    onClick={() => void startRecording()}
+                    disabled={isLocked || isSavingVoiceNote || !!isTranscribingVoiceNoteId}
+                  >
+                    <Mic className="h-4 w-4" />
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="destructive"
+                    className="h-8 w-8 rounded-full animate-pulse"
+                    onClick={stopRecording}
+                    disabled={isLocked}
+                  >
+                    <Square className="h-3.5 w-3.5 fill-current" />
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {isRecording ? (
+              <div className="text-[11px] text-amber-600">در حال ضبط... {formatDuration(recordingTime)}</div>
+            ) : null}
+
+            {activeVoiceNote ? (
+              <div className="rounded-lg border border-border/50 bg-background/70 p-2">
+                <div className="mb-1 truncate text-[11px] text-muted-foreground">{activeVoiceNote.file_name}</div>
+                <audio
+                  ref={audioPreviewRef}
+                  controls
+                  className="w-full h-8"
+                  src={activeVoicePreviewUrl || undefined}
+                  onPlay={() => setIsPreviewPlaying(true)}
+                  onPause={() => setIsPreviewPlaying(false)}
+                  onEnded={() => setIsPreviewPlaying(false)}
+                />
+              </div>
+            ) : (
+              <audio ref={audioPreviewRef} className="hidden" />
+            )}
+
+            <div className="space-y-1.5 max-h-44 overflow-y-auto pr-0.5">
+              {voiceNotes.length === 0 ? (
+                <div className="text-[11px] text-muted-foreground py-2">هنوز یادداشت صوتی ثبت نشده است.</div>
+              ) : (
+                voiceNotes.map((voiceNote, index) => (
+                  <div key={voiceNote.id} className="flex items-center justify-between gap-2 rounded-lg border border-border/40 bg-background/60 px-2 py-1.5">
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-medium">یادداشت {voiceNotes.length - index}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {formatDuration(voiceNote.duration_seconds)} • {new Date(voiceNote.created_at).toLocaleTimeString("fa-IR", { hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-0.5">
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={() => void toggleVoicePreview(voiceNote)}
+                          >
+                            {isLoadingPreviewId === voiceNote.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : activeVoiceNoteId === voiceNote.id && isPreviewPlaying ? (
+                              <Pause className="h-3.5 w-3.5" />
+                            ) : (
+                              <Play className="h-3.5 w-3.5" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>{activeVoiceNoteId === voiceNote.id && isPreviewPlaying ? "توقف پخش" : "پخش"}</TooltipContent>
+                      </Tooltip>
+
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            onClick={() => void transcribeVoiceNote(voiceNote)}
+                            disabled={isLocked || !!isTranscribingVoiceNoteId}
+                          >
+                            {isTranscribingVoiceNoteId === voiceNote.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <WandSparkles className="h-3.5 w-3.5" />}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>تبدیل به متن و افزودن</TooltipContent>
+                      </Tooltip>
+
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-destructive"
+                            onClick={() => void deleteVoiceNote(voiceNote.id)}
+                            disabled={isLocked || !!isDeletingVoiceNoteId}
+                          >
+                            {isDeletingVoiceNoteId === voiceNote.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>حذف</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
           <Textarea
             value={summary}
             onChange={(e) => setSummary(e.target.value)}
             placeholder="شرح حال، شکایت اصلی، و مشاهدات بالینی..."
             className="min-h-[360px] resize-y text-sm leading-7"
-            disabled={isLocked || isSaving}
+            disabled={isLocked || isSaving || !!isTranscribingVoiceNoteId}
           />
 
           <DialogFooter>

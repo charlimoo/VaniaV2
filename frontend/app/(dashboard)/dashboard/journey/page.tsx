@@ -189,7 +189,7 @@ export default function VisitorJourneyPage() {
   }, [canvasId, data, doctorScopeId, caseScopeId, user?.id]);
 
   return (
-    <RoleGuard allowedRoles={["visitor"]}>
+    <RoleGuard allowedRoles={["visitor", "expert"]}>
       <div className="mx-auto flex h-full w-full max-w-6xl flex-col space-y-4 pb-6 pt-4" dir="rtl">
         <div className="flex items-center justify-between">
           <h1 className="flex items-center gap-2 text-xl font-bold sm:text-2xl">

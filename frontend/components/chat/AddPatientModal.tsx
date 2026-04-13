@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 import { useVaniaStore } from "@/lib/vania/store";
 import { useRouter, useParams } from "next/navigation";
+import { getNormalizedValidPhoneOrNull, sanitizePhoneInputForDisplay } from "@/lib/phone";
 
 interface Props {
   trigger?: React.ReactNode;
@@ -50,7 +51,8 @@ export function AddPatientModal({ trigger }: Props) {
   const agentId = params.agentId as string;
 
   const handleSubmit = async () => {
-    if (!formData.fullName || !formData.phone) {
+    const normalizedPhone = getNormalizedValidPhoneOrNull(formData.phone);
+    if (!formData.fullName || !normalizedPhone) {
       toast.error("نام و نام خانوادگی و شماره تماس الزامی است.");
       return;
     }
@@ -61,7 +63,7 @@ export function AddPatientModal({ trigger }: Props) {
         method: "POST",
         headers: { "Content-Type": "application/json", ...getAuthHeaders() },
         body: JSON.stringify({
-          phone_number: formData.phone,
+          phone_number: normalizedPhone,
           full_name: formData.fullName,
         })
       });
@@ -141,9 +143,12 @@ Suggest that the doctor should first complete BASE_PROFILE_V1 in the "فرم‌�
             <Label className="text-xs flex items-center gap-1.5"><Phone className="w-3 h-3"/> شماره تماس</Label>
             <Input 
               value={formData.phone} 
-              onChange={(e) => setFormData({...formData, phone: e.target.value})} 
+              onChange={(e) => setFormData({...formData, phone: sanitizePhoneInputForDisplay(e.target.value)})} 
               placeholder="09123456789" 
               dir="ltr" 
+              type="tel"
+              inputMode="numeric"
+              maxLength={11}
             />
           </div>
         </div>

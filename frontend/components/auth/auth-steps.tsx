@@ -16,10 +16,15 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
+import { PASSWORD_POLICY_HINT, getPasswordPolicyErrors } from "@/lib/password-policy"
+import { isValidIranMobile, normalizePhoneNumberInput, sanitizePhoneInputForDisplay } from "@/lib/phone"
 
 // --- Schemas ---
 const phoneSchema = z.object({
-  phoneNumber: z.string().regex(/^(\+98|0)?9\d{9}$/, "شماره موبایل معتبر نیست"),
+  phoneNumber: z
+    .string()
+    .transform((value) => normalizePhoneNumberInput(value))
+    .refine((value) => isValidIranMobile(value), "شماره موبایل باید با فرمت 09123456789 باشد"),
 })
 
 const otpSchema = z.object({
@@ -33,7 +38,18 @@ const passwordSchema = z.object({
 const registrationSchema = z.object({
   fullName: z.string().min(3, "نام کامل الزامی است"),
   email: z.string().email("ایمیل معتبر نیست").optional().or(z.literal("")),
-  password: z.string().min(6, "رمز عبور باید حداقل ۶ کاراکتر باشد"),
+  password: z
+    .string()
+    .min(1, "لطفا رمز عبور را وارد کنید")
+    .superRefine((value, ctx) => {
+      const policyErrors = getPasswordPolicyErrors(value)
+      if (policyErrors.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: policyErrors[0],
+        })
+      }
+    }),
 })
 
 // --- Step 1: Phone ---
@@ -41,7 +57,7 @@ export function StepPhone({ onSubmit, isLoading }: { onSubmit: (val: string) => 
   const form = useForm({ resolver: zodResolver(phoneSchema) })
 
   return (
-    <form onSubmit={form.handleSubmit((d) => onSubmit(d.phoneNumber))} className="flex flex-col h-full justify-center space-y-6">
+    <form onSubmit={form.handleSubmit((d) => onSubmit(normalizePhoneNumberInput(d.phoneNumber)))} className="flex flex-col h-full justify-center space-y-6">
       <div className="space-y-1 text-center">
         <h2 className="text-xl font-bold tracking-tight text-white">ورود / ثبت‌نام</h2>
         <p className="text-xs text-zinc-400">شماره موبایل خود را وارد کنید</p>
@@ -50,8 +66,13 @@ export function StepPhone({ onSubmit, isLoading }: { onSubmit: (val: string) => 
       <div className="space-y-4">
         <div className="relative group">
           <Input 
-            {...form.register("phoneNumber")}
+            {...form.register("phoneNumber", {
+              setValueAs: (value) => sanitizePhoneInputForDisplay(String(value ?? "")),
+            })}
             placeholder="0912..." 
+            type="tel"
+            inputMode="numeric"
+            maxLength={11}
             className="h-12 text-center text-lg tracking-widest ltr bg-white/5 border-white/10 focus:border-white/20 focus:bg-white/10 rounded-xl transition-all placeholder:text-white/20"
             autoFocus
             disabled={isLoading}
@@ -75,15 +96,27 @@ export function StepPhone({ onSubmit, isLoading }: { onSubmit: (val: string) => 
 export function StepRegistration({ 
   phoneNumber, 
   onSubmit, 
-  isLoading 
+  isLoading,
+  initialValues,
+  serverError,
 }: { 
   phoneNumber: string; 
   onSubmit: (data: any) => void; 
   isLoading: boolean;
+  initialValues?: {
+    fullName?: string;
+    email?: string;
+    password?: string;
+  };
+  serverError?: string | null;
 }) {
   const form = useForm({
     resolver: zodResolver(registrationSchema),
-    defaultValues: { fullName: "", email: "", password: "" }
+    defaultValues: {
+      fullName: initialValues?.fullName ?? "",
+      email: initialValues?.email ?? "",
+      password: initialValues?.password ?? "",
+    }
   })
 
   const onFormSubmit = (data: any) => {
@@ -97,6 +130,12 @@ export function StepRegistration({
         <p className="text-[10px] text-zinc-500 font-mono tracking-wider">{phoneNumber}</p>
       </div>
 
+      {serverError && (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200 leading-6">
+          {serverError}
+        </div>
+      )}
+
       <form onSubmit={form.handleSubmit(onFormSubmit)} className="flex flex-col gap-3">
         
         <div className="space-y-3">
@@ -108,6 +147,11 @@ export function StepRegistration({
                 className="h-10 pr-9 text-sm bg-white/5 border-white/10 focus:border-white/30 rounded-lg placeholder:text-zinc-600 transition-all"
             />
           </div>
+          {form.formState.errors.fullName && (
+            <p className="text-[11px] text-red-400 leading-5">
+              {form.formState.errors.fullName.message as string}
+            </p>
+          )}
 
           <div className="relative group">
             <Mail className="absolute right-3 top-2.5 h-4 w-4 text-zinc-500 group-focus-within:text-white transition-colors" />
@@ -117,6 +161,11 @@ export function StepRegistration({
                 className="h-10 pr-9 text-sm bg-white/5 border-white/10 focus:border-white/30 rounded-lg placeholder:text-zinc-600 transition-all ltr text-left"
             />
           </div>
+          {form.formState.errors.email && (
+            <p className="text-[11px] text-red-400 leading-5">
+              {form.formState.errors.email.message as string}
+            </p>
+          )}
 
           <div className="relative group">
             <Lock className="absolute right-3 top-2.5 h-4 w-4 text-zinc-500 group-focus-within:text-white transition-colors" />
@@ -125,8 +174,17 @@ export function StepRegistration({
                 type="password" 
                 placeholder="رمز عبور" 
                 className="h-10 pr-9 text-sm bg-white/5 border-white/10 focus:border-white/30 rounded-lg placeholder:text-zinc-600 transition-all ltr text-left"
+                aria-describedby="registration-password-hint"
             />
           </div>
+          {form.formState.errors.password && (
+            <p className="text-[11px] text-red-400 leading-5">
+              {form.formState.errors.password.message as string}
+            </p>
+          )}
+          <p id="registration-password-hint" className="text-[11px] text-zinc-500 leading-5">
+            {PASSWORD_POLICY_HINT}
+          </p>
         </div>
 
         <Button type="submit" className="w-full h-11 mt-2 rounded-xl bg-white text-black hover:bg-zinc-200 font-bold shadow-lg shadow-white/5" disabled={isLoading}>

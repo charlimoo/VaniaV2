@@ -172,7 +172,7 @@ export function CanvasPanel({ onCollapse, isPreviewMode = false, demoConfig }: C
                         asChild
                     >
                         <Link href="/dashboard/billing">
-                            <Sparkles className="h-5 w-5 fill-white/20" /> خرید اشتراک ویژه
+                            <Sparkles className="h-5 w-5 fill-white/20" /> مشاهده طرح‌ها و اعتبار
                         </Link>
                     </Button>
                 </div>

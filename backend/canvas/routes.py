@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from asgiref.sync import sync_to_async
 
 from agents.auth import get_current_user
-from users.models import CustomUser
+from users.models import CustomUser, UserContextEntry
 from services.models import AgentService
 from services.models_canvas import CanvasInstance
 from canvas.manager import canvas_manager
@@ -22,6 +22,34 @@ from agents.factory import CapabilityRegistry, CanvasType
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _coerce_form_dict(payload: Any) -> Dict[str, Any]:
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def _is_base_profile_stale(canvas_state: Dict[str, Any], canonical_form: Dict[str, Any]) -> bool:
+    state = canvas_state if isinstance(canvas_state, dict) else {}
+    base_profile = state.get("base_profile") if isinstance(state.get("base_profile"), dict) else {}
+    canvas_form = _coerce_form_dict(base_profile.get("form"))
+    return canvas_form != (canonical_form or {})
+
+
+def _needs_base_profile_rehydration(canvases_data: List[Dict[str, Any]], canonical_form: Dict[str, Any]) -> bool:
+    if not canonical_form and not canvases_data:
+        return False
+
+    for component_key in ("VANIA_PATIENT_MANAGER", "VANIA_PATIENT_JOURNEY"):
+        canvas = next((item for item in canvases_data if item.get("component_key") == component_key), None)
+        if not canvas:
+            continue
+        state = canvas.get("current_state", {}) if isinstance(canvas.get("current_state"), dict) else {}
+        if _is_base_profile_stale(state, canonical_form):
+            logger.info("   -> Base profile mismatch detected for %s. Re-triggering hydration.", component_key)
+            return True
+    return False
 
 # ... (Models remain same) ...
 class CanvasDTO(BaseModel):
@@ -140,6 +168,20 @@ def perform_hydration(agent_id: str, session_id: str, resource_id: str, selected
         if case_token:
             selected_case_context.reset(case_token)
 
+
+@sync_to_async
+def fetch_canonical_base_profile(resource_id: Optional[str]) -> Dict[str, Any]:
+    if not resource_id:
+        return {}
+    try:
+        patient = CustomUser.objects.get(pk=resource_id)
+    except (CustomUser.DoesNotExist, ValueError, TypeError):
+        return {}
+    entry = CaseService.get_latest_base_profile_entry(patient)
+    if not entry or not isinstance(entry.data, dict):
+        return {}
+    return entry.data
+
 # ==========================================
 # 3. ENDPOINTS
 # ==========================================
@@ -193,6 +235,7 @@ async def get_canvas_state(
         canvases_data = await fetch_session_canvases(session_id)
         
         should_hydrate = not canvases_data
+        canonical_base_profile = await fetch_canonical_base_profile(resource_id) if resource_id else {}
         
         if canvases_data and resource_id:
             pm_canvas = next((c for c in canvases_data if c['component_key'] == 'VANIA_PATIENT_MANAGER'), None)
@@ -210,6 +253,10 @@ async def get_canvas_state(
                 ):
                     logger.info("   -> Patient manager selected_case payload is stale. Re-triggering hydration.")
                     should_hydrate = True
+
+        if canvases_data and resource_id and not should_hydrate:
+            if _needs_base_profile_rehydration(canvases_data, canonical_base_profile):
+                should_hydrate = True
         if canvases_data:
             pj_canvas = next((c for c in canvases_data if c['component_key'] == 'VANIA_PATIENT_JOURNEY'), None)
             if pj_canvas:
@@ -339,6 +386,17 @@ async def update_canvas_instance(
                 clinical_summary = delta.get("clinical_summary", selected_case_delta.get("clinical_summary"))
                 if clinical_summary is not None:
                     await sync_to_async(ProfileService.update_summary)(patient, clinical_summary, resolved_doctor_scope, selected_case_id)
+
+                # A.5 Permanent Shared Base Profile Update
+                base_profile_delta = delta.get("base_profile") if isinstance(delta.get("base_profile"), dict) else {}
+                base_profile_form = base_profile_delta.get("form") if isinstance(base_profile_delta.get("form"), dict) else None
+                if base_profile_form is not None:
+                    await sync_to_async(CaseService.save_base_profile)(
+                        patient,
+                        base_profile_form,
+                        creator=user,
+                        source=UserContextEntry.SourceType.USER,
+                    )
                 
                 # B. Permanent Demographics Update
                 if "patient_profile" in delta:

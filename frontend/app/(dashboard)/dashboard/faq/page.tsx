@@ -6,14 +6,17 @@ import {
   Search, 
   HelpCircle, 
   ChevronDown, 
+  BookOpen,
   Phone,
   Mail,
   Headphones,
-  Loader2
+  Loader2,
+  Package
 } from "lucide-react"
 
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import { GuideModal } from "@/components/guide/GuideModal"
 import { cn } from "@/lib/utils"
 import { useConfig } from "@/components/providers/config-provider"
 import { API_BASE_URL } from "@/lib/api"
@@ -27,6 +30,7 @@ interface FAQItem {
 
 export default function FaqPage() {
   const { config } = useConfig();
+  const contacts = Array.isArray(config.support_contacts) ? config.support_contacts : [];
   
   const [faqs, setFaqs] = useState<FAQItem[]>([]);
   const [loadingFaqs, setLoadingFaqs] = useState(true);
@@ -121,6 +125,23 @@ export default function FaqPage() {
         ))}
       </div>
 
+      {/* Guide Section */}
+      <div className="rounded-xl border border-border/60 bg-card/50 p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="text-right">
+            <h2 className="text-lg font-semibold flex items-center justify-start gap-2">
+              <BookOpen className="h-5 w-5 text-primary" />
+              راهنمای استفاده از وانیا آپ
+            </h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              برای آشنایی کامل با دستیارها، بخش‌های پلتفرم و مسیر شروع سریع.
+            </p>
+          </div>
+
+          <GuideModal triggerLabel="مشاهده راهنمای کامل" triggerClassName="w-full md:w-auto" />
+        </div>
+      </div>
+
       {/* FAQ List */}
       <div className="space-y-4 min-h-[300px]">
         {loadingFaqs ? (
@@ -205,16 +226,17 @@ export default function FaqPage() {
 
       {/* --- Minimal Contact Section (Dynamic) --- */}
       <div className="mt-8 pt-8 border-t border-border/40">
-        <div className="rounded-xl border border-border/50 bg-muted/20 p-4 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
+        <div className="rounded-xl border border-border/50 bg-muted/20 p-4 flex flex-col gap-4 text-xs text-muted-foreground">
           
-          <div className="flex items-center gap-2">
-             <div className="p-1.5 bg-primary/10 rounded-full text-primary">
-                <Headphones className="h-3.5 w-3.5" />
-             </div>
-             <span>پاسخ خود را پیدا نکردید؟ تیم فنی آماده راهنمایی شماست.</span>
-          </div>
+          <div className="flex items-center gap-2 justify-between ">
+            <div className="flex items-center gap-2">
+              <div className=" p-1.5 bg-primary/10 rounded-full text-primary">
+                  <Headphones className="h-3.5 w-3.5" />
+              </div>
+              <span>پاسخ خود را پیدا نکردید؟ تیم فنی آماده راهنمایی شماست.</span>
+            </div>
 
-          <div className="flex items-center gap-6">
+          <div className="flex flex-wrap items-center justify-center gap-4 md:gap-6">
              <a href={`tel:${config.support_phone}`} className="flex items-center gap-2 hover:text-primary transition-colors group">
                 
                 <span className="font-mono font-medium tracking-wide dir-ltr text-foreground/80">
@@ -232,7 +254,25 @@ export default function FaqPage() {
                 </span>
                 <Mail className="h-3.5 w-3.5 group-hover:text-primary/80" />
              </a>
+             <div className="hidden md:block w-px h-3 bg-border" />
+             {config.support_postal_code && (
+                <span className="flex gap-2 text-foreground/80">{config.support_postal_code} <Package className="h-3.5 w-3.5 group-hover:text-primary/80" /></span>
+             )}
           </div>
+          </div>
+          {contacts.length > 0 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {contacts.map((contact, index) => (
+                <div key={`${contact.name}-${index}`} className="rounded-lg border border-border/40 px-3 py-2 bg-background/40 text-right">
+                  {contact.role && <p className="text-[11px] text-muted-foreground">{contact.role}</p>}
+                  <p className="text-xs font-semibold text-foreground">{contact.name}</p>
+                  <a href={`tel:${contact.phone}`} className="inline-block font-mono text-[11px] text-primary mt-0.5" dir="ltr">
+                    {contact.phone}
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
 
         </div>
       </div>

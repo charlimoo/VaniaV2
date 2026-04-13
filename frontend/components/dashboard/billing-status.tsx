@@ -77,7 +77,7 @@ export function BillingStatus() {
                 <span className="font-mono text-foreground">{fmt(balancePaid)}</span>
              </div>
              <div className="flex justify-between items-center bg-muted/30 p-2 rounded">
-                <span className="flex items-center gap-1.5"><Zap className="w-3 h-3"/> اعتبار هدیه/طرح</span>
+                <span className="flex items-center gap-1.5"><Zap className="w-3 h-3"/> اعتبار طرح</span>
                 <span className="font-mono text-foreground">{fmt(balancePlan)}</span>
              </div>
           </CollapsibleContent>

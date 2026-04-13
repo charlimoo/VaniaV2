@@ -1,13 +1,18 @@
 # backend/vania_core/services.py
 import uuid
 import logging
+import os
 from django.utils import timezone
 from django.db import transaction
 from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.core.files.base import ContentFile
+from django.core.files.storage import default_storage
 from typing import Optional
 # --- App Imports ---
 from users.services import user_context_manager
 from users.models import CustomUser, UserContextEntry, UserRole
+from users.phone_utils import normalize_and_validate_phone_number
 from users.sms_service import sms_service
 from .models import Notification, TreatmentConnection, PatientInvite
 from .schemas import (
@@ -73,7 +78,10 @@ class PatientManagementService:
         Adds or links a patient to doctor list and enforces active uniqueness.
         Returns (success, message, patient_object, connection_status, activation_locked).
         """
-        phone = phone_number.strip()
+        try:
+            phone = normalize_and_validate_phone_number(phone_number)
+        except DjangoValidationError as exc:
+            return False, exc.messages[0], None, None, False
         initial_name = full_name.strip() if full_name and full_name.strip() else "کاربر جدید"
 
         try:
@@ -123,6 +131,28 @@ class ProfileService:
     CONTEXT_KEY = "clinical_summary"
     DEMOGRAPHICS_KEY = "patient_demographics"
     FORMS_TESTS_ANALYSIS_KEY = "forms_tests_clinical_analysis"
+    SUMMARY_VOICE_NOTES_KEY = "clinical_summary_voice_notes"
+
+    @staticmethod
+    def _summary_voice_notes_context_key(doctor_id: int | None = None, case_id: str | None = None) -> str:
+        if doctor_id and case_id:
+            return build_case_scoped_key(ProfileService.SUMMARY_VOICE_NOTES_KEY, doctor_id, case_id)
+        if doctor_id:
+            return build_scoped_key(ProfileService.SUMMARY_VOICE_NOTES_KEY, doctor_id)
+        return ProfileService.SUMMARY_VOICE_NOTES_KEY
+
+    @staticmethod
+    def _normalize_voice_note(note: dict) -> dict:
+        payload = dict(note or {})
+        payload["id"] = str(payload.get("id") or uuid.uuid4().hex)
+        payload["file_name"] = payload.get("file_name") or "voice-note.webm"
+        payload["storage_path"] = payload.get("storage_path") or ""
+        payload["content_type"] = payload.get("content_type") or "audio/webm"
+        payload["size_bytes"] = int(payload.get("size_bytes") or 0)
+        payload["duration_seconds"] = float(payload.get("duration_seconds") or 0.0)
+        payload["created_at"] = payload.get("created_at") or timezone.now().isoformat()
+        payload["uploaded_by_user_id"] = int(payload.get("uploaded_by_user_id") or 0)
+        return payload
 
     @staticmethod
     def get_summary(patient: CustomUser, doctor_id: int | None = None, case_id: str | None = None) -> str:
@@ -233,3 +263,105 @@ class ProfileService:
             data={"analysis_text": analysis_text},
             source=UserContextEntry.SourceType.AGENT,
         )
+
+    @staticmethod
+    def get_summary_voice_notes(patient: CustomUser, doctor_id: int | None = None, case_id: str | None = None) -> list[dict]:
+        key = ProfileService._summary_voice_notes_context_key(doctor_id, case_id)
+        entry = user_context_manager.get_context(patient, key)
+        if not entry or not isinstance(entry.data, dict):
+            return []
+        notes = entry.data.get("voice_notes", [])
+        if not isinstance(notes, list):
+            return []
+        normalized = [ProfileService._normalize_voice_note(item) for item in notes if isinstance(item, dict)]
+        normalized.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        return normalized
+
+    @staticmethod
+    def _save_summary_voice_notes(
+        patient: CustomUser,
+        notes: list[dict],
+        doctor_id: int | None = None,
+        case_id: str | None = None,
+        creator: CustomUser | None = None,
+    ):
+        key = ProfileService._summary_voice_notes_context_key(doctor_id, case_id)
+        user_context_manager.set_singleton_context(
+            user=patient,
+            key=key,
+            data={"voice_notes": notes},
+            source=UserContextEntry.SourceType.USER if creator else UserContextEntry.SourceType.SYSTEM,
+            creator=creator,
+        )
+
+    @staticmethod
+    def add_summary_voice_note(
+        patient: CustomUser,
+        uploaded_file,
+        *,
+        doctor_id: int | None = None,
+        case_id: str | None = None,
+        uploaded_by_user_id: int | None = None,
+        duration_seconds: float = 0.0,
+        creator: CustomUser | None = None,
+    ) -> dict:
+        extension = (os.path.splitext(uploaded_file.name or "")[1] or ".webm").lower()
+        safe_name = f"{uuid.uuid4().hex}{extension}"
+        relative_path = os.path.join("case_profile_voice_notes", str(patient.id), safe_name)
+        file_content = uploaded_file.read()
+        stored_path = default_storage.save(relative_path, ContentFile(file_content))
+        note = ProfileService._normalize_voice_note(
+            {
+                "id": uuid.uuid4().hex,
+                "file_name": uploaded_file.name or f"voice-note{extension}",
+                "storage_path": stored_path,
+                "content_type": getattr(uploaded_file, "content_type", None) or "audio/webm",
+                "size_bytes": getattr(uploaded_file, "size", None) or len(file_content),
+                "duration_seconds": duration_seconds,
+                "created_at": timezone.now().isoformat(),
+                "uploaded_by_user_id": int(uploaded_by_user_id or 0),
+            }
+        )
+        notes = ProfileService.get_summary_voice_notes(patient, doctor_id=doctor_id, case_id=case_id)
+        notes = [note, *notes]
+        ProfileService._save_summary_voice_notes(
+            patient,
+            notes,
+            doctor_id=doctor_id,
+            case_id=case_id,
+            creator=creator,
+        )
+        return note
+
+    @staticmethod
+    def delete_summary_voice_note(
+        patient: CustomUser,
+        voice_note_id: str,
+        *,
+        doctor_id: int | None = None,
+        case_id: str | None = None,
+        creator: CustomUser | None = None,
+    ) -> bool:
+        notes = ProfileService.get_summary_voice_notes(patient, doctor_id=doctor_id, case_id=case_id)
+        remaining: list[dict] = []
+        removed_note: dict | None = None
+        for item in notes:
+            if item.get("id") == voice_note_id:
+                removed_note = item
+                continue
+            remaining.append(item)
+        if removed_note is None:
+            return False
+
+        storage_path = removed_note.get("storage_path")
+        if storage_path and default_storage.exists(storage_path):
+            default_storage.delete(storage_path)
+
+        ProfileService._save_summary_voice_notes(
+            patient,
+            remaining,
+            doctor_id=doctor_id,
+            case_id=case_id,
+            creator=creator,
+        )
+        return True

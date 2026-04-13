@@ -55,4 +55,5 @@ class ProfessionPolicyTests(TestCase):
             full_name="پزشک نمونه",
             credential_code="999999",
         )
-        self.assertFalse(bad_result.verified)
+        self.assertTrue(bad_result.verified)
+        self.assertTrue(bad_result.meta.get("manual_review"))

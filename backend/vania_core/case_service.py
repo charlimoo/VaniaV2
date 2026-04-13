@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from django.utils import timezone
 
+from capabilities.vania_visitor.forms.base_profile import FORM_BASE_PROFILE
 from users.models import CustomUser, UserContextEntry
 from users.services import user_context_manager
 from vania_core.models import CaseAccessGrant, TreatmentConnection
@@ -29,6 +30,43 @@ class CaseService:
     CASES_CONTEXT_BASE = "vania_cases"
     BASE_PROFILE_CONTEXT_KEY = build_base_profile_key()
     LEGACY_GENERIC_CASE_TITLE_RE = re.compile(r"^پرونده\s+\d+\s*$")
+
+    @staticmethod
+    def _base_profile_defaults() -> Dict[str, Any]:
+        defaults: Dict[str, Any] = {}
+        for section in FORM_BASE_PROFILE.get("schema", []):
+            if section.get("type") != "section":
+                continue
+            for field in section.get("fields", []):
+                name = field.get("name")
+                if not name:
+                    continue
+                field_type = field.get("type")
+                defaults[name] = [] if field_type in {"checkbox_group", "datagrid"} else ""
+        return defaults
+
+    @staticmethod
+    def build_base_profile_payload(patient: CustomUser, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        existing_entry = CaseService.get_latest_base_profile_entry(patient)
+        existing_data = existing_entry.data if existing_entry and isinstance(existing_entry.data, dict) else {}
+        incoming_data = data if isinstance(data, dict) else {}
+        payload = {
+            **CaseService._base_profile_defaults(),
+            **existing_data,
+            **incoming_data,
+        }
+        payload.update(
+            {
+                "form_key": "BASE_PROFILE_V1",
+                "form_title": payload.get("form_title") or "پرونده پایه",
+                "visibility_scope": "SHARED_BASE",
+                "case_id": None,
+                "full_name": payload.get("full_name") or patient.full_name or patient.phone_number or "",
+                "email": payload.get("email") or getattr(patient, "email", "") or "",
+                "mobile_phone": payload.get("mobile_phone") or patient.phone_number or "",
+            }
+        )
+        return payload
 
     @staticmethod
     def _default_case_title(patient: CustomUser, doctor: CustomUser) -> str:
@@ -491,13 +529,7 @@ class CaseService:
 
     @staticmethod
     def save_base_profile(patient: CustomUser, data: Dict[str, Any], creator=None, source=UserContextEntry.SourceType.USER) -> UserContextEntry:
-        payload = {
-            "form_key": "BASE_PROFILE_V1",
-            "form_title": "پرونده پایه",
-            "visibility_scope": "SHARED_BASE",
-            "case_id": None,
-            **(data or {}),
-        }
+        payload = CaseService.build_base_profile_payload(patient, data)
         return user_context_manager.set_singleton_context(
             user=patient,
             key=CaseService.BASE_PROFILE_CONTEXT_KEY,

@@ -86,6 +86,16 @@ def _normalize_session_state_aliases(session_state):
 def _should_hide_assistant_text(agent_slug: Optional[str], tool_calls: Optional[list]) -> bool:
     return bool(agent_slug in TOOL_ONLY_CHAT_AGENT_SLUGS and tool_calls)
 
+
+def _get_session_display_name(session_data: Optional[dict], fallback: str = "New Conversation") -> str:
+    if not isinstance(session_data, dict):
+        return fallback
+    return (
+        session_data.get("name")
+        or session_data.get("session_name")
+        or fallback
+    )
+
 # ==========================================
 # SESSION MANAGEMENT ROUTES
 # ==========================================
@@ -135,7 +145,7 @@ async def list_sessions(
             agent_slug = s_dict.get('agent_id') 
             
             if session_data:
-                display_name = session_data.get('name', display_name)
+                display_name = _get_session_display_name(session_data, display_name)
                 if 'agent_id' in session_data:
                     agent_slug = session_data['agent_id']
 
@@ -167,11 +177,12 @@ async def get_session_history(
         
         session_name = "New Conversation"
         session_state = {}
+        session_data = {}
         if session:
             s_data = safe_serialize(session)
             if 'session_data' in s_data:
                 session_data = s_data['session_data'] or {}
-                session_name = session_data.get('name', "New Conversation")
+                session_name = _get_session_display_name(session_data, "New Conversation")
                 apply_session_metadata_defaults(session_data)
                 session_state = _normalize_session_state_aliases({
                     "agent_id": session_data.get("agent_id"),
@@ -329,6 +340,7 @@ async def create_session(
             user_id=str(user.id),
             session_data=apply_session_metadata_defaults({
                 "name": session_data.session_name,
+                "session_name": session_data.session_name,
                 "agent_id": normalized_session_state.get("agent_id"),
                 **normalized_session_state
             }),
@@ -367,6 +379,7 @@ async def rename_session(
             apply_session_metadata_defaults(session)
             if update_data.session_name is not None:
                 session.session_data["name"] = update_data.session_name
+                session.session_data["session_name"] = update_data.session_name
             if update_data.session_state:
                 session.session_data.update(_normalize_session_state_aliases(update_data.session_state))
             
@@ -644,14 +657,24 @@ async def agui_chat_endpoint(
         if session and input_data.messages:
             branch_messages = build_branch_history_messages(input_data.messages)
             if branch_messages:
-                if hasattr(session, "memory") and session.memory is not None:
-                    session.memory.messages = branch_messages
-                else:
-                    session.messages = branch_messages
-                if hasattr(storage, "upsert_session"):
-                    await sync_to_async(storage.upsert_session)(session=session)
-                else:
-                    await sync_to_async(storage.upsert)(session=session)
+                existing_messages = []
+                if hasattr(session, "memory") and session.memory is not None and hasattr(session.memory, "messages"):
+                    existing_messages = session.memory.messages or []
+                elif hasattr(session, "messages"):
+                    existing_messages = session.messages or []
+
+                # Avoid wiping a persisted thread down to the latest user message when the client
+                # only posts the newest turn. Full branch sync is still allowed for edits/reloads.
+                should_replace_history = len(branch_messages) > 1 or not existing_messages
+                if should_replace_history:
+                    if hasattr(session, "memory") and session.memory is not None:
+                        session.memory.messages = branch_messages
+                    else:
+                        session.messages = branch_messages
+                    if hasattr(storage, "upsert_session"):
+                        await sync_to_async(storage.upsert_session)(session=session)
+                    else:
+                        await sync_to_async(storage.upsert)(session=session)
 
         agent = await sync_to_async(create_agent_for_service)(
             user, agent_id, thread_id, request=request
@@ -725,7 +748,7 @@ async def transcribe_audio(
             logger.warning(f"User {user.id} failed to pay for transcription. Cost: {total_cost}")
             raise HTTPException(
                 status_code=402, 
-                detail=f"اعتبار کافی نیست. هزینه تبدیل صوت: {total_cost} سرمایه گفت‌وگو."
+                detail=f"اعتبار کافی نیست. هزینه تبدیل صوت: {total_cost} اعتبار گفتگو."
             )
 
         return {

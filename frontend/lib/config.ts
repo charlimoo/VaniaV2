@@ -39,9 +39,9 @@ export const APP_CONFIG = {
   CREDITS: {
     DEFAULT_DAILY_FREE_AMOUNT: 5.0, // Fallback if API fails
     DISPLAY_PRECISION: 0, 
-    SYMBOL: 'سرمایه گفت‌وگو',
-    NAME_SINGULAR: 'سرمایه گفت‌وگو',
-    NAME_PLURAL: 'سرمایه گفت‌وگو',
+    SYMBOL: 'اعتبار',
+    NAME_SINGULAR: 'اعتبار گفتگو',
+    NAME_PLURAL: 'اعتبار گفتگو',
   },
 
   // --- UI TEXT & LABELS ---
@@ -51,12 +51,12 @@ export const APP_CONFIG = {
     DASHBOARD_SUBTEXT: "دستیار مورد نظرت رو انتخاب کن و به گفت و گو بپرداز",
 
     // Billing
-    BILLING_TITLE: "خرید اشتراک",
-    BILLING_DESC: "خرید اشتراک، افزایش اعتبار و مشاهده تراکنش‌ها.",
+    BILLING_TITLE: "طرح‌ها و اعتبار",
+    BILLING_DESC: "مدیریت طرح‌های اشتراک، افزایش اعتبار و مشاهده تراکنش‌ها.",
     PLAN_ACTIVE_LABEL: "طرح فعال",
     PLAN_EXPIRES_LABEL: "تاریخ انقضا",
-    BUY_CREDIT_TITLE: "افزایش موجودی",
-    BUY_PLAN_TITLE: "ارتقای اشتراک",
+    BUY_CREDIT_TITLE: "بسته‌های اعتبار",
+    BUY_PLAN_TITLE: "طرح‌های اشتراک",
 
     // Chat Interface
     CHAT_WELCOME_TITLE: "سلام!",
@@ -95,7 +95,7 @@ export const APP_CONFIG = {
         url: "/dashboard/journey",
         icon: Route,
         visible: true,
-        allowedRoles: ["visitor"]
+        allowedRoles: ["visitor", "expert"]
       },
       {
         key: "messages",
@@ -120,11 +120,11 @@ export const APP_CONFIG = {
         url: "/dashboard/experts",
         icon: Stethoscope,
         visible: true,
-        allowedRoles: ['visitor']
+        allowedRoles: ['visitor', 'expert']
       },
       {
         key: "billing",
-        title: "خرید اشتراک",
+        title: "طرح‌ها و اعتبار",
         url: "/dashboard/billing",
         icon: CreditCard,
         visible: true
