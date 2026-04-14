@@ -80,7 +80,7 @@ class CaseService:
         return f"پرونده {doctor_name} - {patient_name}"
 
     @staticmethod
-    def _normalize_legacy_case_titles(
+    def _normalize_stored_cases(
         patient: CustomUser,
         doctor: CustomUser,
         cases: List[Dict[str, Any]],
@@ -102,6 +102,25 @@ class CaseService:
             if not current_title or CaseService.LEGACY_GENERIC_CASE_TITLE_RE.match(current_title):
                 next_item["title"] = default_title
                 changed = True
+
+            # Older payloads may contain null/blank doctor metadata, which breaks
+            # case-scoped services that need the owning doctor id to hydrate data.
+            if next_item.get("doctor_id") in (None, ""):
+                next_item["doctor_id"] = int(doctor.id)
+                changed = True
+            if not next_item.get("doctor_name"):
+                next_item["doctor_name"] = doctor.full_name or doctor.phone_number
+                changed = True
+            if not next_item.get("doctor_role_label"):
+                next_item["doctor_role_label"] = doctor.role.name if getattr(doctor, "role", None) else "متخصص"
+                changed = True
+            if not next_item.get("doctor_profession_slug"):
+                next_item["doctor_profession_slug"] = getattr(getattr(doctor, "expert_profession", None), "slug", None)
+                changed = True
+            if not next_item.get("doctor_profession_label"):
+                next_item["doctor_profession_label"] = getattr(getattr(doctor, "expert_profession", None), "name", None)
+                changed = True
+
             normalized_cases.append(next_item)
 
         if changed:
@@ -116,13 +135,20 @@ class CaseService:
         payload.setdefault("created_at", timezone.now().isoformat())
         payload.setdefault("updated_at", payload["created_at"])
         if doctor:
-            payload.setdefault("doctor_id", int(doctor.id))
-            payload.setdefault("doctor_name", doctor.full_name or doctor.phone_number)
-            payload.setdefault("doctor_role_label", doctor.role.name if getattr(doctor, "role", None) else "متخصص")
-            payload.setdefault("doctor_profession_slug", getattr(getattr(doctor, "expert_profession", None), "slug", None))
-            payload.setdefault("doctor_profession_label", getattr(getattr(doctor, "expert_profession", None), "name", None))
-        payload.setdefault("owner_doctor_id", payload.get("doctor_id"))
-        payload.setdefault("owner_doctor_name", payload.get("doctor_name"))
+            if payload.get("doctor_id") in (None, ""):
+                payload["doctor_id"] = int(doctor.id)
+            if not payload.get("doctor_name"):
+                payload["doctor_name"] = doctor.full_name or doctor.phone_number
+            if not payload.get("doctor_role_label"):
+                payload["doctor_role_label"] = doctor.role.name if getattr(doctor, "role", None) else "متخصص"
+            if not payload.get("doctor_profession_slug"):
+                payload["doctor_profession_slug"] = getattr(getattr(doctor, "expert_profession", None), "slug", None)
+            if not payload.get("doctor_profession_label"):
+                payload["doctor_profession_label"] = getattr(getattr(doctor, "expert_profession", None), "name", None)
+        if payload.get("owner_doctor_id") in (None, ""):
+            payload["owner_doctor_id"] = payload.get("doctor_id")
+        if not payload.get("owner_doctor_name"):
+            payload["owner_doctor_name"] = payload.get("doctor_name")
         payload.setdefault("access_mode", "OWNER")
         payload.setdefault("can_edit", True)
         payload.setdefault("is_read_only", False)
@@ -179,7 +205,7 @@ class CaseService:
         doctor = CustomUser.objects.filter(pk=int(doctor_id)).first()
         if not doctor:
             return cases
-        return CaseService._normalize_legacy_case_titles(patient, doctor, cases)
+        return CaseService._normalize_stored_cases(patient, doctor, cases)
 
     @staticmethod
     def save_cases(patient: CustomUser, doctor_id: int, cases: List[Dict[str, Any]], creator=None):
@@ -617,7 +643,10 @@ class CaseService:
             for case_item in CaseService.get_accessible_cases_for_patient(patient):
                 if case_id and case_item.get("id") != case_id:
                     continue
-                tests.extend(ClinicalTestsService.get_tests(patient, doctor_id=int(case_item["doctor_id"]), case_id=case_item.get("id")))
+                doctor_id = case_item.get("doctor_id")
+                if doctor_id in (None, ""):
+                    continue
+                tests.extend(ClinicalTestsService.get_tests(patient, doctor_id=int(doctor_id), case_id=case_item.get("id")))
 
         tests.sort(key=lambda item: item.get("created_at", ""), reverse=True)
         return tests

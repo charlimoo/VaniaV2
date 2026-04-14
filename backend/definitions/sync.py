@@ -209,8 +209,8 @@ class DefinitionSync:
                 "tokens_per_credit": 2000,
                 
                 # --- PAYMENT SETTINGS ---
-                "bank_card_number": "5041721077886563",
-                "bank_holder_name": "وانیا",
+                "bank_card_number": "5029381016591620",
+                "bank_holder_name": "جلال مرادی",
                 "manual_payment_tips": "لطفاً مبلغ دقیق فاکتور را به شماره کارت بالا واریز کرده و کد پیگیری تراکنش را در کادر زیر وارد نمایید. تایید پرداخت ممکن است تا 24 ساعت زمان ببرد.",
                 "support_phone": SUPPORT_INFO["phone"],
                 "support_email": SUPPORT_INFO["email"],

@@ -7,6 +7,7 @@ WORKDIR /app
 
 # Set PATH to include user-installed binaries/libs immediately
 ENV PATH=/root/.local/bin:$PATH
+ENV PIP_DEFAULT_TIMEOUT=1200
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
