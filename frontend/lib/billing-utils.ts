@@ -2,6 +2,19 @@ import { toast } from "sonner";
 import { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { ApiError } from "./api";
 
+export const BILLING_REQUIRED_EVENT = "vania:billing-required";
+
+export type BillingRequiredDetail = {
+  title?: string;
+  message?: string;
+  source?: string;
+};
+
+export const showBillingRequiredDialog = (detail?: BillingRequiredDetail) => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(BILLING_REQUIRED_EVENT, { detail }));
+};
+
 /**
  * Intercepts API errors and checks for a 402 Payment Required status.
  * If a 402 error is detected, it displays a specific toast notification
@@ -16,7 +29,15 @@ export const handleBillingError = (error: any, router: AppRouterInstance): boole
   const status = error instanceof ApiError ? error.status : error?.status;
   
   if (status === 402) {
-    const message = error.detail || "اعتبار کافی نیست.";
+    const message =
+      typeof error?.detail === "string"
+        ? error.detail
+        : error?.detail?.detail || error?.message || "اعتبار کافی نیست.";
+
+    showBillingRequiredDialog({
+      title: "اعتبار گفتگو به پایان رسیده است",
+      message,
+    });
 
     toast.error("عدم موجودی کافی", {
       description: message,

@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { useUser } from "@/hooks/use-user"
 import {
   API_BASE_URL,
@@ -197,6 +198,8 @@ type ExpertProfessionOption = {
 
 function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: () => Promise<any> }) {
   const [isOpen, setIsOpen] = useState(false)
+  const [isWelcomeOpen, setIsWelcomeOpen] = useState(false)
+  const [welcomeProfession, setWelcomeProfession] = useState("")
   const [credentialCode, setCredentialCode] = useState("")
   const [nationalCode, setNationalCode] = useState("")
   const [professions, setProfessions] = useState<ExpertProfessionOption[]>([])
@@ -290,6 +293,8 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
       )
       toast.success(res.message || "درخواست شما ثبت شد.")
       await refreshUser()
+      setWelcomeProfession(res.profession_label || selectedProfessionOption?.name || "متخصص")
+      setIsWelcomeOpen(true)
       setIsOpen(false)
       setCredentialCode("")
       setNationalCode(normalizeNationalCodeDigits(nationalCode))
@@ -302,169 +307,204 @@ function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: (
 
   if (verificationStatus === "approved") {
     return (
-      <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="rounded-full bg-primary/12 p-2 text-primary">
-            <BadgeCheck className="w-4 h-4" />
+      <>
+        <Dialog open={isWelcomeOpen} onOpenChange={setIsWelcomeOpen}>
+          <DialogContent dir="rtl" className="max-w-sm">
+            <DialogHeader className="text-right">
+              <DialogTitle>به نقش {welcomeProfession} خوش آمدید</DialogTitle>
+              <DialogDescription className="leading-6">
+                برای تجربه بهتر، این اپ را با لپ‌تاپ یا تبلت باز کنید. نسخه موبایل هم در دسترس است.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button onClick={() => setIsWelcomeOpen(false)} className="w-full sm:w-auto">
+                متوجه شدم
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="rounded-full bg-primary/12 p-2 text-primary">
+              <BadgeCheck className="w-4 h-4" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">حساب متخصص شما فعال است</span>
+              <span className="text-xs text-muted-foreground">
+                حوزه تایید شده: {user?.expert_profession_label || "نامشخص"}
+              </span>
+            </div>
           </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-medium">حساب متخصص شما فعال است</span>
-            <span className="text-xs text-muted-foreground">
-              حوزه تایید شده: {user?.expert_profession_label || "نامشخص"}
-            </span>
-          </div>
+          <Badge variant="outline" className="border-border bg-accent text-accent-foreground">
+            تایید شده
+          </Badge>
         </div>
-        <Badge variant="outline" className="border-border bg-accent text-accent-foreground">
-          تایید شده
-        </Badge>
-      </div>
+      </>
     );
   }
 
   return (
-    <div className="rounded-xl border bg-card text-card-foreground shadow-sm transition-all overflow-hidden">
-      {/* Trigger Row */}
-      <button 
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between w-full p-4 text-start hover:bg-muted/30 transition-colors"
-      >
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-muted rounded-full text-muted-foreground">
-            <Stethoscope className="w-4 h-4" />
-          </div>
-          <div className="flex flex-col gap-0.5">
-            <span className="text-sm font-medium">ارتقا به حساب متخصص</span>
-            <span className="text-xs text-muted-foreground">
-              حوزه تخصصی خود را تایید کنید تا دسترسی متخصص برای شما فعال شود.
-            </span>
-          </div>
-        </div>
-        <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200", isOpen && "rotate-180")} />
-      </button>
+    <>
+      <Dialog open={isWelcomeOpen} onOpenChange={setIsWelcomeOpen}>
+        <DialogContent dir="rtl" className="max-w-sm">
+          <DialogHeader className="text-right">
+            <DialogTitle>به نقش {welcomeProfession} خوش آمدید</DialogTitle>
+            <DialogDescription className="leading-6">
+              برای تجربه بهتر، این اپ را با لپ‌تاپ یا تبلت باز کنید. نسخه موبایل هم در دسترس است.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setIsWelcomeOpen(false)} className="w-full sm:w-auto">
+              متوجه شدم
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {/* Expanded Content */}
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2 }}
-          >
-            <div className="px-4 pb-4 pt-0 border-t border-dashed bg-muted/10">
-              <div className="space-y-3 py-3">
-                {isPendingReview && (
-                  <div className="rounded-xl border border-border bg-accent/40 p-4">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                      <div className="flex items-start gap-3">
-                        <div className="mt-0.5 rounded-full bg-primary/12 p-2 text-primary">
-                          <Clock3 className="h-4 w-4" />
-                        </div>
-                        <div className="space-y-2 text-start">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-semibold text-foreground">درخواست شما در انتظار بررسی است</span>
-                            <Badge variant="outline" className="border-border bg-background text-foreground">
-                              در انتظار تایید
-                            </Badge>
+      <div className="rounded-xl border bg-card text-card-foreground shadow-sm transition-all overflow-hidden">
+        {/* Trigger Row */}
+        <button 
+          onClick={() => setIsOpen(!isOpen)}
+          className="flex items-center justify-between w-full p-4 text-start hover:bg-muted/30 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-muted rounded-full text-muted-foreground">
+              <Stethoscope className="w-4 h-4" />
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium">ارتقا به حساب متخصص</span>
+              <span className="text-xs text-muted-foreground">
+                حوزه تخصصی خود را تایید کنید تا دسترسی متخصص برای شما فعال شود.
+              </span>
+            </div>
+          </div>
+          <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform duration-200", isOpen && "rotate-180")} />
+        </button>
+
+        {/* Expanded Content */}
+        <AnimatePresence>
+          {isOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              <div className="px-4 pb-4 pt-0 border-t border-dashed bg-muted/10">
+                <div className="space-y-3 py-3">
+                  {isPendingReview && (
+                    <div className="rounded-xl border border-border bg-accent/40 p-4">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                        <div className="flex items-start gap-3">
+                          <div className="mt-0.5 rounded-full bg-primary/12 p-2 text-primary">
+                            <Clock3 className="h-4 w-4" />
                           </div>
-                          <p className="text-xs leading-6 text-muted-foreground">
-                            {requestMessage || "اطلاعات شما ثبت شده است. پس از بررسی و تایید، حساب متخصص برای شما فعال می‌شود."}
-                          </p>
-                          <div className="grid gap-2 text-xs text-foreground md:grid-cols-3">
-                            <div className="rounded-lg border border-border bg-card px-3 py-2">
-                              <div className="text-[11px] text-muted-foreground">حوزه ثبت‌شده</div>
-                              <div className="mt-1 font-medium">{user?.expert_profession_label || "نامشخص"}</div>
+                          <div className="space-y-2 text-start">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-semibold text-foreground">درخواست شما در انتظار بررسی است</span>
+                              <Badge variant="outline" className="border-border bg-background text-foreground">
+                                در انتظار تایید
+                              </Badge>
                             </div>
-                            <div className="rounded-lg border border-border bg-card px-3 py-2">
-                              <div className="text-[11px] text-muted-foreground">زمان ارسال</div>
-                              <div className="mt-1 font-medium">{formatSubmittedAt(user?.expert_verification_requested_at)}</div>
-                            </div>
-                            <div className="rounded-lg border border-border bg-card px-3 py-2">
-                              <div className="text-[11px] text-muted-foreground">کد ثبت‌شده</div>
-                              <div className="mt-1 font-mono font-medium">{submittedCode || "نامشخص"}</div>
+                            <p className="text-xs leading-6 text-muted-foreground">
+                              {requestMessage || "اطلاعات شما ثبت شده است. پس از بررسی و تایید، حساب متخصص برای شما فعال می‌شود."}
+                            </p>
+                            <div className="grid gap-2 text-xs text-foreground md:grid-cols-3">
+                              <div className="rounded-lg border border-border bg-card px-3 py-2">
+                                <div className="text-[11px] text-muted-foreground">حوزه ثبت‌شده</div>
+                                <div className="mt-1 font-medium">{user?.expert_profession_label || "نامشخص"}</div>
+                              </div>
+                              <div className="rounded-lg border border-border bg-card px-3 py-2">
+                                <div className="text-[11px] text-muted-foreground">زمان ارسال</div>
+                                <div className="mt-1 font-medium">{formatSubmittedAt(user?.expert_verification_requested_at)}</div>
+                              </div>
+                              <div className="rounded-lg border border-border bg-card px-3 py-2">
+                                <div className="text-[11px] text-muted-foreground">کد ثبت‌شده</div>
+                                <div className="mt-1 font-mono font-medium">{submittedCode || "نامشخص"}</div>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {isPendingReview
+                      ? "در صورت نیاز به اصلاح اطلاعات یا ارسال دوباره، حوزه تخصصی را انتخاب کنید و اطلاعات جدید را ثبت کنید."
+                      : "حوزه تخصصی را انتخاب کنید و اطلاعات اعتبارسنجی همان حوزه را وارد کنید."}
+                  </p>
+                </div>
 
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  {isPendingReview
-                    ? "در صورت نیاز به اصلاح اطلاعات یا ارسال دوباره، حوزه تخصصی را انتخاب کنید و اطلاعات جدید را ثبت کنید."
-                    : "حوزه تخصصی را انتخاب کنید و اطلاعات اعتبارسنجی همان حوزه را وارد کنید."}
-                </p>
-              </div>
-
-              <div className="grid gap-3 w-full">
-                {!!professions.length && (
-                  <Tabs value={selectedProfession} onValueChange={setSelectedProfession} className="w-full">
-                    <TabsList className="w-full h-auto p-1 grid grid-cols-4 gap-1 rounded-xl bg-muted/70">
-                      {professions.map((profession) => (
-                        <TabsTrigger
-                          key={profession.slug}
-                          value={profession.slug}
-                          className="h-9 rounded-lg px-2 text-[11px] md:text-sm whitespace-nowrap"
-                        >
-                          {profession.name}
-                        </TabsTrigger>
-                      ))}
-                    </TabsList>
-                  </Tabs>
-                )}
-                {selectedProfessionOption && (
-                  <div className="rounded-lg border bg-background p-3 space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="text-sm font-medium">{selectedProfessionOption.name}</div>
-                      {selectedProfessionOption.validation_kind?.startsWith("manual_") && (
-                        <Badge variant="outline" className="border-border text-primary">
-                          بررسی دستی
-                        </Badge>
-                      )}
+                <div className="grid gap-3 w-full">
+                  {!!professions.length && (
+                    <Tabs value={selectedProfession} onValueChange={setSelectedProfession} className="w-full">
+                      <TabsList className="w-full h-auto p-1 grid grid-cols-4 gap-1 rounded-xl bg-muted/70">
+                        {professions.map((profession) => (
+                          <TabsTrigger
+                            key={profession.slug}
+                            value={profession.slug}
+                            className="h-9 rounded-lg px-2 text-[11px] md:text-sm whitespace-nowrap"
+                          >
+                            {profession.name}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                    </Tabs>
+                  )}
+                  {selectedProfessionOption && (
+                    <div className="rounded-lg border bg-background p-3 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-sm font-medium">{selectedProfessionOption.name}</div>
+                        {selectedProfessionOption.validation_kind?.startsWith("manual_") && (
+                          <Badge variant="outline" className="border-border text-primary">
+                            بررسی دستی
+                          </Badge>
+                        )}
+                      </div>
                     </div>
+                  )}
+                  <div className="space-y-1.5">
+                    <Label htmlFor="expert-credential-input" className="text-xs text-muted-foreground">
+                      {credentialLabel}
+                    </Label>
+                    <Input
+                      id="expert-credential-input"
+                      value={credentialCode}
+                      onChange={(e) => setCredentialCode(e.target.value)}
+                      placeholder={credentialPlaceholder}
+                      className="bg-background text-center font-mono h-9 text-sm"
+                    />
                   </div>
-                )}
-                <div className="space-y-1.5">
-                  <Label htmlFor="expert-credential-input" className="text-xs text-muted-foreground">
-                    {credentialLabel}
-                  </Label>
-                  <Input
-                    id="expert-credential-input"
-                    value={credentialCode}
-                    onChange={(e) => setCredentialCode(e.target.value)}
-                    placeholder={credentialPlaceholder}
-                    className="bg-background text-center font-mono h-9 text-sm"
-                  />
+                  <div className="space-y-1.5">
+                    <Label htmlFor="expert-national-code-input" className="text-xs text-muted-foreground">
+                      کد ملی
+                    </Label>
+                    <Input
+                      id="expert-national-code-input"
+                      inputMode="numeric"
+                      maxLength={10}
+                      value={nationalCode}
+                      onChange={(e) => setNationalCode(normalizeNationalCodeDigits(e.target.value))}
+                      placeholder="مثال: ۰۰۱۲۳۴۵۶۷۸"
+                      className="bg-background text-center font-mono h-9 text-sm"
+                    />
+                  </div>
+                  <Button 
+                    onClick={handleVerify} 
+                    disabled={loading} 
+                    size="sm"
+                    className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-5 w-full md:w-auto md:self-end md:min-w-44"
+                  >
+                      {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isPendingReview ? "ارسال مجدد درخواست" : "بررسی و ثبت درخواست"}
+                  </Button>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="expert-national-code-input" className="text-xs text-muted-foreground">
-                    کد ملی
-                  </Label>
-                  <Input
-                    id="expert-national-code-input"
-                    inputMode="numeric"
-                    maxLength={10}
-                    value={nationalCode}
-                    onChange={(e) => setNationalCode(normalizeNationalCodeDigits(e.target.value))}
-                    placeholder="مثال: ۰۰۱۲۳۴۵۶۷۸"
-                    className="bg-background text-center font-mono h-9 text-sm"
-                  />
-                </div>
-                <Button 
-                  onClick={handleVerify} 
-                  disabled={loading} 
-                  size="sm"
-                  className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-5 w-full md:w-auto md:self-end md:min-w-44"
-                >
-                    {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isPendingReview ? "ارسال مجدد درخواست" : "بررسی و ثبت درخواست"}
-                </Button>
               </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </>
   )
 }
 

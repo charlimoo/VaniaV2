@@ -1,7 +1,11 @@
 # backend/definitions/sync.py
 import logging
+import json
+import os
+from pathlib import Path
 from decimal import Decimal
 from django.db import transaction
+from django.conf import settings
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import make_aware, is_naive
 from django.contrib.auth import get_user_model  # [NEW] Import for User model
@@ -21,22 +25,83 @@ from .support import SUPPORT_INFO, FAQS       # [NEW] Import Definitions
 
 logger = logging.getLogger(__name__)
 
-VANIA_LOCATIONS = [
-    "تهران - شمال",
-    "تهران - مرکز",
-    "تهران - شرق",
-    "تهران - غرب",
-    "تهران - جنوب",
-    "سعادت‌آباد / شهرک غرب",
-    "ونک / ملاصدرا",
-    "جردن / آفریقا",
-    "پاسداران / دروس",
-    "یوسف‌آباد / امیرآباد",
-    "تجریش / نیاوران",
-    "تهرانپارس",
-    "صادقیه / آریاشهر",
-    "انقلاب / ولیعصر",
+IRAN_LOCATIONS_DATA_FILE = Path(__file__).with_name("cities.json")
+
+FALLBACK_IRAN_LOCATIONS = [
+    "آذربایجان شرقی",
+    "آذربایجان غربی",
+    "اردبیل",
+    "اصفهان",
+    "البرز",
+    "ایلام",
+    "بوشهر",
+    "تهران",
+    "چهارمحال و بختیاری",
+    "خراسان جنوبی",
+    "خراسان رضوی",
+    "خراسان شمالی",
+    "خوزستان",
+    "زنجان",
+    "سمنان",
+    "سیستان و بلوچستان",
+    "فارس",
+    "قزوین",
+    "قم",
+    "کردستان",
+    "کرمان",
+    "کرمانشاه",
+    "کهگیلویه و بویراحمد",
+    "گلستان",
+    "گیلان",
+    "لرستان",
+    "مازندران",
+    "مرکزی",
+    "هرمزگان",
+    "همدان",
+    "یزد",
 ]
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
+
+
+def get_vania_locations():
+    """
+    Builds a flat, searchable location list that covers all provinces and cities of Iran.
+    Falls back to province-level values if the bundled definitions file is unavailable.
+    """
+    try:
+        with IRAN_LOCATIONS_DATA_FILE.open("r", encoding="utf-8") as source:
+            provinces = json.load(source)
+
+        locations = []
+        for province in provinces:
+            province_name = str(province.get("name") or "").strip()
+            if not province_name:
+                continue
+
+            locations.append(province_name)
+            for city in province.get("cities") or []:
+                city_name = str(city.get("name") or "").strip()
+                if not city_name:
+                    continue
+                locations.append(f"{province_name} - {city_name}")
+
+        deduped_locations = list(dict.fromkeys(locations))
+        if deduped_locations:
+            return deduped_locations
+    except Exception as exc:
+        logger.warning(
+            "⚠️ [Sync] Failed to load bundled Iran locations dataset from %s: %s",
+            IRAN_LOCATIONS_DATA_FILE,
+            exc,
+        )
+
+    return FALLBACK_IRAN_LOCATIONS
     
 class DefinitionSync:
     
@@ -48,23 +113,60 @@ class DefinitionSync:
         logger.info("\n🔄 [Sync] Checking Admin User...")
         User = get_user_model()
         
-        admin_phone = "09123456789"
-        admin_pass = "Adminadmin@123"
+        admin_phone = os.getenv("SYNC_ADMIN_PHONE", "09123456789").strip()
+        admin_pass = os.getenv("SYNC_ADMIN_PASSWORD", "Adminadmin@123")
+        admin_email = os.getenv("SYNC_ADMIN_EMAIL", "admin@example.com").strip()
+        admin_full_name = os.getenv("SYNC_ADMIN_FULL_NAME", "مدیر سیستم").strip()
+        force_sync_password = _env_flag("FORCE_SYNC_ADMIN_PASSWORD", default=bool(settings.DEBUG))
 
-        if not User.objects.filter(phone_number=admin_phone).exists():
-            try:
+        try:
+            user = User.objects.filter(phone_number=admin_phone).first()
+            if not user:
                 User.objects.create_superuser(
                     phone_number=admin_phone,
                     password=admin_pass,
-                    email="admin@example.com",
-                    full_name="مدیر سیستم"
+                    email=admin_email,
+                    full_name=admin_full_name,
                 )
                 logger.info(f"✅ [Sync] Admin created. Phone: {admin_phone} | Pass: {admin_pass}")
-            except Exception as e:
-                 logger.error(f"❌ [Sync] Failed to create admin user: {e}")
-                 # We don't raise here to allow the rest of the sync to proceed
-        else:
-            logger.info("   [Sync] Admin user already exists. Skipping creation.")
+                return
+
+            updated_fields = []
+            if not user.is_staff:
+                user.is_staff = True
+                updated_fields.append("is_staff")
+            if not user.is_superuser:
+                user.is_superuser = True
+                updated_fields.append("is_superuser")
+            if not user.is_active:
+                user.is_active = True
+                updated_fields.append("is_active")
+            if not user.email:
+                user.email = admin_email
+                updated_fields.append("email")
+            if not user.full_name:
+                user.full_name = admin_full_name
+                updated_fields.append("full_name")
+
+            password_matches = user.has_usable_password() and user.check_password(admin_pass)
+            if not password_matches and force_sync_password:
+                user.set_password(admin_pass)
+                updated_fields.append("password")
+            elif not password_matches:
+                logger.warning(
+                    "⚠️ [Sync] Bootstrap admin user %s exists but its password does not match SYNC_ADMIN_PASSWORD. "
+                    "Keeping the existing password. Set FORCE_SYNC_ADMIN_PASSWORD=true to reset it explicitly.",
+                    admin_phone,
+                )
+
+            if updated_fields:
+                user.save(update_fields=updated_fields)
+                logger.info("✅ [Sync] Admin user updated: %s", ", ".join(updated_fields))
+            else:
+                logger.info("   [Sync] Admin user already exists and is in sync.")
+        except Exception as e:
+            logger.error(f"❌ [Sync] Failed to create/sync admin user: {e}")
+            # We don't raise here to allow the rest of the sync to proceed
 
     @staticmethod
     def sync_agents():
@@ -243,8 +345,9 @@ class DefinitionSync:
         """
         Syncs predefined Vania locations from definitions to the DB.
         """
-        logger.info(f"🔄 [Sync] Vania Locations: {len(VANIA_LOCATIONS)} items")
-        for loc_name in VANIA_LOCATIONS:
+        locations = get_vania_locations()
+        logger.info(f"🔄 [Sync] Vania Locations: {len(locations)} items")
+        for loc_name in locations:
             Location.objects.update_or_create(
                 name=loc_name,
             )
@@ -255,8 +358,8 @@ class DefinitionSync:
         professions = [
             {
                 "slug": "psychologist",
-                "name": "روان شناس",
-                "description": "متخصص روان شناسی",
+                "name": "روانشناس و مشاور",
+                "description": "متخصص روانشناسی و مشاوره",
                 "validation_kind": "real_psychologist",
                 "validation_config": {
                     "credential_label": "کد نظام روان‌شناسی",

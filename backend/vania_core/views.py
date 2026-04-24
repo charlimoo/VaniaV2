@@ -281,7 +281,12 @@ class PublicDoctorListView(generics.ListAPIView):
         if profession and profession != 'ALL':
             queryset = queryset.filter(user__expert_profession__slug=profession)
         if search: 
-            queryset = queryset.filter(user__full_name__icontains=search)
+            queryset = queryset.filter(
+                Q(user__full_name__icontains=search)
+                | Q(specialty__icontains=search)
+                | Q(user__expert_profession__name__icontains=search)
+                | Q(location__name__icontains=search)
+            ).distinct()
             
         return queryset
 
@@ -1964,6 +1969,7 @@ class RoleVerificationRequestView(APIView):
 class LocationListView(generics.ListAPIView):
     """Publicly accessible list of locations for filtering doctors."""
     permission_classes = [permissions.AllowAny]
+    pagination_class = None
     queryset = Location.objects.all().order_by('name')
     serializer_class = LocationSerializer
     

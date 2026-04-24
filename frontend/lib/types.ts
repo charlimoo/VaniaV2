@@ -76,6 +76,7 @@ export interface UserData {
   expert_verification_message?: string | null;
   expert_verification_requested_at?: string | null;
   expert_verification_can_retry?: boolean;
+  has_password?: boolean;
   // Single Wallet Object (No more roles list or primary_wallet_info)
   wallet?: WalletInfo;
 }
@@ -165,7 +166,9 @@ export interface BillingProduct {
 
 export interface Invoice {
   id: string;
-  status: "PENDING" | "PAID" | "CANCELLED" | "WAITING"; 
+  status: "PENDING" | "PAID" | "CANCELLED" | "WAITING" | "WAITING_APPROVAL";
+  subtotal_amount?: string;
+  tax_amount?: string;
   total_amount: string;
   created_at: string;
   item_name?: string;
@@ -173,6 +176,8 @@ export interface Invoice {
   user_name?: string;
   user_phone?: string;
   transaction_ref_id?: string;
+  card_number?: string | null;
+  authority?: string | null;
   discount_amount?: string;
 }
 

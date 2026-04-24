@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
+import { parseLocationName } from "@/lib/location-utils";
 import { cn, fixAvatarUrl } from "@/lib/utils";
 
 // Types
@@ -101,7 +102,7 @@ export default function MyDoctorsPage() {
     d.name.toLowerCase().includes(search.toLowerCase()) || 
     (d.specialty && d.specialty.toLowerCase().includes(search.toLowerCase())) ||
     (d.expert_profession_label && d.expert_profession_label.toLowerCase().includes(search.toLowerCase())) ||
-    (d.location_name && d.location_name.toLowerCase().includes(search.toLowerCase()))
+    (d.location_name && parseLocationName(d.location_name).searchValue.toLowerCase().includes(search.toLowerCase()))
   );
 
   return (
@@ -193,7 +194,7 @@ export default function MyDoctorsPage() {
                     {doc.location_name ? (
                       <span className="flex items-center gap-1">
                         <MapPin className="h-3.5 w-3.5" />
-                        {doc.location_name}
+                        {parseLocationName(doc.location_name).label}
                       </span>
                     ) : null}
                     {getMeetingPriceLabel(doc.meeting_price) ? (

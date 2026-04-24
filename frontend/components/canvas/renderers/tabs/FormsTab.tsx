@@ -710,7 +710,12 @@ export function FormsTab({
                       />
                     </div>
                   </PopoverAnchor>
-                  <PopoverContent align="start" sideOffset={6} className="w-[var(--radix-popover-trigger-width)] rounded-xl p-2">
+                  <PopoverContent
+                    align="start"
+                    sideOffset={6}
+                    onOpenAutoFocus={(event) => event.preventDefault()}
+                    className="w-[var(--radix-popover-trigger-width)] rounded-xl p-2"
+                  >
                     <div className="mb-1 px-1 text-[10px] text-muted-foreground">نتایج مشابه</div>
                     <div className="grid gap-1">
                       {filteredTestsCatalog.slice(0, 6).map((item) => (

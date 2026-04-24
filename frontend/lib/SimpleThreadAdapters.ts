@@ -189,7 +189,10 @@ export const createSimpleAttachmentAdapter = ({
           });
 
           if (!response.ok) {
-            throw new Error(await response.text());
+            const body = await response.json().catch(() => null);
+            throw new Error(
+              body?.detail || body?.error || "آماده‌سازی فایل PDF انجام نشد.",
+            );
           }
 
           preparedAttachments.set(id, {

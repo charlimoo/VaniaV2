@@ -53,6 +53,9 @@ import {
   isSupportedComposerAttachment,
 } from "@/lib/SimpleThreadAdapters";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { BILLING_REQUIRED_EVENT, BillingRequiredDetail } from "@/lib/billing-utils";
 
 interface ThreadProps {
   suggestions?: ServiceSuggestion[];
@@ -185,43 +188,108 @@ export const Thread: FC<ThreadProps> = ({
   currentUsage,
   requiresVisitorSelector = false,
 }) => {
+  const [billingDialog, setBillingDialog] = React.useState<{
+    open: boolean;
+    title: string;
+    message: string;
+  }>({
+    open: false,
+    title: "اعتبار گفتگو به پایان رسیده است",
+    message: "برای ادامه گفتگو لازم است اعتبار جدید تهیه کنید.",
+  });
+
+  React.useEffect(() => {
+    const handleBillingRequired = (event: Event) => {
+      const detail = (event as CustomEvent<BillingRequiredDetail>).detail || {};
+      setBillingDialog({
+        open: true,
+        title: detail.title || "اعتبار گفتگو به پایان رسیده است",
+        message: detail.message || "برای ادامه گفتگو لازم است اعتبار جدید تهیه کنید.",
+      });
+    };
+
+    window.addEventListener(BILLING_REQUIRED_EVENT, handleBillingRequired as EventListener);
+    return () => window.removeEventListener(BILLING_REQUIRED_EVENT, handleBillingRequired as EventListener);
+  }, []);
+
   return (
     <LazyMotion features={domAnimation}>
       <MotionConfig reducedMotion="user">
-        <ThreadPrimitive.Root
-          className="aui-root aui-thread-root @container flex h-full flex-col bg-background"
-          style={{
-            ["--thread-max-width" as string]: "44rem",
-          }}
-        >
-          <ThreadPrimitive.Viewport className="aui-thread-viewport relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll px-4">
-            <ThreadPrimitive.If empty>
-              <ThreadWelcome suggestions={suggestions} />
-            </ThreadPrimitive.If>
+        <>
+          <ThreadPrimitive.Root
+            className="aui-root aui-thread-root @container flex h-full flex-col bg-background"
+            style={{
+              ["--thread-max-width" as string]: "44rem",
+            }}
+          >
+            <ThreadPrimitive.Viewport className="aui-thread-viewport relative flex flex-1 flex-col overflow-x-auto overflow-y-scroll px-4">
+              <ThreadPrimitive.If empty>
+                <ThreadWelcome suggestions={suggestions} />
+              </ThreadPrimitive.If>
 
-            <ThreadPrimitive.Messages
-              components={{
-                UserMessage,
-                EditComposer,
-                AssistantMessage,
-              }}
-            />
+              <ThreadPrimitive.Messages
+                components={{
+                  UserMessage,
+                  EditComposer,
+                  AssistantMessage,
+                }}
+              />
 
-            <ThreadPrimitive.If empty={false}>
-              <div className="aui-thread-viewport-spacer min-h-8 grow" />
-            </ThreadPrimitive.If>
+              <ThreadPrimitive.If empty={false}>
+                <div className="aui-thread-viewport-spacer min-h-8 grow" />
+              </ThreadPrimitive.If>
 
-            <Composer
-              showVoiceInput={showVoiceInput}
-              isPreviewMode={isPreviewMode}
-              demoConfig={demoConfig}
-              currentUsage={currentUsage}
-              requiresVisitorSelector={requiresVisitorSelector}
-            />
-          </ThreadPrimitive.Viewport>
-        </ThreadPrimitive.Root>
+              <Composer
+                showVoiceInput={showVoiceInput}
+                isPreviewMode={isPreviewMode}
+                demoConfig={demoConfig}
+                currentUsage={currentUsage}
+                requiresVisitorSelector={requiresVisitorSelector}
+              />
+            </ThreadPrimitive.Viewport>
+          </ThreadPrimitive.Root>
+          <BillingRequiredDialog
+            open={billingDialog.open}
+            title={billingDialog.title}
+            message={billingDialog.message}
+            onOpenChange={(open) => setBillingDialog((prev) => ({ ...prev, open }))}
+          />
+        </>
       </MotionConfig>
     </LazyMotion>
+  );
+};
+
+const BillingRequiredDialog: FC<{
+  open: boolean;
+  title: string;
+  message: string;
+  onOpenChange: (open: boolean) => void;
+}> = ({ open, title, message, onOpenChange }) => {
+  const router = useRouter();
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent dir="rtl" className="w-[calc(100vw-2rem)] max-w-md">
+        <DialogHeader className="text-right">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{message}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            بعدا
+          </Button>
+          <Button
+            onClick={() => {
+              onOpenChange(false);
+              router.push("/dashboard/billing");
+            }}
+          >
+            رفتن به صفحه اعتبار
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

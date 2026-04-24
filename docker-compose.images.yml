@@ -17,7 +17,14 @@ services:
     ports:
       - '8001:8000'
     extra_hosts:
-      - 'api.gapgpt.app:185.143.234.235'
+      - "api.gapgpt.app:185.143.234.235"
+      - "my.pcoiran.ir:185.143.233.235"
+      - "my.pcoiran.ir:185.143.234.235"
+      - "search.icbar.org:62.220.117.130"
+      - "api.sms.ir:185.211.56.44"
+      - "gateway.zibal.ir:185.143.235.201"
+      - "gateway.zibal.ir:185.143.232.201"
+
     depends_on:
       db:
         condition: service_healthy
@@ -49,6 +56,14 @@ services:
       - /app/start.sh
     restart: always
     command: 'celery -A core worker -l info --concurrency=${CELERY_WORKER_CONCURRENCY:-2} --max-tasks-per-child=${CELERY_MAX_TASKS_PER_CHILD:-200}'
+    extra_hosts:
+      - "api.gapgpt.app:185.143.234.235"
+      - "my.pcoiran.ir:185.143.233.235"
+      - "my.pcoiran.ir:185.143.234.235"
+      - "search.icbar.org:62.220.117.130"
+      - "api.sms.ir:185.211.56.44"
+      - "gateway.zibal.ir:185.143.235.201"
+      - "gateway.zibal.ir:185.143.232.201"
     depends_on:
       - app
       - cache
@@ -62,6 +77,14 @@ services:
       - /app/start.sh
     restart: always
     command: 'celery -A core beat -l info'
+    extra_hosts:
+      - "api.gapgpt.app:185.143.234.235"
+      - "my.pcoiran.ir:185.143.233.235"
+      - "my.pcoiran.ir:185.143.234.235"
+      - "search.icbar.org:62.220.117.130"
+      - "api.sms.ir:185.211.56.44"
+      - "gateway.zibal.ir:185.143.235.201"
+      - "gateway.zibal.ir:185.143.232.201"
     depends_on:
       - app
       - cache

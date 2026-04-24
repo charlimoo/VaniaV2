@@ -27,8 +27,12 @@ _DIGIT_TRANSLATION = str.maketrans({
 })
 
 
+def normalize_digits(raw_value: str) -> str:
+    return str(raw_value or "").translate(_DIGIT_TRANSLATION).strip()
+
+
 def normalize_phone_number(raw_phone: str) -> str:
-    value = str(raw_phone or "").translate(_DIGIT_TRANSLATION).strip()
+    value = normalize_digits(raw_phone)
     return re.sub(r"\D", "", value)
 
 

@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from datetime import timedelta
+import warnings
 from dotenv import load_dotenv
 import dj_database_url
 import urllib.parse
@@ -173,6 +174,30 @@ QDRANT_API_KEY = os.getenv("QDRANT_API_KEY", None)
 # Controls background tasks and Caching
 USE_CELERY = os.getenv('USE_CELERY', 'True').lower() == 'true'
 REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+CACHE_URL = os.getenv('CACHE_URL', '').strip()
+if not CACHE_URL and 'REDIS_URL' in os.environ:
+    CACHE_URL = os.environ['REDIS_URL'].strip()
+
+if CACHE_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': CACHE_URL,
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'vania-local-cache',
+        }
+    }
+    if not DEBUG:
+        warnings.warn(
+            "CACHE_URL is not set; falling back to LocMemCache. "
+            "OTP verification, throttling, and other cache-backed flows will break across multiple app workers.",
+            RuntimeWarning,
+        )
 
 CELERY_BROKER_URL = REDIS_URL
 CELERY_RESULT_BACKEND = REDIS_URL
@@ -227,7 +252,10 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_THROTTLE_RATES': {
         'anon': os.getenv('DRF_THROTTLE_ANON', '60/min'),
-        'user': os.getenv('DRF_THROTTLE_USER', '300/min')
+        'user': os.getenv('DRF_THROTTLE_USER', '300/min'),
+        'request_otp': os.getenv('DRF_THROTTLE_REQUEST_OTP', '10/min'),
+        'verify_otp': os.getenv('DRF_THROTTLE_VERIFY_OTP', '10/min'),
+        'password_login': os.getenv('DRF_THROTTLE_PASSWORD_LOGIN', '10/min'),
     }
 }
 
@@ -260,10 +288,21 @@ LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "https://us.cloud.langfuse.com")
 # Payment Gateway
 ZARINPAL_MERCHANT_ID = os.getenv("ZARINPAL_MERCHANT_ID")
 ZARINPAL_SANDBOX = DEBUG and not ZARINPAL_MERCHANT_ID # Auto-sandbox in debug
+ENABLE_ZARINPAL = os.getenv("ENABLE_ZARINPAL", "False").lower() in ("true", "1", "t")
+ZIBAL_MERCHANT_ID = os.getenv("ZIBAL_MERCHANT_ID", "zibal" if DEBUG else "")
 
 # Domain & Redirects
 API_DOMAIN = os.getenv("API_DOMAIN", "http://localhost:8000")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+APP_URL = os.getenv("APP_URL", FRONTEND_URL)
+
+# SMS Providers
+SMS_SERVICE_MODE = os.getenv("SMS_SERVICE_MODE", "CONSOLE")
+SMSIR_API_KEY = os.getenv("SMSIR_API_KEY")
+SMSIR_TEMPLATE_ID = os.getenv("SMSIR_TEMPLATE_ID", "100000")
+SMSIR_PARAMETER_NAME = os.getenv("SMSIR_PARAMETER_NAME", "Code")
+NAJVA_API_KEY = os.getenv("NAJVA_API_KEY")
+NAJVA_SENDER_ID = os.getenv("NAJVA_SENDER_ID")
 
 # OpenAI (Required for RAG Embeddings/Agno)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

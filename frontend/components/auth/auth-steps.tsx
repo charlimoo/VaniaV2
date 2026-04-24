@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -10,7 +11,8 @@ import {
   Lock, 
   Edit2,
   KeyRound,
-  ArrowLeft
+  Eye,
+  EyeOff
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -126,7 +128,7 @@ export function StepRegistration({
   return (
     <div className="space-y-5">
       <div className="text-center space-y-1">
-        <h2 className="text-lg font-bold text-white">تکمیل اطلاعات</h2>
+        <h2 className="text-lg font-bold text-white">تکمیل ثبت نام</h2>
         <p className="text-[10px] text-zinc-500 font-mono tracking-wider">{phoneNumber}</p>
       </div>
 
@@ -188,16 +190,39 @@ export function StepRegistration({
         </div>
 
         <Button type="submit" className="w-full h-11 mt-2 rounded-xl bg-white text-black hover:bg-zinc-200 font-bold shadow-lg shadow-white/5" disabled={isLoading}>
-          {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "دریافت کد تایید"}
+          {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "ایجاد حساب کاربری"}
         </Button>
       </form>
     </div>
   )
 }
 
-// --- Step 3: OTP (Updated to use Standard InputOTP) ---
-export function StepOtp({ phoneNumber, onBack, onSubmit, onPasswordLogin, isLoading }: any) {
+// --- Step 3: OTP ---
+export function StepOtp({ phoneNumber, onBack, onSubmit, onPasswordLogin, onResendOtp, isLoading }: any) {
   const form = useForm({ resolver: zodResolver(otpSchema) })
+  const [secondsToResend, setSecondsToResend] = useState(120)
+  const [isResending, setIsResending] = useState(false)
+
+  useEffect(() => {
+    if (secondsToResend <= 0) return
+    const timer = setInterval(() => {
+      setSecondsToResend((prev) => (prev > 0 ? prev - 1 : 0))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [secondsToResend])
+
+  const handleResendOtp = async () => {
+    if (!onResendOtp || secondsToResend > 0 || isResending) return
+    setIsResending(true)
+    try {
+      const ok = await onResendOtp()
+      if (ok !== false) {
+        setSecondsToResend(120)
+      }
+    } finally {
+      setIsResending(false)
+    }
+  }
 
   return (
     <form onSubmit={form.handleSubmit((d) => onSubmit(d.otp))} className="flex flex-col h-full justify-center space-y-6">
@@ -235,6 +260,22 @@ export function StepOtp({ phoneNumber, onBack, onSubmit, onPasswordLogin, isLoad
           {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "ورود"}
         </Button>
 
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={handleResendOtp}
+          disabled={secondsToResend > 0 || isResending || isLoading}
+          className="text-zinc-500 hover:text-white hover:bg-transparent h-auto p-0 text-xs font-normal"
+        >
+          {isResending ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : secondsToResend > 0 ? (
+            `ارسال مجدد کد تا ${secondsToResend} ثانیه`
+          ) : (
+            "ارسال مجدد کد"
+          )}
+        </Button>
+
         {onPasswordLogin && (
             <Button 
                 type="button" 
@@ -252,25 +293,40 @@ export function StepOtp({ phoneNumber, onBack, onSubmit, onPasswordLogin, isLoad
 }
 
 // --- Step 4: Password ---
-export function StepPassword({ onSubmit, onBack, isLoading }: any) {
+export function StepPassword({ phoneNumber, onSubmit, onBack, onEditPhone, isLoading }: any) {
   const form = useForm({ resolver: zodResolver(passwordSchema) })
+  const [showPassword, setShowPassword] = useState(false)
 
   return (
     <form onSubmit={form.handleSubmit((d) => onSubmit(d.password))} className="flex flex-col h-full justify-center space-y-6">
-      <div className="space-y-1 text-center">
-        <h2 className="text-xl font-bold tracking-tight text-white">رمز عبور</h2>
-        <p className="text-xs text-zinc-400">رمز عبور خود را وارد کنید</p>
+      <div className="space-y-2 text-center">
+        <h2 className="text-xl font-bold tracking-tight text-white">خوش آمدید</h2>
+        <div className="flex items-center justify-center gap-2 text-xs text-zinc-400 bg-white/5 py-1.5 px-4 rounded-full w-fit mx-auto border border-white/5">
+          <span className="tracking-wider">{phoneNumber}</span>
+          <button type="button" onClick={onEditPhone} className="text-white hover:text-zinc-300" title="ویرایش">
+            <Edit2 className="w-3 h-3" />
+          </button>
+        </div>
+        <p className="text-xs text-zinc-400">رمز عبور را وارد کنید یا با کد تایید ادامه دهید</p>
       </div>
 
       <div className="relative group">
         <Lock className="absolute right-3 top-3.5 h-4 w-4 text-zinc-500 group-focus-within:text-white transition-colors" />
         <Input 
-          type="password"
+          type={showPassword ? "text" : "password"}
           {...form.register("password")}
-          className="h-12 pr-10 text-lg ltr placeholder:text-right bg-white/5 border-white/10 focus:border-white/30 rounded-xl"
+          className="h-12 pr-10 pl-10 text-lg ltr placeholder:text-right bg-white/5 border-white/10 focus:border-white/30 rounded-xl"
           placeholder="••••••••"
           autoFocus
         />
+        <button
+          type="button"
+          onClick={() => setShowPassword((prev) => !prev)}
+          className="absolute left-3 top-3.5 text-zinc-500 hover:text-white transition-colors"
+          aria-label={showPassword ? "پنهان کردن رمز عبور" : "نمایش رمز عبور"}
+        >
+          {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
       </div>
 
       <div className="flex flex-col gap-3">
@@ -278,8 +334,8 @@ export function StepPassword({ onSubmit, onBack, isLoading }: any) {
           {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "ورود"}
         </Button>
         <Button type="button" variant="ghost" onClick={onBack} className="text-xs text-zinc-500 hover:text-white hover:bg-transparent">
-          <ArrowLeft className="w-3 h-3 ml-2" />
-          بازگشت به کد تایید
+          <KeyRound className="w-3 h-3 ml-2" />
+          دریافت کد تایید
         </Button>
       </div>
     </form>

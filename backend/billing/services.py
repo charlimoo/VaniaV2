@@ -222,6 +222,13 @@ class FulfillmentService:
                     new_plan.slug,
                 )
                 return
+
+            had_active_plan = (
+                wallet.active_plan is not None and
+                wallet.plan_expires_at is not None and
+                wallet.plan_expires_at > now
+            )
+            carried_plan_balance = wallet.balance_plan if had_active_plan else Decimal("0")
             
             # CHECK: Is this a Renewal? (Same Plan + Not Expired)
             is_renewal = (
@@ -251,11 +258,14 @@ class FulfillmentService:
                 desc = f"Renewed Plan: {new_plan.name} (Extended)"
             else:
                 # --- NEW / UPGRADE / EXPIRED LOGIC ---
-                # Hard Reset (Start Fresh)
                 wallet.active_plan = new_plan
                 wallet.plan_expires_at = now + timedelta(days=new_plan.duration_days)
-                wallet.balance_plan = new_plan.included_credits
-                desc = f"Activated Plan: {new_plan.name}"
+                wallet.balance_plan = carried_plan_balance + new_plan.included_credits
+                desc = (
+                    f"Upgraded Plan: {new_plan.name}"
+                    if had_active_plan
+                    else f"Activated Plan: {new_plan.name}"
+                )
 
             Transaction.objects.create(
                 wallet=wallet,

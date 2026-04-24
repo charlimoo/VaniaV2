@@ -1,22 +1,25 @@
 import logging
 from django.db import transaction, IntegrityError
+from django.core import signing
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
+from rest_framework.exceptions import Throttled
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.exceptions import ValidationError as DjangoValidationError
 
-from .models import CustomUser, UserProfile, OTPRequest, UserRole, ExpertProfession
+from .models import CustomUser, UserProfile, UserRole, ExpertProfession
 from billing.models import UserWallet
 from .serializers import (
     PhoneSerializer, VerifyOTPSerializer, UserSerializer, PasswordLoginSerializer,
     UserProfileSerializer, ChangePasswordSerializer, UserWalletSerializer
 )
-from .serializers import SignupDataSerializer
+from .serializers import CompleteSignupSerializer
 from .phone_utils import normalize_and_validate_phone_number
 from .otp_service import otp_service
+from .throttles import RequestOTPThrottle, VerifyOTPThrottle, PasswordLoginThrottle
 from .roles import (
     normalize_role_slug,
     CANONICAL_EXPERT_SLUG,
@@ -27,6 +30,8 @@ from vania_core.profile_sync import sync_visitor_base_profile_identity
 from vania_core.models import RoleVerificationRequest
 
 logger = logging.getLogger(__name__)
+SIGNUP_TOKEN_SALT = "users.signup"
+SIGNUP_TOKEN_MAX_AGE_SECONDS = 15 * 60
 
 
 def _normalize_national_code(value: str) -> str:
@@ -131,17 +136,38 @@ class ExpertProfessionListView(APIView):
 # --- AUTH FLOW STEP 3: REQUEST OTP ---
 class RequestOTPView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [RequestOTPThrottle]
+
     def post(self, request):
         serializer = PhoneSerializer(data=request.data)
         if serializer.is_valid():
             phone_number = serializer.validated_data['phone_number']
-            otp_service.send_otp(phone_number)
-            return Response({"message": "کد تایید ارسال شد."}, status=status.HTTP_200_OK)
+            send_otp = serializer.validated_data.get("send_otp", True)
+            user = CustomUser.objects.filter(phone_number=phone_number).first()
+            has_password = bool(user and user.password and user.has_usable_password())
+            try:
+                if send_otp:
+                    otp_service.send_otp(phone_number)
+            except ValueError as exc:
+                raise Throttled(detail=str(exc))
+
+            payload = {
+                "message": "کد تایید ارسال شد." if send_otp else "وضعیت شماره بررسی شد.",
+                "otp_sent": bool(send_otp),
+            }
+            if not send_otp:
+                payload.update({
+                    "user_exists": bool(user),
+                    "has_password": has_password,
+                    "requires_otp": (not user) or (not has_password),
+                })
+            return Response(payload, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 # --- AUTH FLOW STEP 4: VERIFY OTP & CREATE USER ---
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [VerifyOTPThrottle]
 
     def post(self, request):
         verification_serializer = VerifyOTPSerializer(data=request.data)
@@ -150,85 +176,118 @@ class VerifyOTPView(APIView):
 
         phone_number = verification_serializer.validated_data.get('phone_number')
         otp_code = verification_serializer.validated_data.get('otp_code')
-        signup_data = request.data.get('signup_data')
 
-        # 2. Validate OTP
-        is_otp_valid = False
-        if otp_code == "123456":
-            is_otp_valid = True
-        else:
-            try:
-                otp_record = OTPRequest.objects.get(phone_number=phone_number)
-                if otp_record.is_valid(otp_code):
-                    is_otp_valid = True
-                    otp_record.delete()
-            except OTPRequest.DoesNotExist:
-                pass
-
-        if not is_otp_valid:
+        if not otp_service.verify_otp(phone_number, otp_code):
             return Response({'detail': 'کد وارد شده نامعتبر یا منقضی شده است.'}, status=400)
 
-        # 3. Get or Create User
-        user_created = False
+        user = CustomUser.objects.filter(phone_number=phone_number).first()
+        if user:
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'user_created': False,
+                'requires_signup': False,
+                'role': normalize_role_slug(user.role.slug) if user.role else CANONICAL_VISITOR_SLUG,
+            })
+
+        signup_token = signing.dumps({"phone_number": phone_number}, salt=SIGNUP_TOKEN_SALT)
+        return Response({
+            'requires_signup': True,
+            'signup_token': signup_token,
+            'signup_token_expires_in': SIGNUP_TOKEN_MAX_AGE_SECONDS,
+            'phone_number': phone_number,
+        })
+
+
+class CompleteSignupView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = CompleteSignupSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        signup_token = serializer.validated_data['signup_token']
         try:
-            user = CustomUser.objects.get(phone_number=phone_number)
-        except CustomUser.DoesNotExist:
-            if not signup_data:
-                return Response({'detail': 'اطلاعات ثبت‌نام برای کاربر جدید الزامی است.'}, status=400)
-
-            signup_serializer = SignupDataSerializer(
-                data=signup_data,
-                context={"phone_number": phone_number},
+            payload = signing.loads(
+                signup_token,
+                salt=SIGNUP_TOKEN_SALT,
+                max_age=SIGNUP_TOKEN_MAX_AGE_SECONDS,
             )
-            if not signup_serializer.is_valid():
-                return Response({"signup_data": signup_serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+        except signing.SignatureExpired:
+            return Response(
+                {"error": "زمان ثبت نام به پایان رسیده است.", "code": "signup_token_expired"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except signing.BadSignature:
+            return Response(
+                {"error": "توکن ثبت نام نامعتبر است.", "code": "invalid_signup_token"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-            validated_signup_data = signup_serializer.validated_data
-            normalized_email = validated_signup_data.get("email")
-            
-            try:
-                with transaction.atomic():
-                    user = CustomUser.objects.create_user(
-                        phone_number=phone_number,
-                        password=validated_signup_data.get('password'),
-                        full_name=validated_signup_data.get('fullName'),
-                        email=normalized_email or None
-                    )
-                    
-                    role_obj, _ = UserRole.objects.get_or_create(
-                        slug=CANONICAL_VISITOR_SLUG,
-                        defaults={'name': 'مراجعه‌کننده'}
-                    )
-                    user.role = role_obj
-                    user.save()
-                    sync_visitor_base_profile_identity(
-                        user,
-                        full_name=user.full_name or "",
-                        email=user.email or "",
-                    )
-                    user_created = True
-            except DjangoValidationError as exc:
-                return Response(
-                    {"signup_data": {"password": exc.messages}},
-                    status=status.HTTP_400_BAD_REQUEST,
+        phone_number = payload.get("phone_number")
+        if not phone_number:
+            return Response(
+                {"error": "توکن ثبت نام نامعتبر است.", "code": "invalid_signup_token"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = CompleteSignupSerializer(data=request.data, context={"phone_number": phone_number})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        if CustomUser.objects.filter(phone_number=phone_number).exists():
+            return Response(
+                {"error": "برای این شماره قبلا حساب ایجاد شده است.", "code": "account_exists"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = serializer.validated_data.get("email")
+        if email and CustomUser.objects.filter(email=email).exists():
+            return Response(
+                {"email": ["کاربری با این ایمیل از قبل وجود دارد."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            with transaction.atomic():
+                user = CustomUser.objects.create_user(
+                    phone_number=phone_number,
+                    password=serializer.validated_data['password'],
+                    full_name=serializer.validated_data.get('full_name'),
+                    email=email,
                 )
-            except IntegrityError as e:
-                if 'email' in str(e):
-                    return Response({'detail': 'ایمیل تکراری است.'}, status=400)
-                return Response({'detail': 'خطا در ساخت کاربر.'}, status=500)
+                role_obj, _ = UserRole.objects.get_or_create(
+                    slug=CANONICAL_VISITOR_SLUG,
+                    defaults={'name': 'مراجعه‌کننده'}
+                )
+                user.role = role_obj
+                user.save(update_fields=["role"])
+                sync_visitor_base_profile_identity(
+                    user,
+                    full_name=user.full_name or "",
+                    email=user.email or "",
+                )
+        except DjangoValidationError as exc:
+            return Response({"password": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
+        except IntegrityError as exc:
+            if 'email' in str(exc):
+                return Response({"email": ["کاربری با این ایمیل از قبل وجود دارد."]}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "خطا در ساخت کاربر."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # 4. Generate Token
         refresh = RefreshToken.for_user(user)
-        
         return Response({
             'refresh': str(refresh),
             'access': str(refresh.access_token),
-            'user_created': user_created,
-            'role': normalize_role_slug(user.role.slug) if user.role else CANONICAL_VISITOR_SLUG
-        })
+            'user_created': True,
+            'role': normalize_role_slug(user.role.slug) if user.role else CANONICAL_VISITOR_SLUG,
+        }, status=status.HTTP_201_CREATED)
 
 class PasswordLoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordLoginThrottle]
+
     def post(self, request):
         serializer = PasswordLoginSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():

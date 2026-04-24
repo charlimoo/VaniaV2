@@ -49,7 +49,15 @@ TOOL_ONLY_CHAT_AGENT_SLUGS = {"vania-expert-assistant"}
 
 ATTACHMENT_MAX_BYTES = 15 * 1024 * 1024
 ATTACHMENT_ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp", "image/jpg"}
-ATTACHMENT_ALLOWED_DOC_TYPES = {"application/pdf"}
+ATTACHMENT_ALLOWED_DOC_TYPES = {
+    "application/pdf",
+    "application/x-pdf",
+    "application/acrobat",
+    "applications/vnd.pdf",
+    "text/pdf",
+    "text/x-pdf",
+    "application/octet-stream",
+}
 
 
 def _normalize_session_state_aliases(session_state):
@@ -832,7 +840,10 @@ async def prepare_attachment(
             )
             ok = await sync_to_async(ingest_session_file)(thread_id, agno_file, attachment_id)
             if not ok:
-                raise HTTPException(status_code=500, detail="پردازش فایل انجام نشد.")
+                raise HTTPException(
+                    status_code=500,
+                    detail="فایل آپلود شد اما متن PDF قابل پردازش نبود. می‌توانید فایل را دوباره امتحان کنید یا نسخه دیگری از PDF را بارگذاری کنید.",
+                )
             session = await sync_to_async(get_session_safe)(storage, thread_id, str(user.id))
             if session:
                 adjust_session_knowledge_file_count(session, 1)

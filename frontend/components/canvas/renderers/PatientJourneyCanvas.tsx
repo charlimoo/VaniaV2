@@ -280,7 +280,7 @@ export default function PatientJourneyCanvas({ data, onEdit }: Props) {
         </div>
 
         {activeView === "CASES" && (
-          <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border/40 pt-3">
+          <div className="mt-3 -mx-1 flex items-center gap-1.5 overflow-x-auto border-t border-border/40 px-1 pt-3 pb-1">
             {[
               { id: "CASE_OVERVIEW", label: "پرونده", icon: FileText },
               { id: "RESCUENET", label: "تور نجات", icon: LifeBuoy },
@@ -297,7 +297,7 @@ export default function PatientJourneyCanvas({ data, onEdit }: Props) {
                   onEdit({ active_tab: tab.id as any });
                 }}
                 className={cn(
-                  "flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11px] transition",
+                  "shrink-0 flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[11px] transition",
                   activeTab === tab.id ? "bg-muted text-foreground" : "text-muted-foreground hover:text-foreground"
                 )}
               >

@@ -6,6 +6,8 @@ from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
 from django.shortcuts import get_object_or_404, redirect
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 
 from rest_framework.views import APIView
 from rest_framework import generics, status
@@ -20,6 +22,7 @@ from .serializers import (
     InvoiceSerializer, FAQSerializer
 )
 from .services import FulfillmentService
+from .gateways.zibal import ZibalGateway
 from .gateways.zarinpal import ZarinPalGateway
 from users.eligibility import is_user_eligible_for_plan
 
@@ -226,7 +229,7 @@ class SubmitManualPaymentView(APIView):
 
 class InitiatePaymentView(APIView):
     """
-    Initiates payment via ZarinPal or fulfills free orders (100% discount).
+    Initiates payment via Zibal by default, with optional legacy ZarinPal fallback.
     """
     permission_classes = [IsAuthenticated]
 
@@ -242,29 +245,29 @@ class InitiatePaymentView(APIView):
                 invoice.status = Invoice.Status.PAID
                 invoice.payment_date = timezone.now()
                 invoice.transaction_ref_id = "FREE"
-                invoice.save() # [FIX] Signal handles fulfillment now
+                invoice.save()
                 
             return Response({"status": "paid"}, status=status.HTTP_200_OK)
 
-        # 2. Handle ZarinPal Gateway
         try:
-            gateway = ZarinPalGateway()
-            redirect_base="we dont know for now"
-            authority="we dont know for now"
-            is_valid, ref_id = gateway.verify_payment(authority, invoice.total_amount)
-
-            if is_valid:
-                with transaction.atomic():
-                    # Update Invoice
-                    invoice.status = Invoice.Status.PAID
-                    invoice.transaction_ref_id = str(ref_id)
-                    invoice.payment_date = timezone.now()
-                    invoice.save() # [FIX] Signal handles fulfillment now
-                
-                return redirect(f"{redirect_base}?status=success")
+            gateway_name = str(request.data.get("gateway") or "zibal").lower()
+            if gateway_name == "zarinpal" and getattr(settings, "ENABLE_ZARINPAL", False):
+                gateway = ZarinPalGateway()
+                callback_url = f"{getattr(settings, 'API_DOMAIN', 'http://localhost:8000').rstrip('/')}/api/billing/callback/?invoice_id={invoice.id}"
             else:
-                return redirect(f"{redirect_base}?status=failed&reason=verification_failed")
-            
+                gateway = ZibalGateway()
+                frontend_url = getattr(settings, 'APP_URL', getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')).rstrip('/')
+                callback_url = f"{frontend_url}/api/billing/zibal/callback/"
+
+            result = gateway.request_payment(invoice, callback_url)
+            invoice.authority = result["authority"]
+            invoice.save(update_fields=["authority"])
+
+            return Response({
+                "status": "gateway_ready",
+                "action_url": result["url"],
+                "track_id": result["authority"],
+            }, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Payment Init Failed: {e}")
             return Response({"error": "Gateway connection failed. Please try again."}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -326,6 +329,59 @@ class PaymentCallbackView(APIView):
         except Exception as e:
             logger.error(f"Callback Verification Error: {e}")
             return redirect(f"{redirect_base}?status=failed&reason=system_error")
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class ZibalCallbackView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        track_id = request.GET.get('trackId')
+        success = request.GET.get('success')
+        order_id = request.GET.get('orderId')
+
+        frontend_url = getattr(settings, 'APP_URL', getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')).rstrip('/')
+        if not order_id or not track_id:
+            logger.warning("Invalid Zibal callback: missing orderId or trackId")
+            return redirect(f"{frontend_url}/dashboard?error=invalid_callback")
+
+        dashboard_url = f"{frontend_url}/dashboard/invoices/{order_id}"
+        if str(success) != "1":
+            return redirect(f"{dashboard_url}?status=failed&reason=canceled")
+
+        try:
+            invoice = Invoice.objects.get(id=order_id)
+        except Invoice.DoesNotExist:
+            return redirect(f"{frontend_url}/dashboard?error=invoice_not_found")
+
+        if not invoice.authority:
+            return redirect(f"{dashboard_url}?status=failed&reason=not_initialized")
+        if invoice.authority != track_id:
+            logger.warning("Zibal callback authority mismatch for invoice %s", invoice.id)
+            return redirect(f"{dashboard_url}?status=failed&reason=authority_mismatch")
+        if invoice.status == Invoice.Status.PAID:
+            return redirect(f"{dashboard_url}?status=success")
+
+        try:
+            gateway = ZibalGateway()
+            verification_result = gateway.verify_payment(track_id, invoice.total_amount)
+            if verification_result.get("success"):
+                with transaction.atomic():
+                    locked_invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+                    if locked_invoice.status == Invoice.Status.PAID:
+                        return redirect(f"{dashboard_url}?status=success")
+                    if locked_invoice.authority != track_id:
+                        return redirect(f"{dashboard_url}?status=failed&reason=authority_mismatch")
+                    locked_invoice.status = Invoice.Status.PAID
+                    locked_invoice.transaction_ref_id = verification_result.get("ref_number")
+                    locked_invoice.card_number = verification_result.get("card_number")
+                    locked_invoice.payment_date = timezone.now()
+                    locked_invoice.save()
+                return redirect(f"{dashboard_url}?status=success")
+            return redirect(f"{dashboard_url}?status=failed&reason=verification_failed")
+        except Exception as e:
+            logger.error(f"Zibal Callback Error: {e}")
+            return redirect(f"{dashboard_url}?status=failed&reason=system_error")
         
 class FAQListView(generics.ListAPIView):
     """

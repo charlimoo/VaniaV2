@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 from .models import CustomUser, UserProfile
 from .password_policy import validate_password_policy
-from .phone_utils import normalize_and_validate_phone_number
+from .phone_utils import normalize_and_validate_phone_number, normalize_digits
 from billing.models import UserWallet
 from vania_core.profile_sync import sync_visitor_base_profile_identity
 from .roles import (
@@ -14,6 +14,7 @@ from .roles import (
 
 class PhoneSerializer(serializers.Serializer):
     phone_number = serializers.CharField(max_length=20)
+    send_otp = serializers.BooleanField(required=False, default=True)
 
     def validate_phone_number(self, value):
         try:
@@ -30,6 +31,12 @@ class VerifyOTPSerializer(serializers.Serializer):
             return normalize_and_validate_phone_number(value)
         except DjangoValidationError as exc:
             raise serializers.ValidationError(exc.messages[0])
+
+    def validate_otp_code(self, value):
+        normalized = normalize_digits(value)
+        if not normalized.isdigit() or len(normalized) != 6:
+            raise serializers.ValidationError("کد تایید باید ۶ رقم باشد.")
+        return normalized
 
 class PasswordLoginSerializer(serializers.Serializer):
     phone_number = serializers.CharField(max_length=20)
@@ -49,6 +56,33 @@ class PasswordLoginSerializer(serializers.Serializer):
             raise serializers.ValidationError("شماره موبایل یا رمز عبور نادرست است.")
         attrs['phone_number'] = phone
         attrs['user'] = user
+        return attrs
+
+
+class CompleteSignupSerializer(serializers.Serializer):
+    signup_token = serializers.CharField()
+    full_name = serializers.CharField(max_length=255, trim_whitespace=True)
+    email = serializers.EmailField(required=False, allow_blank=True, allow_null=True)
+    password = serializers.CharField(required=True, trim_whitespace=False, style={'input_type': 'password'})
+
+    def validate_email(self, value):
+        if value in ("", None):
+            return None
+        return value.strip().lower()
+
+    def validate(self, attrs):
+        phone_number = self.context.get("phone_number") or ""
+        user = CustomUser(
+            phone_number=phone_number,
+            full_name=attrs.get("full_name") or "",
+            email=attrs.get("email") or None,
+        )
+
+        try:
+            validate_password_policy(attrs["password"], user=user)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"password": exc.messages})
+
         return attrs
 
 class ChangePasswordSerializer(serializers.Serializer):

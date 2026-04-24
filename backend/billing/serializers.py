@@ -86,7 +86,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'status', 'total_amount', 'created_at', 'formatted_date', 
             'item_name', 'item_description', 'user_name', 'user_phone',
-            'transaction_ref_id', 'discount_amount'
+            'transaction_ref_id', 'card_number', 'authority', 'discount_amount'
         )
 
     def get_formatted_date(self, obj):

@@ -40,10 +40,12 @@ import {
   CommandItem, 
   CommandList 
 } from "@/components/ui/command";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { API_BASE_URL, getAuthHeaders, getExpertProfessions } from "@/lib/api";
+import { fetchAllLocationOptions, parseLocationName, sortLocationsForPicker } from "@/lib/location-utils";
 import { fixAvatarUrl } from "@/lib/utils";
 
 interface Location {
@@ -150,6 +152,8 @@ export default function FindDoctorPage() {
   const [selectedDoctor, setSelectedDoctor] = useState<Doctor | null>(null);
   const [profileDoctor, setProfileDoctor] = useState<Doctor | null>(null);
   const [isRequesting, setIsRequesting] = useState(false);
+  const sortedLocations = sortLocationsForPicker(locations);
+  const selectedLocations = sortedLocations.filter((loc) => selectedLocationIds.includes(loc.id));
   
   const [formData, setFormData] = useState({
     main_concern: "",
@@ -159,13 +163,8 @@ export default function FindDoctorPage() {
 
   // Fetch Locations
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/vania/locations/`, { headers: getAuthHeaders() })
-        .then(res => {
-            if (!res.ok) throw new Error("Failed to load locations");
-            return res.json();
-        })
-        .then(data => {
-            const list = Array.isArray(data) ? data : (data.results || []);
+    fetchAllLocationOptions<Location>(`${API_BASE_URL}/api/vania/locations/`, getAuthHeaders())
+        .then((list) => {
             setLocations(list);
         })
         .catch(err => {
@@ -305,7 +304,7 @@ export default function FindDoctorPage() {
             <PopoverTrigger asChild>
                 <Button variant="outline" className="border-dashed flex items-center gap-2 h-10 min-w-[160px] justify-start">
                     <Filter className="h-4 w-4" />
-                    موقعیت مکانی
+                    استان / شهر
                     {selectedLocationIds.length > 0 && (
                         <>
                             <Separator orientation="vertical" className="mx-1 h-4" />
@@ -318,11 +317,10 @@ export default function FindDoctorPage() {
                                         {selectedLocationIds.length} انتخاب شده
                                     </Badge>
                                 ) : (
-                                    locations
-                                        .filter(l => selectedLocationIds.includes(l.id))
+                                    selectedLocations
                                         .map(l => (
                                             <Badge variant="secondary" key={l.id} className="rounded-sm px-1 font-normal">
-                                                {l.name}
+                                                {parseLocationName(l.name).label}
                                             </Badge>
                                         ))
                                 )}
@@ -331,25 +329,46 @@ export default function FindDoctorPage() {
                     )}
                 </Button>
             </PopoverTrigger>
-            <PopoverContent className="p-0 w-[250px]" align="start">
-                <Command>
-                    <CommandInput placeholder="جستجوی منطقه..." />
-                    <CommandList>
+            <PopoverContent
+                className="w-[calc(100vw-1rem)] max-w-[min(22rem,var(--radix-popover-available-width))] p-0 sm:w-[22rem]"
+                align="end"
+                dir="rtl"
+                collisionPadding={8}
+                sideOffset={6}
+                onWheelCapture={(event) => event.stopPropagation()}
+            >
+                <Command className="text-right">
+                    <CommandInput className="text-right" placeholder="جستجوی استان یا شهر..." />
+                    <CommandList className="max-h-none overflow-visible">
                         <CommandEmpty>نتیجه‌ای یافت نشد.</CommandEmpty>
-                        <CommandGroup>
-                            {(locations || []).map(loc => (
-                                <CommandItem
-                                    key={loc.id}
-                                    onSelect={() => toggleLocation(loc.id)}
-                                    className="cursor-pointer"
-                                >
-                                    <div className={`ml-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary ${selectedLocationIds.includes(loc.id) ? "bg-primary text-primary-foreground" : "opacity-50 [&_svg]:invisible"}`}>
-                                        <svg className="h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                                    </div>
-                                    <span>{loc.name}</span>
-                                </CommandItem>
-                            ))}
-                        </CommandGroup>
+                        <ScrollArea className="h-[min(24rem,70vh)]" onWheelCapture={(event) => event.stopPropagation()}>
+                            <CommandGroup>
+                                {sortedLocations.map((loc) => {
+                                    const parsedLocation = parseLocationName(loc.name);
+
+                                    return (
+                                        <CommandItem
+                                            key={loc.id}
+                                            value={parsedLocation.searchValue}
+                                            onSelect={() => toggleLocation(loc.id)}
+                                            className="cursor-pointer flex-row-reverse text-right"
+                                        >
+                                            <div className={`mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary ${selectedLocationIds.includes(loc.id) ? "bg-primary text-primary-foreground" : "opacity-50 [&_svg]:invisible"}`}>
+                                                <svg className="h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                                            </div>
+                                            <div className="flex min-w-0 flex-1 flex-row-reverse items-center justify-between gap-3 text-right">
+                                                <span className="truncate text-right">{parsedLocation.label}</span>
+                                                {!parsedLocation.isProvince && (
+                                                    <span className="truncate text-[11px] text-muted-foreground">
+                                                        شهر
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </CommandItem>
+                                    );
+                                })}
+                            </CommandGroup>
+                        </ScrollArea>
                         {selectedLocationIds.length > 0 && (
                             <>
                                 <Separator />
@@ -408,7 +427,7 @@ export default function FindDoctorPage() {
                     )}
                     {doc.location_name && (
                          <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                             <MapPin className="h-3 w-3" /> {doc.location_name}
+                             <MapPin className="h-3 w-3" /> {parseLocationName(doc.location_name).label}
                          </span>
                      )}
                   </div>
@@ -554,7 +573,7 @@ export default function FindDoctorPage() {
               <div className="space-y-2 text-sm">
                 <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-1 sm:gap-3">
                   <span className="text-muted-foreground">موقعیت مکانی</span>
-                  <span>{profileDoctor.location_name || "ثبت نشده"}</span>
+                  <span>{profileDoctor.location_name ? parseLocationName(profileDoctor.location_name).label : "ثبت نشده"}</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-1 sm:gap-3">
                   <span className="text-muted-foreground">آدرس مطب</span>

@@ -3,6 +3,7 @@ from django.urls import path
 from .views import (
     RequestOTPView,
     VerifyOTPView,
+    CompleteSignupView,
     PasswordLoginView,
     UserProfileView,
     UserProfileDetailView,
@@ -18,6 +19,7 @@ urlpatterns = [
     # --- AUTH ---
     path('request-otp/', RequestOTPView.as_view(), name='request-otp'),
     path('verify-otp/', VerifyOTPView.as_view(), name='verify-otp'),
+    path('complete-signup/', CompleteSignupView.as_view(), name='complete-signup'),
     path('login/', PasswordLoginView.as_view(), name='password-login'),
     
     # --- PROFILE & CONTEXT ---

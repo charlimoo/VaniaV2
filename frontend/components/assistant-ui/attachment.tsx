@@ -1,8 +1,8 @@
 "use client";
 
-import { PropsWithChildren, useEffect, useState, type FC } from "react";
+import { PropsWithChildren, useEffect, useMemo, useState, type FC } from "react";
 import Image from "next/image";
-import { XIcon, PlusIcon, FileText } from "lucide-react";
+import { XIcon, PlusIcon, FileImage, FileText } from "lucide-react";
 import {
   AttachmentPrimitive,
   ComposerPrimitive,
@@ -49,19 +49,28 @@ const useFileSrc = (file: File | undefined) => {
   return src;
 };
 
-const useAttachmentSrc = () => {
-  const { file, src } = useAssistantState(
-    useShallow(({ attachment }): { file?: File; src?: string } => {
-      if (attachment.type !== "image") return {};
-      if (attachment.file) return { file: attachment.file };
-      const src = attachment.content?.filter((c) => c.type === "image")[0]
-        ?.image;
-      if (!src) return {};
-      return { src };
-    }),
-  );
+const isPdfName = (name?: string) => !!name?.toLowerCase().endsWith(".pdf");
 
-  return useFileSrc(file) ?? src;
+const useAttachmentPreviewData = () => {
+  const attachment = useAssistantState(({ attachment }) => attachment);
+  const localSrc = useFileSrc(attachment.file);
+  const imageSrc = attachment.content?.find((c) => c.type === "image")?.image;
+  const contentType = attachment.file?.type || attachment.contentType || "application/octet-stream";
+  const isImage = attachment.type === "image";
+  const isPdf = contentType.includes("pdf") || isPdfName(attachment.name);
+  const src = localSrc ?? imageSrc;
+
+  return useMemo(
+    () => ({
+      src,
+      isImage,
+      isPdf,
+      name: attachment.name,
+      contentType,
+      isPreviewable: Boolean(src && (isImage || isPdf)),
+    }),
+    [attachment.name, contentType, isImage, isPdf, src],
+  );
 };
 
 type AttachmentPreviewProps = {
@@ -88,9 +97,9 @@ const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src }) => {
 };
 
 const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
-  const src = useAttachmentSrc();
+  const { src, isImage, isPdf, name, isPreviewable } = useAttachmentPreviewData();
 
-  if (!src) return children;
+  if (!src || !isPreviewable) return children;
 
   return (
     <Dialog>
@@ -102,10 +111,17 @@ const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
       </DialogTrigger>
       <DialogContent className="aui-attachment-preview-dialog-content p-2 sm:max-w-3xl [&_svg]:text-background [&>button]:rounded-full [&>button]:bg-foreground/60 [&>button]:p-1 [&>button]:opacity-100 [&>button]:!ring-0 [&>button]:hover:[&_svg]:text-destructive">
         <DialogTitle className="aui-sr-only sr-only">
-          Image Attachment Preview
+          Attachment Preview
         </DialogTitle>
         <div className="aui-attachment-preview relative mx-auto flex max-h-[80dvh] w-full items-center justify-center overflow-hidden bg-background">
-          <AttachmentPreview src={src} />
+          {isImage ? <AttachmentPreview src={src} /> : null}
+          {isPdf ? (
+            <iframe
+              src={src}
+              title={name || "PDF Preview"}
+              className="h-[80dvh] w-full rounded-lg border-0 bg-background"
+            />
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>
@@ -113,22 +129,38 @@ const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
 };
 
 const AttachmentThumb: FC = () => {
-  const isImage = useAssistantState(
-    ({ attachment }) => attachment.type === "image",
-  );
-  const src = useAttachmentSrc();
+  const { src, isImage, isPdf, name } = useAttachmentPreviewData();
 
   return (
-    <Avatar className="aui-attachment-tile-avatar h-full w-full rounded-none">
-      <AvatarImage
-        src={src}
-        alt="Attachment preview"
-        className="aui-attachment-tile-image object-cover"
-      />
-      <AvatarFallback delayMs={isImage ? 200 : 0}>
-        <FileText className="aui-attachment-tile-fallback-icon size-8 text-muted-foreground" />
-      </AvatarFallback>
-    </Avatar>
+    <div className="h-full w-full">
+      {isImage && src ? (
+        <Avatar className="aui-attachment-tile-avatar h-full w-full rounded-none">
+          <AvatarImage
+            src={src}
+            alt="Attachment preview"
+            className="aui-attachment-tile-image object-cover"
+          />
+          <AvatarFallback delayMs={200}>
+            <FileImage className="aui-attachment-tile-fallback-icon size-8 text-muted-foreground" />
+          </AvatarFallback>
+        </Avatar>
+      ) : (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-muted/70 px-2 text-center">
+          <div
+            className={cn(
+              "rounded-full p-2",
+              isPdf ? "bg-red-100 text-red-600 dark:bg-red-950/40 dark:text-red-300" : "bg-background text-muted-foreground"
+            )}
+          >
+            <FileText className="size-5" />
+          </div>
+          <div className="max-w-full truncate text-[10px] font-medium">
+            {isPdf ? "PDF" : "FILE"}
+          </div>
+          {name ? <div className="max-w-full truncate text-[9px] text-muted-foreground">{name}</div> : null}
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -136,18 +168,16 @@ const AttachmentUI: FC = () => {
   const api = useAssistantApi();
   const isComposer = api.attachment.source === "composer";
 
-  const isImage = useAssistantState(
-    ({ attachment }) => attachment.type === "image",
-  );
+  const { isImage, isPdf } = useAttachmentPreviewData();
   const typeLabel = useAssistantState(({ attachment }) => {
     const type = attachment.type;
     switch (type) {
       case "image":
-        return "Image";
+        return "تصویر";
       case "document":
-        return "Document";
+        return "سند";
       case "file":
-        return "File";
+        return attachment.contentType?.includes("pdf") || isPdfName(attachment.name) ? "PDF" : "فایل";
       default:
         const _exhaustiveCheck: never = type;
         throw new Error(`Unknown attachment type: ${_exhaustiveCheck}`);
@@ -170,6 +200,7 @@ const AttachmentUI: FC = () => {
                 "aui-attachment-tile size-14 cursor-pointer overflow-hidden rounded-[14px] border bg-muted transition-opacity hover:opacity-75",
                 isComposer &&
                   "aui-attachment-tile-composer border-foreground/20",
+                isPdf && "border-red-200/80 bg-red-50/70 dark:border-red-900/50 dark:bg-red-950/20"
               )}
               role="button"
               id="attachment-tile"
@@ -182,7 +213,10 @@ const AttachmentUI: FC = () => {
         {isComposer && <AttachmentRemove />}
       </AttachmentPrimitive.Root>
       <TooltipContent side="top">
-        <AttachmentPrimitive.Name />
+        <div className="text-right">
+          <div><AttachmentPrimitive.Name /></div>
+          <div className="text-[10px] text-muted-foreground">{typeLabel}</div>
+        </div>
       </TooltipContent>
     </Tooltip>
   );
@@ -224,7 +258,7 @@ export const ComposerAddAttachment: FC = () => {
   return (
     <ComposerPrimitive.AddAttachment asChild>
       <TooltipIconButton
-        tooltip="افزودن تصویر"
+        tooltip="افزودن فایل"
         side="bottom"
         variant="ghost"
         size="icon"

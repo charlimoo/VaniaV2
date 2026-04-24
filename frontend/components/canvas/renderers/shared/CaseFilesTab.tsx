@@ -310,7 +310,7 @@ export function CaseFilesTab({ files, selectedDoctorId, selectedCaseId, patientI
         <div className="space-y-3">
           {pageItems.map((file) => (
             <div key={file.id} className="flex flex-col gap-3 rounded-2xl border border-border/60 bg-background/70 px-4 py-3">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-sm font-semibold">
                     {isImage(file.content_type, file.file_extension) ? (
@@ -328,12 +328,12 @@ export function CaseFilesTab({ files, selectedDoctorId, selectedCaseId, patientI
                   ) : null}
                 </div>
 
-                <div className="flex items-center gap-1">
-                  <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => downloadFile(file.id, file.original_file_name)}>
+                <div className="flex w-full items-center gap-1 sm:w-auto sm:justify-end">
+                  <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0" onClick={() => downloadFile(file.id, file.original_file_name)}>
                     <Download className="h-4 w-4" />
                   </Button>
                   {!readOnly ? (
-                    <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => deleteFile(file.id)}>
+                    <Button size="icon" variant="ghost" className="h-8 w-8 shrink-0 text-destructive" onClick={() => deleteFile(file.id)}>
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   ) : null}

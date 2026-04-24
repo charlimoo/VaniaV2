@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useForm, Controller } from "react-hook-form";
 import { toast } from "sonner";
-import { Loader2, Upload, ImageIcon, User, MapPin } from "lucide-react";
+import { Loader2, Upload, ImageIcon, User, MapPin, Check, ChevronsUpDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -19,16 +19,20 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
-import { fixAvatarUrl } from "@/lib/utils";
+import { fetchAllLocationOptions, parseLocationName, sortLocationsForPicker } from "@/lib/location-utils";
+import { cn, fixAvatarUrl } from "@/lib/utils";
 
 interface ProfileFormData {
   bio: string;
@@ -124,7 +128,8 @@ function getMeetingPriceDisplay(value: number | string | null | undefined): { wo
 export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorProfileModalProps) {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
-  const [locations, setLocations] = useState<Location[]>([]); 
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [locationPickerOpen, setLocationPickerOpen] = useState(false);
   const { register, handleSubmit, reset, setValue, watch, control } = useForm<ProfileFormData>();
   
   // Image State
@@ -141,13 +146,11 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
       
       // Fetch Locations and Profile in parallel
       Promise.all([
-        fetch(`${API_BASE_URL}/api/vania/locations/`, { headers: getAuthHeaders() }).then(r => r.json()),
+        fetchAllLocationOptions<Location>(`${API_BASE_URL}/api/vania/locations/`, getAuthHeaders()),
         fetch(`${API_BASE_URL}/api/vania/my-profile/`, { headers: getAuthHeaders() }).then(r => r.json())
       ])
       .then(([locData, profileData]) => {
-        // FIX: Handle paginated response (DRF default) vs Array
-        const locList = Array.isArray(locData) ? locData : (locData.results || []);
-        setLocations(locList);
+        setLocations(locData);
 
         // Ensure location_id is a string for the Select component
         const formattedData = {
@@ -229,10 +232,11 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
   
   const isPublic = watch("is_public");
   const meetingPriceDisplay = getMeetingPriceDisplay(watch("meeting_price"));
+  const sortedLocations = sortLocationsForPicker(locations);
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent dir="rtl" className="max-h-[90vh] overflow-y-auto">
+      <DialogContent dir="rtl" className="max-h-[78vh] overflow-y-auto">
         <DialogHeader className="text-right">
           <DialogTitle>ویرایش پروفایل عمومی</DialogTitle>
           <DialogDescription>
@@ -281,26 +285,89 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
 
                 {/* Location Selection */}
                 <div className="grid gap-2">
-                    <Label>موقعیت مکانی (منطقه)</Label>
+                    <Label>استان یا شهر محل فعالیت</Label>
                     <Controller
                         control={control}
                         name="location_id"
                         render={({ field }) => (
-                            <Select onValueChange={field.onChange} value={field.value}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="انتخاب منطقه..." />
-                                </SelectTrigger>
-                                <SelectContent dir="rtl">
-                                    {/* Safe mapping with fallback array */}
-                                    {(locations || []).map((loc) => (
-                                        <SelectItem key={loc.id} value={String(loc.id)}>
-                                            {loc.name}
-                                        </SelectItem>
-                                    ))}
-                                </SelectContent>
-                            </Select>
+                            <Popover open={locationPickerOpen} onOpenChange={setLocationPickerOpen}>
+                              <PopoverTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  role="combobox"
+                                  aria-expanded={locationPickerOpen}
+                                  className="w-full justify-between font-normal"
+                                >
+                                  <span className="flex min-w-0 items-center gap-2 overflow-hidden">
+                                    <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                    <span className="truncate">
+                                      {(() => {
+                                        const selectedLocation = locations.find((loc) => String(loc.id) === field.value);
+                                        return selectedLocation
+                                          ? parseLocationName(selectedLocation.name).label
+                                          : "استان یا شهر را انتخاب کنید";
+                                      })()}
+                                    </span>
+                                  </span>
+                                  <ChevronsUpDown className="h-4 w-4 shrink-0 opacity-50" />
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent
+                                className="w-[calc(100vw-1rem)] max-w-[min(32rem,var(--radix-popover-available-width))] p-0 sm:w-[min(32rem,calc(100vw-2rem))]"
+                                align="end"
+                                dir="rtl"
+                                collisionPadding={8}
+                                sideOffset={6}
+                                onWheelCapture={(event) => event.stopPropagation()}
+                              >
+                                <Command className="text-right">
+                                  <CommandInput className="text-right" placeholder="جستجوی استان یا شهر..." />
+                                  <CommandList className="max-h-none overflow-visible">
+                                    <CommandEmpty>موردی پیدا نشد.</CommandEmpty>
+                                    <ScrollArea className="h-[min(24rem,70vh)]" onWheelCapture={(event) => event.stopPropagation()}>
+                                      <CommandGroup>
+                                        {sortedLocations.map((loc) => {
+                                          const parsedLocation = parseLocationName(loc.name);
+
+                                          return (
+                                            <CommandItem
+                                              key={loc.id}
+                                              value={parsedLocation.searchValue}
+                                              onSelect={() => {
+                                                field.onChange(String(loc.id));
+                                                setLocationPickerOpen(false);
+                                              }}
+                                              className="flex-row-reverse text-right"
+                                            >
+                                              <Check
+                                                className={cn(
+                                                  "mr-2 h-4 w-4",
+                                                  String(loc.id) === field.value ? "opacity-100" : "opacity-0"
+                                                )}
+                                              />
+                                              <div className="flex min-w-0 flex-1 flex-row-reverse items-center justify-between gap-3 text-right">
+                                                <span className="truncate text-right">{parsedLocation.label}</span>
+                                                {!parsedLocation.isProvince && (
+                                                  <span className="shrink-0 text-[11px] text-muted-foreground">
+                                                    شهر
+                                                  </span>
+                                                )}
+                                              </div>
+                                            </CommandItem>
+                                          );
+                                        })}
+                                      </CommandGroup>
+                                    </ScrollArea>
+                                  </CommandList>
+                                </Command>
+                              </PopoverContent>
+                            </Popover>
                         )}
                     />
+                    <p className="text-[11px] text-muted-foreground">
+                      برای دیده شدن بهتر در جستجوی عمومی، شهر دقیق یا در صورت نیاز نام استان را انتخاب کنید.
+                    </p>
                 </div>
 
                 <div className="grid gap-2">

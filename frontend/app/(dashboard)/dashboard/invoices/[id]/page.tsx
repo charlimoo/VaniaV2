@@ -25,8 +25,7 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { Invoice } from "@/lib/types";
 import { APP_CONFIG } from "@/lib/config";
 
-// [CONFIG] Toggle this to true to enable ZarinPal/Online Gateway
-const ENABLE_ONLINE_PAYMENT = false;
+const ENABLE_ONLINE_PAYMENT = true;
 
 export default function InvoiceDetailPage() {
   const params = useParams();
@@ -113,8 +112,13 @@ export default function InvoiceDetailPage() {
       if (data.status === "paid") {
         toast.success("سفارش با موفقیت فعال شد.");
         await fetchInvoice();
-      } else if (data.redirect_url) {
-        window.location.href = data.redirect_url;
+      } else {
+        const gatewayUrl = data.action_url || data.redirect_url;
+        if (data.status === "gateway_ready" && gatewayUrl) {
+          window.location.href = gatewayUrl;
+          return;
+        }
+        throw new Error("لینک درگاه پرداخت دریافت نشد.");
       }
     } catch (e: any) {
       toast.error(e.message || "خطا در اتصال به درگاه.");
@@ -391,7 +395,7 @@ export default function InvoiceDetailPage() {
                                                 <CreditCard className="w-5 h-5" />
                                             </div>
                                             <p className="text-xs text-muted-foreground leading-relaxed">
-                                                انتقال امن به درگاه پرداخت شاپرک (زرین‌پال).
+                                                انتقال امن به درگاه پرداخت زیبال.
                                                 <br/>
                                                 <span className="font-bold text-blue-600 dark:text-blue-400">فعال‌سازی آنی پس از پرداخت.</span>
                                             </p>
@@ -402,7 +406,7 @@ export default function InvoiceDetailPage() {
                                             onClick={handleOnlinePayment}
                                             disabled={paying}
                                         >
-                                            {paying ? <Loader2 className="h-5 w-5 animate-spin" /> : "اتصال به درگاه بانکی"}
+                                            {paying ? <Loader2 className="h-5 w-5 animate-spin" /> : "اتصال به درگاه زیبال"}
                                         </Button>
                                     </div>
                                 </TabsContent>

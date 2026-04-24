@@ -7,6 +7,7 @@ from .views import (
     InvoiceDetailView,
     InitiatePaymentView,
     PaymentCallbackView,
+    ZibalCallbackView,
     ApplyDiscountView,
     SubmitManualPaymentView,
     FAQListView 
@@ -29,6 +30,7 @@ urlpatterns = [
     path('invoices/<uuid:invoice_id>/apply_discount/', ApplyDiscountView.as_view(), name='apply-discount'),
     path('pay/<uuid:invoice_id>/', InitiatePaymentView.as_view(), name='initiate-payment'),
     path('callback/', PaymentCallbackView.as_view(), name='payment-callback'),
+    path('zibal/callback/', ZibalCallbackView.as_view(), name='zibal-callback'),
     
     path('pay/manual/<uuid:invoice_id>/', SubmitManualPaymentView.as_view(), name='submit-manual-payment'),
 ]
