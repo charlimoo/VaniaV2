@@ -16,6 +16,7 @@ from .models import (
 )
 from users.models import ExpertProfession, UserRole
 from users.roles import is_expert
+from billing.services import activate_default_expert_plan_for_transferred_credits
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ def process_role_approval(sender, instance, created, **kwargs):
                     "admin_review_recommended": False,
                 }
                 user.save()
+                activate_default_expert_plan_for_transferred_credits(user)
                 logger.info(f"   -> Expert verification synced for User {user.id}")
 
                 if is_expert(user):

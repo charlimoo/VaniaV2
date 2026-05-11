@@ -90,3 +90,33 @@ class AuthFlowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["requires_signup"], True)
         self.assertIn("signup_token", response.data)
+
+    def test_verify_otp_bypass_code_returns_signup_token_for_new_user(self):
+        response = self.client.post(
+            "/api/auth/verify-otp/",
+            {"phone_number": "09120000026", "otp_code": "123456"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["requires_signup"], True)
+        self.assertIn("signup_token", response.data)
+
+    def test_verify_otp_bypass_code_logs_in_existing_user(self):
+        user = CustomUser.objects.create_user(
+            phone_number="09120000027",
+            password="StrongPass123!",
+            role=self.visitor_role,
+        )
+
+        response = self.client.post(
+            "/api/auth/verify-otp/",
+            {"phone_number": user.phone_number, "otp_code": "123456"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["user_created"], False)
+        self.assertEqual(response.data["requires_signup"], False)
+        self.assertIn("access", response.data)
+        self.assertIn("refresh", response.data)

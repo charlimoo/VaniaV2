@@ -35,8 +35,8 @@ export const handleBillingError = (error: any, router: AppRouterInstance): boole
         : error?.detail?.detail || error?.message || "اعتبار کافی نیست.";
 
     showBillingRequiredDialog({
-      title: "اعتبار گفتگو به پایان رسیده است",
-      message,
+      title: "اعتبار گفتگو تمام شد",
+      message: "برای ادامه، یک طرح یا بسته اعتبار تهیه کنید.",
     });
 
     toast.error("عدم موجودی کافی", {

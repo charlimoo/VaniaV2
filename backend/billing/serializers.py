@@ -50,7 +50,7 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
         model = SubscriptionPlan
         fields = (
             'id', 'slug', 'name', 'description', 'price', 
-            'duration_days', 'included_credits', 'included_agents', 'included_agent_slugs',
+            'included_credits', 'included_agents', 'included_agent_slugs',
             'audience', 'eligible_expert_professions'
         )
 
@@ -84,7 +84,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
         fields = (
-            'id', 'status', 'total_amount', 'created_at', 'formatted_date', 
+            'id', 'status', 'subtotal_amount', 'tax_rate', 'tax_amount', 'total_amount', 'created_at', 'formatted_date', 
             'item_name', 'item_description', 'user_name', 'user_phone',
             'transaction_ref_id', 'card_number', 'authority', 'discount_amount'
         )

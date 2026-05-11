@@ -40,8 +40,8 @@ export const APP_CONFIG = {
     DEFAULT_DAILY_FREE_AMOUNT: 5.0, // Fallback if API fails
     DISPLAY_PRECISION: 0, 
     SYMBOL: 'اعتبار',
-    NAME_SINGULAR: 'اعتبار گفتگو',
-    NAME_PLURAL: 'اعتبار گفتگو',
+    NAME_SINGULAR: 'سرمایه گفتگو',
+    NAME_PLURAL: 'سرمایه گفتگو',
   },
 
   // --- UI TEXT & LABELS ---
@@ -54,7 +54,7 @@ export const APP_CONFIG = {
     BILLING_TITLE: "طرح‌ها و اعتبار",
     BILLING_DESC: "مدیریت طرح‌های اشتراک، افزایش اعتبار و مشاهده تراکنش‌ها.",
     PLAN_ACTIVE_LABEL: "طرح فعال",
-    PLAN_EXPIRES_LABEL: "تاریخ انقضا",
+    PLAN_EXPIRES_LABEL: "اعتبار طرح",
     BUY_CREDIT_TITLE: "بسته‌های اعتبار",
     BUY_PLAN_TITLE: "طرح‌های اشتراک",
 

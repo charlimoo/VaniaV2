@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { 
-  Bot, Lock, Zap, ArrowLeft, Clock, Sparkles
+  Bot, Lock, Zap, ArrowLeft, Sparkles
 } from "lucide-react";
 
 import { Skeleton } from "@/components/ui/skeleton";
@@ -177,7 +177,7 @@ export function AgentGrid() {
                         {isLocked ? <Lock className="h-5 w-5" /> : <Bot className="h-6 w-6" />}
                     </div>
 
-                    {/* Tags & Expiry */}
+                    {/* Tags */}
                     <div className="flex flex-col gap-1.5">
                         {/* Tags - Increased font size */}
                         <div className="flex flex-wrap gap-1.5">
@@ -187,14 +187,6 @@ export function AgentGrid() {
                                 </span>
                             ))}
                         </div>
-
-                        {/* Expiry Date - Increased font size */}
-                        {agent.license_expires_at && isOwned && (
-                            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70 font-medium">
-                                <Clock className="w-3 h-3" />
-                                <span><span className="font-mono">{new Date(agent.license_expires_at).toLocaleDateString('fa-IR')}</span></span>
-                            </div>
-                        )}
                     </div>
                 </div>
 

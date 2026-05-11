@@ -46,18 +46,14 @@ class ServiceListView(APIView):
         
         # 2. Extract User's Active Plan Context for Serializer logic
         active_plan_id = None
-        plan_expires_at = None
-        
         if hasattr(user, 'wallet') and user.wallet.active_plan_id:
             if user.wallet.is_plan_active:
                 active_plan_id = user.wallet.active_plan_id
-                plan_expires_at = user.wallet.plan_expires_at
 
         # 3. Serialize
         serializer_context = {
             'request': request,
             'user_active_plan_id': active_plan_id,
-            'user_plan_expires_at': plan_expires_at
         }
         
         serializer = ServiceSerializer(visible_services, many=True, context=serializer_context)

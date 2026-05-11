@@ -13,6 +13,7 @@ import { extractErrorMessage } from "@/lib/error-utils"
 import { getSmartRedirectPath } from "@/lib/redirect-utils"
 import { getNormalizedValidPhoneOrNull, toLatinDigits } from "@/lib/phone"
 import { StepOtp, StepPassword, StepPhone, StepRegistration } from "./auth-steps"
+import { markLoginPwaPromptPending, markSignupProfilePromptPending } from "@/lib/onboarding-prompts"
 
 type AuthStage = "PHONE" | "OTP" | "PASSWORD" | "REGISTRATION"
 
@@ -183,6 +184,7 @@ export function AuthContainer({ onAuthenticated }: AuthContainerProps = {}) {
       localStorage.setItem("accessToken", data.access)
       if (data.refresh) localStorage.setItem("refreshToken", data.refresh)
       persistPendingSignup(null)
+      markLoginPwaPromptPending()
       await finalizeAuth(data.access)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "تایید هویت انجام نشد.")
@@ -205,6 +207,7 @@ export function AuthContainer({ onAuthenticated }: AuthContainerProps = {}) {
       }
       localStorage.setItem("accessToken", data.access)
       if (data.refresh) localStorage.setItem("refreshToken", data.refresh)
+      markLoginPwaPromptPending()
       await finalizeAuth(data.access)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "ورود با رمز عبور انجام نشد.")
@@ -250,6 +253,7 @@ export function AuthContainer({ onAuthenticated }: AuthContainerProps = {}) {
       localStorage.setItem("accessToken", responseData.access)
       if (responseData.refresh) localStorage.setItem("refreshToken", responseData.refresh)
       persistPendingSignup(null)
+      markSignupProfilePromptPending()
       await finalizeAuth(responseData.access)
     } catch (e) {
       const message = e instanceof Error ? e.message : "ثبت نام انجام نشد."

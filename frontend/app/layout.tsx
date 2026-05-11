@@ -4,6 +4,7 @@ import "./globals.css";
 import { UserProvider } from "@/components/providers/user-provider";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { ConfigProvider } from "@/components/providers/config-provider";
+import { GlobalOnboardingPrompts } from "@/components/onboarding/GlobalOnboardingPrompts";
 import { Toaster } from "@/components/ui/sonner";
 import { APP_CONFIG } from "@/lib/config";
 
@@ -47,6 +48,7 @@ export default function RootLayout({
           <ConfigProvider>
             <UserProvider>
               {children}
+              <GlobalOnboardingPrompts />
               <Toaster dir="rtl" theme="dark" className="font-sans" />
             </UserProvider>
           </ConfigProvider>

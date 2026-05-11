@@ -36,7 +36,6 @@ export interface SubscriptionPlan {
   name: string;
   description: string;
   price: string;
-  duration_days: number;
   included_credits: string;
   included_agents: string[]; // List of agent names/slugs unlocked
   included_agent_slugs?: string[];
@@ -55,7 +54,6 @@ export interface WalletInfo {
   
   // Plan Metadata (Flattened from UserWalletSerializer)
   active_plan_name?: string | null;
-  plan_expires_at?: string | null;
   
   updated_at: string;
 }
@@ -134,7 +132,6 @@ export interface AgentService {
   // Dynamic Access Status (Computed by Backend)
   access_status: 'FREE' | 'OWNED' | 'LOCKED' | 'MAINTENANCE';
   is_owned: boolean;
-  license_expires_at: string | null;
 
   // [NEW] Demo Rules & Usage from Backend
   demo_config?: DemoConfig;
@@ -168,6 +165,7 @@ export interface Invoice {
   id: string;
   status: "PENDING" | "PAID" | "CANCELLED" | "WAITING" | "WAITING_APPROVAL";
   subtotal_amount?: string;
+  tax_rate?: string;
   tax_amount?: string;
   total_amount: string;
   created_at: string;

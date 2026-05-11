@@ -35,6 +35,13 @@ logger = logging.getLogger("agno.billing")
 FIELD_WRITE_AGENT_SLUGS = {"vania-expert-assistant"}
 
 
+class InsufficientCreditsError(Exception):
+    def __init__(self, message: str):
+        self.title = "اعتبار گفتگو تمام شد"
+        self.message = message or "برای ادامه، یک طرح یا بسته اعتبار تهیه کنید."
+        super().__init__(self.message)
+
+
 def _normalize_message_text(value: str) -> str:
     return (value or "").strip().replace("\r\n", "\n")
 
@@ -282,8 +289,7 @@ class ServiceAgent(Agent):
             # 1. Access Check (No Estimation)
             can_run, reason = await self._check_access()
             if not can_run:
-                yield f"⚠️ {reason}"
-                return
+                raise InsufficientCreditsError(reason)
 
             # 2. Context Injection
             additional_messages = []
@@ -384,12 +390,7 @@ class ServiceAgent(Agent):
             daily_limit = config.daily_free_credits
             wallet, _ = UserWallet.objects.get_or_create(user=self.user)
             
-            now = timezone.now()
-            is_plan_active = (
-                wallet.active_plan is not None and 
-                wallet.plan_expires_at is not None and 
-                wallet.plan_expires_at > now
-            )
+            is_plan_active = wallet.active_plan is not None
             
             if is_plan_active:
                 available = wallet.balance_plan + wallet.balance_paid

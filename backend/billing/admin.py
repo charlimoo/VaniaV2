@@ -34,7 +34,7 @@ class FAQAdmin(admin.ModelAdmin):
     
 @admin.register(SubscriptionPlan)
 class SubscriptionPlanAdmin(admin.ModelAdmin):
-    list_display = ('name', 'slug', 'price', 'duration_days', 'included_credits', 'is_active')
+    list_display = ('name', 'slug', 'price', 'included_credits', 'is_active')
     search_fields = ('name', 'slug')
     list_filter = ('is_active',)
     
@@ -46,7 +46,7 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
             'fields': ('name', 'slug', 'description', 'is_active')
         }),
         ('Pricing & Economy', {
-            'fields': ('price', 'included_credits', 'duration_days'),
+            'fields': ('price', 'included_credits'),
             'description': "Define the cost (Toman) and the credits (Coins) given."
         }),
     )
@@ -79,7 +79,7 @@ class UserWalletAdmin(admin.ModelAdmin):
             'fields': ('user',)
         }),
         ('Plan Status', {
-            'fields': ('active_plan', 'plan_expires_at')
+            'fields': ('active_plan',)
         }),
         ('Balances', {
             'fields': ('balance_paid', 'balance_plan', 'daily_free_used'),

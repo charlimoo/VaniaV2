@@ -1,12 +1,11 @@
 # backend/billing/tasks.py
 import logging
 from celery import shared_task
-from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 
 # [FIX] Added Invoice to imports
-from .models import UserWallet, BillingConfig, Invoice
+from .models import UserWallet, Invoice
 
 logger = logging.getLogger("celery.billing")
 
@@ -22,30 +21,11 @@ def reset_daily_free_credits():
 @shared_task(name="billing.tasks.clean_expired_plans")
 def clean_expired_plans():
     """
-    Run Daily (01:00 AM).
-    Finds wallets where the plan has expired effectively.
-    1. Removes the active_plan link.
-    2. Resets balance_plan to 0 (Subscription credits expire).
-    3. Preserves balance_paid (Top-ups never expire).
+    Deprecated no-op retained for compatibility with older Celery Beat entries.
+    Plan ownership and plan credits no longer expire by time.
     """
-    now = timezone.now()
-    
-    # Filter: Has a plan, AND expiry date is in the past
-    expired_wallets = UserWallet.objects.filter(
-        active_plan__isnull=False,
-        plan_expires_at__lt=now
-    )
-    
-    # Bulk update for efficiency
-    updated_count = expired_wallets.update(
-        active_plan=None,
-        balance_plan=0  # Reset subscription credits
-    )
-    
-    if updated_count > 0:
-        logger.info(f"🧹 [Cleanup] Removed expired plans for {updated_count} wallets.")
-        
-    return f"Cleanup: Expired plans removed for {updated_count} wallets."
+    logger.info("Skipping legacy clean_expired_plans task because plan expiry is disabled.")
+    return "Cleanup skipped: plans no longer expire."
 
 @shared_task(name="billing.tasks.cancel_stale_invoices")
 def cancel_stale_invoices():

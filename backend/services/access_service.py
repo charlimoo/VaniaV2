@@ -1,8 +1,6 @@
 # backend/services/access_service.py
 import logging
-from datetime import timedelta
 from django.core.cache import cache
-from django.utils import timezone
 from users.models import CustomUser
 from users.eligibility import is_user_eligible_for_agent
 from .models import AgentService
@@ -14,12 +12,18 @@ class AccessControlService:
     Determines if a User can access an Agent based on their Wallet's Active Plan.
     """
     CACHE_TTL = 300  # 5 Minutes
-    # Grace period for plan expiry (allows finishing active conversations)
-    GRACE_PERIOD = timedelta(hours=1) 
-
     @staticmethod
     def get_cache_key(user_id: int, agent_slug: str) -> str:
-        return f"access:user_{user_id}:agent_{agent_slug}"
+        version = cache.get(f"access:user_{user_id}:version", 1)
+        return f"access:v{version}:user_{user_id}:agent_{agent_slug}"
+
+    @staticmethod
+    def bump_user_cache_version(user_id: int) -> None:
+        version_key = f"access:user_{user_id}:version"
+        try:
+            cache.incr(version_key)
+        except ValueError:
+            cache.set(version_key, 2, timeout=None)
 
     def check_permission(self, user: CustomUser, agent_slug: str) -> tuple[bool, str]:
         # 1. Fast Path: Cache Hit
@@ -69,14 +73,7 @@ class AccessControlService:
         if not wallet.active_plan:
             return False, "Plan required"
 
-        # Rule 4: Plan Expiry
-        if not wallet.plan_expires_at:
-             return False, "Invalid plan state"
-             
-        if wallet.plan_expires_at + self.GRACE_PERIOD < timezone.now():
-            return False, "Plan expired"
-
-        # Rule 5: Bundle Inclusion
+        # Rule 4: Bundle Inclusion
         # Check if the agent is included in the user's active plan.
         # We query the M2M relation: agent.plans -> does it contain wallet.active_plan?
         if agent.plans.filter(id=wallet.active_plan.id).exists():

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ArrowLeft, Loader2, CalendarClock, Zap, Shield } from "lucide-react";
+import { ArrowLeft, Loader2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,19 +16,7 @@ interface PlanProps {
 }
 
 export function PlanCardMinimal({ plan, isActive, isProcessing, onSelect }: PlanProps) {
-  // Helper to format duration text nicely in Persian
-  const getDurationLabel = (months: number) => {
-    if (months === 1) return "ماهانه";
-    if (months === 3) return "۳ ماهه";
-    if (months === 6) return "۶ ماهه";
-    if (months === 12) return "سالانه";
-    return `${months} ماهه`;
-  };
-
-  const durationLabel = getDurationLabel(plan.duration_months);
-  
   // Parse numeric values safely
-  const creditAllowance = parseInt(plan.monthly_credit_allowance).toLocaleString(APP_CONFIG.ECONOMY.LOCALE);
   const totalCredits = (parseInt(plan.monthly_credit_allowance) * plan.duration_months).toLocaleString(APP_CONFIG.ECONOMY.LOCALE);
 
   const priceValue = parseFloat(plan.price);
@@ -55,12 +43,11 @@ export function PlanCardMinimal({ plan, isActive, isProcessing, onSelect }: Plan
               {plan.name}
             </h3>
             <div className="mt-4 flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded w-fit">
-              
               <Badge variant="secondary" className=" font-mono text-xs px-2.5 h-6 bg-background border-border/50 shadow-sm">
                 {totalCredits} {APP_CONFIG.CREDITS.SYMBOL}
               </Badge>
-              <CalendarClock className="w-3 h-3" />
-              <span>دوره {durationLabel}</span>
+              <Zap className="w-3 h-3 text-amber-500" />
+              <span>اعتبار قابل استفاده</span>
             </div>
           </div>
           
@@ -79,11 +66,6 @@ export function PlanCardMinimal({ plan, isActive, isProcessing, onSelect }: Plan
               {APP_CONFIG.ECONOMY.CURRENCY_SYMBOL}
             </span>
           </div>
-          {plan.duration_months > 1 && (
-             <p className="text-[10px] text-muted-foreground mt-1 opacity-70">
-               معادل {formatCurrency(priceValue / plan.duration_months)} / ماه
-             </p>
-          )}
         </div>
 
 

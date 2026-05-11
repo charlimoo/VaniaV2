@@ -2,8 +2,6 @@ from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from django.utils import timezone
-
 from billing.models import BillingConfig, SubscriptionPlan, Transaction, UserWallet
 from billing.services import process_usage_charge
 
@@ -44,10 +42,9 @@ class ProcessUsageChargeTests(TestCase):
             included_credits=Decimal("0"),
         )
         self.wallet.active_plan = plan
-        self.wallet.plan_expires_at = timezone.now() + timezone.timedelta(days=10)
         self.wallet.balance_plan = Decimal("1.50")
         self.wallet.balance_paid = Decimal("0.50")
-        self.wallet.save(update_fields=["active_plan", "plan_expires_at", "balance_plan", "balance_paid", "updated_at"])
+        self.wallet.save(update_fields=["active_plan", "balance_plan", "balance_paid", "updated_at"])
 
         result = process_usage_charge(self.user, input_tokens=3000, output_tokens=0, run_id="run-plan-partial")
 

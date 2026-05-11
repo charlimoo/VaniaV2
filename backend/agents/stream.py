@@ -43,6 +43,7 @@ from .storage import get_storage, get_session_safe
 from agents.naming import title_generator
 from .session_metadata import apply_session_metadata_defaults, get_session_knowledge_flag, set_session_knowledge_metadata
 from services.rag_service import render_session_knowledge_context, session_knowledge_exists
+from .service_agent import InsufficientCreditsError
 from .tool_result_sanitizer import sanitize_tool_result_content
 
 # Configure Logger
@@ -422,6 +423,21 @@ async def agui_stream_generator(
                 if item == "DONE":
                     break
                 
+                if isinstance(item, InsufficientCreditsError):
+                    yield encoder.encode(
+                        AguiCustomEvent(
+                            type=EventType.CUSTOM,
+                            name="billing_required",
+                            value={
+                                "title": item.title,
+                                "message": "برای ادامه، یک طرح یا بسته اعتبار تهیه کنید.",
+                                "detail": item.message,
+                                "source": "chat",
+                            },
+                        )
+                    )
+                    break
+
                 if isinstance(item, Exception):
                     yield encoder.encode(RunErrorEvent(type=EventType.RUN_ERROR, message=str(item)))
                     break

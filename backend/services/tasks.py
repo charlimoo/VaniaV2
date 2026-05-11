@@ -1,14 +1,11 @@
 # backend/services/tasks.py
 import logging
 import time
-import os
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
 
 from .models import KnowledgeDocument
-from billing.models import UserWallet
-from users.tasks import send_generic_sms
 from .rag_service import RAGIngestionService
 
 # [REMOVED] Mem0 Import
@@ -41,38 +38,11 @@ def ingest_document_task(self, document_id: int):
 @shared_task(name="services.tasks.check_expiring_plans")
 def check_expiring_plans():
     """
-    Runs daily via Celery Beat.
-    Finds Wallets with active plans expiring in exactly 3 days and sends an SMS.
+    Deprecated no-op retained for compatibility with older Celery Beat entries.
+    Plan ownership no longer expires by time.
     """
-    now = timezone.now()
-    target_date = (now + timedelta(days=3)).date()
-    
-    # Find wallets where:
-    # 1. Has an active plan
-    # 2. Expiry date matches the target date (ignoring time)
-    expiring_wallets = UserWallet.objects.filter(
-        active_plan__isnull=False,
-        plan_expires_at__date=target_date
-    ).select_related('user', 'active_plan')
-
-    count = 0
-    for wallet in expiring_wallets:
-        user = wallet.user
-        plan_name = wallet.active_plan.name
-        
-        message = (
-            f"کاربر گرامی،\n"
-            f"اشتراک «{plan_name}» شما ۳ روز دیگر به پایان می‌رسد.\n"
-            f"جهت تمدید به پنل طرح‌ها و اعتبار مراجعه کنید."
-        )
-        
-        # Async send (Fire and forget)
-        if user.phone_number:
-            send_generic_sms.delay(user.phone_number, message)
-            count += 1
-
-    logger.info(f"📅 [Plan Check] Notified {count} users about expiring plans.")
-    return f"Notified {count} users."
+    logger.info("Skipping legacy check_expiring_plans task because plan expiry is disabled.")
+    return "Plan expiry notifications skipped."
 
 @shared_task(name="services.tasks.reset_stuck_documents")
 def reset_stuck_documents():

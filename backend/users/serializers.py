@@ -141,11 +141,10 @@ class UserWalletSerializer(serializers.ModelSerializer):
     balance_paid = serializers.CharField()
     daily_free_used = serializers.CharField()
     active_plan_name = serializers.CharField(source='active_plan.name', read_only=True, allow_null=True)
-    plan_expires_at = serializers.DateTimeField(read_only=True, allow_null=True)
     
     class Meta:
         model = UserWallet
-        fields = ('id', 'balance_plan', 'balance_paid', 'daily_free_used', 'updated_at', 'active_plan_name', 'plan_expires_at')
+        fields = ('id', 'balance_plan', 'balance_paid', 'daily_free_used', 'updated_at', 'active_plan_name')
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False, style={'input_type': 'password'}, trim_whitespace=False)

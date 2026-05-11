@@ -27,6 +27,7 @@ from .roles import (
 )
 from .expert_validation import validate_profession_credential
 from vania_core.profile_sync import sync_visitor_base_profile_identity
+from billing.services import activate_default_expert_plan_for_transferred_credits
 from vania_core.models import RoleVerificationRequest
 
 logger = logging.getLogger(__name__)
@@ -413,6 +414,8 @@ class UpgradeExpertView(APIView):
             if result.normalized_name and not user.full_name:
                 user.full_name = result.normalized_name
             user.save()
+            if not requires_manual_review:
+                activate_default_expert_plan_for_transferred_credits(user)
 
         user.refresh_from_db()
         return Response(

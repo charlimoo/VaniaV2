@@ -194,8 +194,8 @@ export const Thread: FC<ThreadProps> = ({
     message: string;
   }>({
     open: false,
-    title: "اعتبار گفتگو به پایان رسیده است",
-    message: "برای ادامه گفتگو لازم است اعتبار جدید تهیه کنید.",
+    title: "اعتبار گفتگو تمام شد",
+    message: "برای ادامه، یک طرح یا بسته اعتبار تهیه کنید.",
   });
 
   React.useEffect(() => {
@@ -203,8 +203,8 @@ export const Thread: FC<ThreadProps> = ({
       const detail = (event as CustomEvent<BillingRequiredDetail>).detail || {};
       setBillingDialog({
         open: true,
-        title: detail.title || "اعتبار گفتگو به پایان رسیده است",
-        message: detail.message || "برای ادامه گفتگو لازم است اعتبار جدید تهیه کنید.",
+        title: detail.title || "اعتبار گفتگو تمام شد",
+        message: detail.message || "برای ادامه، یک طرح یا بسته اعتبار تهیه کنید.",
       });
     };
 
@@ -285,7 +285,7 @@ const BillingRequiredDialog: FC<{
               router.push("/dashboard/billing");
             }}
           >
-            رفتن به صفحه اعتبار
+            مشاهده طرح‌ها
           </Button>
         </DialogFooter>
       </DialogContent>

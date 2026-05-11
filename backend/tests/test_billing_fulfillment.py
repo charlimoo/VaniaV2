@@ -4,11 +4,9 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.test import TestCase
-from django.utils import timezone
-
 from billing.models import BillingProduct, Invoice, SubscriptionPlan, Transaction
-from billing.services import FulfillmentService
-from users.models import UserRole
+from billing.services import FulfillmentService, activate_default_expert_plan_for_transferred_credits
+from users.models import ExpertProfession, UserRole
 
 
 class FulfillmentServicePlanCreditTests(TestCase):
@@ -46,7 +44,7 @@ class FulfillmentServicePlanCreditTests(TestCase):
         )
 
     @patch("billing.services.send_generic_sms.delay")
-    def test_same_plan_renewal_stacks_credits_and_extends_expiry(self, _mock_sms):
+    def test_same_plan_purchase_stacks_credits_without_expiry(self, _mock_sms):
         plan, product = self._create_plan_product(
             slug="visitor-30d",
             name="Visitor 30D",
@@ -54,10 +52,8 @@ class FulfillmentServicePlanCreditTests(TestCase):
             duration_days=30,
         )
         self.wallet.active_plan = plan
-        self.wallet.plan_expires_at = timezone.now() + timezone.timedelta(days=12)
-        original_expiry = self.wallet.plan_expires_at
         self.wallet.balance_plan = Decimal("35")
-        self.wallet.save(update_fields=["active_plan", "plan_expires_at", "balance_plan", "updated_at"])
+        self.wallet.save(update_fields=["active_plan", "balance_plan", "updated_at"])
 
         FulfillmentService.execute(self._create_paid_invoice(product))
 
@@ -69,12 +65,9 @@ class FulfillmentServicePlanCreditTests(TestCase):
 
         self.assertEqual(self.wallet.active_plan_id, plan.id)
         self.assertEqual(self.wallet.balance_plan, Decimal("135.0000000000"))
-        self.assertEqual(
-            self.wallet.plan_expires_at,
-            original_expiry + timezone.timedelta(days=30),
-        )
+        self.assertIsNone(self.wallet.plan_expires_at)
         self.assertEqual(tx.amount, Decimal("100.0000000000"))
-        self.assertIn("Renewed Plan", tx.description)
+        self.assertIn("Added Credits To Plan", tx.description)
 
     @patch("billing.services.send_generic_sms.delay")
     def test_active_plan_upgrade_keeps_remaining_credits_and_adds_new_plan_credits(self, _mock_sms):
@@ -92,9 +85,8 @@ class FulfillmentServicePlanCreditTests(TestCase):
         )
 
         self.wallet.active_plan = current_plan
-        self.wallet.plan_expires_at = timezone.now() + timezone.timedelta(days=8)
         self.wallet.balance_plan = Decimal("40")
-        self.wallet.save(update_fields=["active_plan", "plan_expires_at", "balance_plan", "updated_at"])
+        self.wallet.save(update_fields=["active_plan", "balance_plan", "updated_at"])
 
         FulfillmentService.execute(self._create_paid_invoice(upgraded_product))
 
@@ -106,12 +98,12 @@ class FulfillmentServicePlanCreditTests(TestCase):
 
         self.assertEqual(self.wallet.active_plan_id, upgraded_plan.id)
         self.assertEqual(self.wallet.balance_plan, Decimal("290.0000000000"))
-        self.assertGreater(self.wallet.plan_expires_at, timezone.now())
+        self.assertIsNone(self.wallet.plan_expires_at)
         self.assertEqual(tx.amount, Decimal("250.0000000000"))
         self.assertIn("Upgraded Plan", tx.description)
 
     @patch("billing.services.send_generic_sms.delay")
-    def test_expired_plan_does_not_carry_old_subscription_balance(self, _mock_sms):
+    def test_existing_plan_purchase_carries_remaining_subscription_balance(self, _mock_sms):
         expired_plan, _expired_product = self._create_plan_product(
             slug="expired-30d",
             name="Expired 30D",
@@ -126,13 +118,55 @@ class FulfillmentServicePlanCreditTests(TestCase):
         )
 
         self.wallet.active_plan = expired_plan
-        self.wallet.plan_expires_at = timezone.now() - timezone.timedelta(days=1)
         self.wallet.balance_plan = Decimal("55")
-        self.wallet.save(update_fields=["active_plan", "plan_expires_at", "balance_plan", "updated_at"])
+        self.wallet.save(update_fields=["active_plan", "balance_plan", "updated_at"])
 
         FulfillmentService.execute(self._create_paid_invoice(new_product))
 
         self.wallet.refresh_from_db()
 
         self.assertEqual(self.wallet.active_plan_id, new_plan.id)
-        self.assertEqual(self.wallet.balance_plan, Decimal("200.0000000000"))
+        self.assertEqual(self.wallet.balance_plan, Decimal("255.0000000000"))
+        self.assertIsNone(self.wallet.plan_expires_at)
+
+    def test_visitor_upgrade_activates_matching_expert_bronze_without_granting_extra_credits(self):
+        expert_role = UserRole.objects.create(slug="expert", name="متخصص")
+        profession = ExpertProfession.objects.create(slug="psychologist", name="روانشناس")
+        visitor_plan = SubscriptionPlan.objects.create(
+            slug="visitor-30d",
+            name="Visitor Bronze",
+            price=Decimal("1000"),
+            included_credits=Decimal("2600"),
+            audience=SubscriptionPlan.Audience.VISITOR,
+        )
+        expert_bronze = SubscriptionPlan.objects.create(
+            slug="expert-psychologist-30d",
+            name="Psychologist Bronze",
+            price=Decimal("10000"),
+            included_credits=Decimal("30000"),
+            audience=SubscriptionPlan.Audience.EXPERT,
+            eligible_expert_professions=["psychologist"],
+        )
+        self.wallet.active_plan = visitor_plan
+        self.wallet.balance_plan = Decimal("35")
+        self.wallet.balance_paid = Decimal("7")
+        self.wallet.save(update_fields=["active_plan", "balance_plan", "balance_paid", "updated_at"])
+
+        self.user.role = expert_role
+        self.user.expert_profession = profession
+        self.user.is_expert_verified = True
+        self.user.save(update_fields=["role", "expert_profession", "is_expert_verified"])
+
+        activated = activate_default_expert_plan_for_transferred_credits(self.user)
+
+        self.assertTrue(activated)
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.active_plan_id, expert_bronze.id)
+        self.assertEqual(self.wallet.balance_plan, Decimal("35.0000000000"))
+        self.assertEqual(self.wallet.balance_paid, Decimal("7.0000000000"))
+        self.assertFalse(
+            Transaction.objects.filter(
+                wallet=self.wallet,
+                transaction_type=Transaction.TransactionType.PLAN_ACTIVATION,
+            ).exists()
+        )

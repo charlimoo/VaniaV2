@@ -88,7 +88,13 @@ export default function InvoiceDetailPage() {
       const data = await res.json();
       if (!res.ok) throw new ApiError(data.error, res.status);
       toast.success("کد تخفیف اعمال شد!");
-      setInvoice(prev => prev ? { ...prev, total_amount: data.new_total, discount_amount: data.discount_amount } : null);
+      setInvoice(prev => prev ? {
+        ...prev,
+        total_amount: data.new_total,
+        tax_amount: data.tax_amount,
+        subtotal_amount: data.subtotal_amount,
+        discount_amount: data.discount_amount,
+      } : null);
       setDiscountCode("");
     } catch (err: any) {
       toast.error(err.message || "کد تخفیف نامعتبر است.");
@@ -142,7 +148,11 @@ export default function InvoiceDetailPage() {
   const isWaiting = invoice.status === "WAITING" || invoice.status === "WAITING_APPROVAL";
   const itemTitle = invoice.item_name || "محصول نامشخص";
   const itemDesc = invoice.item_description || "خرید اعتبار یا سرویس ویژه";
-  const originalTotal = parseFloat(invoice.total_amount) + parseFloat(invoice.discount_amount || "0");
+  const subtotalAmount = parseFloat(invoice.subtotal_amount || "0");
+  const discountAmount = parseFloat(invoice.discount_amount || "0");
+  const taxAmount = parseFloat(invoice.tax_amount || "0");
+  const taxRate = parseFloat(invoice.tax_rate || "10");
+  const itemAmount = subtotalAmount || parseFloat(invoice.total_amount) + discountAmount - taxAmount;
   const payableAmount = parseFloat(invoice.total_amount);
 
   const getStatusBadge = () => {
@@ -239,7 +249,7 @@ export default function InvoiceDetailPage() {
                             <p className="text-xs text-muted-foreground mt-1">{itemDesc}</p>
                         </div>
                         <div className="text-left font-mono font-bold">
-                            {formatCurrency(originalTotal)}
+                            {formatCurrency(itemAmount)}
                         </div>
                     </div>
                 </div>
@@ -258,15 +268,20 @@ export default function InvoiceDetailPage() {
                 <div className="w-full space-y-2">
                     <div className="flex justify-between text-sm">
                         <span className="text-muted-foreground">مبلغ کل</span>
-                        <span className="font-mono">{formatCurrency(originalTotal)}</span>
+                        <span className="font-mono">{formatCurrency(itemAmount)}</span>
                     </div>
                     
-                    {parseFloat(invoice.discount_amount || "0") > 0 && (
+                    {discountAmount > 0 && (
                         <div className="flex justify-between text-sm text-emerald-600 animate-in slide-in-from-right-2">
                             <span>تخفیف اعمال شده</span>
                             <span className="font-mono">- {formatCurrency(invoice.discount_amount!)}</span>
                         </div>
                     )}
+
+                    <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">مالیات بر ارزش افزوده {taxRate.toLocaleString("fa-IR")}%</span>
+                        <span className="font-mono">{formatCurrency(invoice.tax_amount || "0")}</span>
+                    </div>
                 </div>
                 
                 <Separator />
@@ -364,12 +379,12 @@ export default function InvoiceDetailPage() {
                     )
                     /* --- SCENARIO 4: PENDING (PAYMENT FORM) --- */
                     : (
-                        <Tabs defaultValue="manual" className="w-full">
+                        <Tabs defaultValue={ENABLE_ONLINE_PAYMENT ? "online" : "manual"} className="w-full">
                             {/* Render Tabs List only if Online is enabled, otherwise hide navigation */}
                             {ENABLE_ONLINE_PAYMENT && (
                                 <TabsList className="grid w-full grid-cols-2 mb-4">
-                                    <TabsTrigger value="manual">کارت به کارت</TabsTrigger>
                                     <TabsTrigger value="online">درگاه آنلاین</TabsTrigger>
+                                    <TabsTrigger value="manual">کارت به کارت</TabsTrigger>
                                 </TabsList>
                             )}
                             

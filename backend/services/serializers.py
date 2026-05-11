@@ -24,7 +24,6 @@ class ServiceSerializer(serializers.ModelSerializer):
     
     # --- Marketplace / Access Fields ---
     is_owned = serializers.SerializerMethodField()
-    license_expires_at = serializers.SerializerMethodField()
     access_status = serializers.SerializerMethodField()
 
     # --- Agent Metadata ---
@@ -45,7 +44,7 @@ class ServiceSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'slug', 'description', 'system_prompt',
             # Marketplace
-            'is_free', 'is_owned', 'license_expires_at', 'access_status',
+            'is_free', 'is_owned', 'access_status',
             'audience', 'eligible_expert_professions', 'requires_visitor_selector',
             # UI/Meta
             'cost_multiplier', 'is_public', 'is_active', 'tags', 'suggestions', 'model_id', 'user_guide',
@@ -91,11 +90,6 @@ class ServiceSerializer(serializers.ModelSerializer):
         user_plan_id = self.context.get('user_active_plan_id')
         if not user_plan_id: return False
         return any(plan.id == user_plan_id for plan in obj.plans.all())
-
-    def get_license_expires_at(self, obj):
-        if self.get_is_owned(obj) and not obj.is_free:
-            return self.context.get('user_plan_expires_at')
-        return None
 
     def get_access_status(self, obj):
         if not obj.is_active: return "MAINTENANCE"

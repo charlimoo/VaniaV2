@@ -1,7 +1,7 @@
 "use client";
 
 import { 
-  Loader2, Zap, Coins, Crown, CalendarClock, Plus
+  Loader2, Zap, Coins, Crown, Plus
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -45,10 +45,6 @@ export function WalletOverview({
 
   const planName = wallet?.active_plan_name;
   const hasPlan = !!planName;
-  const expiryDate = wallet?.plan_expires_at 
-    ? new Date(wallet.plan_expires_at).toLocaleDateString('fa-IR') 
-    : null;
-
   return (
     <div className="w-full" dir="rtl">
       
@@ -84,10 +80,8 @@ export function WalletOverview({
                             </p>
                         </div>
 
-                        {/* Expiry Badge */}
                         <div className="inline-flex items-center self-start gap-2 bg-white/5 border border-white/5 px-3 py-1.5 rounded-lg text-xs text-zinc-400">
-                            <CalendarClock className="w-3.5 h-3.5 opacity-70" />
-                            <span>انقضا: <span className="font-mono font-bold text-zinc-300">{expiryDate}</span></span>
+                            <span>طرح شما فعال است و اعتبار آن در حساب شما باقی می‌ماند.</span>
                         </div>
                     </div>
 
@@ -113,7 +107,7 @@ export function WalletOverview({
                         <div className="flex flex-col items-center gap-3 w-full">
                         <div className="flex items-center gap-1.5 text-[10px] text-zinc-600 font-medium">
                                 <Zap className="w-3 h-3 text-amber-500/70" />
-                                افزایش سریع
+                                افزایش سریع سرمایه گفتگو
                             </div>
                             <div className="flex flex-wrap justify-center gap-2">
                                 {topUps.slice(0, 3).map((pack) => (

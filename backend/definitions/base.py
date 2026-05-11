@@ -55,7 +55,7 @@ class PlanDef:
     name: str          # Display name (e.g. 'اشتراک حرفه‌ای')
     description: str   # Benefits description
     price: int         # Price in Toman
-    duration_days: int # Validity period (e.g. 30)
+    duration_days: int # Legacy catalog field kept for compatibility with existing synced plans
     monthly_credits: int # Credits granted upon activation
     # List of Agent slugs that this plan unlocks
     included_agent_slugs: List[str] = field(default_factory=list) 

@@ -1,17 +1,66 @@
 # backend/billing/services.py
 import logging
-from decimal import Decimal, ROUND_HALF_UP
-from datetime import timedelta
+from decimal import Decimal
 from django.db import transaction
-from django.conf import settings
-from django.utils import timezone
-from django.core.cache import cache
 from .utils import calculate_credit_cost 
 from .models import UserWallet, Transaction, BillingConfig, BillingProduct, Invoice, SubscriptionPlan
 from users.tasks import send_generic_sms 
 from users.eligibility import is_user_eligible_for_plan
+from services.access_service import access_service
 
 logger = logging.getLogger(__name__)
+
+
+def activate_default_expert_plan_for_transferred_credits(user) -> bool:
+    """
+    When a visitor upgrades to expert, keep their existing credits usable by
+    switching the active plan to the matching expert bronze plan without granting
+    that plan's included credits.
+    """
+    profession_slug = getattr(getattr(user, "expert_profession", None), "slug", None)
+    if not profession_slug or not getattr(user, "is_expert_verified", False):
+        return False
+
+    wallet, _ = UserWallet.objects.select_for_update().get_or_create(user=user)
+    if wallet.total_balance <= Decimal("0"):
+        return False
+
+    active_plan = wallet.active_plan
+    if active_plan and active_plan.audience == SubscriptionPlan.Audience.EXPERT:
+        return False
+
+    preferred_slug = f"expert-{profession_slug}-30d"
+    plan = (
+        SubscriptionPlan.objects.filter(
+            slug=preferred_slug,
+            audience=SubscriptionPlan.Audience.EXPERT,
+            is_active=True,
+        ).first()
+        or SubscriptionPlan.objects.filter(
+            audience=SubscriptionPlan.Audience.EXPERT,
+            eligible_expert_professions__contains=[profession_slug],
+            is_active=True,
+        ).order_by("price", "id").first()
+    )
+
+    if not plan or not is_user_eligible_for_plan(user, plan):
+        logger.warning(
+            "Could not activate default expert plan for transferred credits: user=%s profession=%s",
+            getattr(user, "id", None),
+            profession_slug,
+        )
+        return False
+
+    wallet.active_plan = plan
+    wallet.plan_expires_at = None
+    wallet.save(update_fields=["active_plan", "plan_expires_at", "updated_at"])
+    access_service.bump_user_cache_version(user.id)
+    logger.info(
+        "Activated default expert plan for transferred credits: user=%s plan=%s",
+        user.id,
+        plan.slug,
+    )
+    return True
 
 def process_usage_charge(user, input_tokens: int, output_tokens: int, run_id: str = None) -> dict:
     """
@@ -41,12 +90,7 @@ def process_usage_charge(user, input_tokens: int, output_tokens: int, run_id: st
         remaining_cost = cost
         deducted_total = Decimal("0")
         
-        # Check Plan Status
-        is_plan_active = (
-            wallet.active_plan is not None and 
-            wallet.plan_expires_at is not None and 
-            wallet.plan_expires_at > timezone.now()
-        )
+        is_plan_active = wallet.active_plan is not None
 
         if is_plan_active:
             # --- SCENARIO A: SUBSCRIBER ---
@@ -124,11 +168,7 @@ def process_service_charge(user, amount: Decimal, description: str) -> dict:
     with transaction.atomic():
         wallet, _ = UserWallet.objects.select_for_update().get_or_create(user=user)
         
-        is_plan_active = (
-            wallet.active_plan is not None and 
-            wallet.plan_expires_at is not None and 
-            wallet.plan_expires_at > timezone.now()
-        )
+        is_plan_active = wallet.active_plan is not None
         
         # Calculate Total Available based on status
         if is_plan_active:
@@ -210,8 +250,6 @@ class FulfillmentService:
     @staticmethod
     def _fulfill_product(user, product: BillingProduct, invoice: Invoice):
         wallet, _ = UserWallet.objects.select_for_update().get_or_create(user=user)
-        now = timezone.now()
-        
         # 1. Handle Plan Activation
         if product.linked_plan:
             new_plan = product.linked_plan
@@ -223,49 +261,20 @@ class FulfillmentService:
                 )
                 return
 
-            had_active_plan = (
-                wallet.active_plan is not None and
-                wallet.plan_expires_at is not None and
-                wallet.plan_expires_at > now
-            )
+            had_active_plan = wallet.active_plan is not None
             carried_plan_balance = wallet.balance_plan if had_active_plan else Decimal("0")
-            
-            # CHECK: Is this a Renewal? (Same Plan + Not Expired)
-            is_renewal = (
-                wallet.active_plan and 
-                wallet.active_plan.id == new_plan.id and
-                wallet.plan_expires_at and 
-                wallet.plan_expires_at > now
-            )
 
-            if is_renewal:
-                # --- RENEWAL LOGIC ---
-                # 1. Extend Time: Add duration to the EXISTING expiry date
-                wallet.plan_expires_at = wallet.plan_expires_at + timedelta(days=new_plan.duration_days)
-                
-                # 2. Refill Credits: 
-                # Choice A (Aggressive): wallet.balance_plan = new_plan.included_credits (Reset)
-                # Choice B (Friendly): wallet.balance_plan += new_plan.included_credits (Stack)
-                
-                # We use Choice A (Reset) because it's a subscription quota. 
-                # However, to avoid user anger if they renew early, we take the max
-                # of (current + new) vs (new). Actually, simplest is just Reset for subscriptions.
-                # But for a token economy, Stacking is often expected if they pay early.
-                
-                # Let's go with Stacking for Renewal to be safe:
-                wallet.balance_plan += new_plan.included_credits
-                
-                desc = f"Renewed Plan: {new_plan.name} (Extended)"
-            else:
-                # --- NEW / UPGRADE / EXPIRED LOGIC ---
-                wallet.active_plan = new_plan
-                wallet.plan_expires_at = now + timedelta(days=new_plan.duration_days)
-                wallet.balance_plan = carried_plan_balance + new_plan.included_credits
-                desc = (
-                    f"Upgraded Plan: {new_plan.name}"
-                    if had_active_plan
-                    else f"Activated Plan: {new_plan.name}"
-                )
+            same_plan = wallet.active_plan and wallet.active_plan.id == new_plan.id
+            wallet.active_plan = new_plan
+            wallet.plan_expires_at = None
+            wallet.balance_plan = carried_plan_balance + new_plan.included_credits
+            desc = (
+                f"Added Credits To Plan: {new_plan.name}"
+                if same_plan
+                else f"Upgraded Plan: {new_plan.name}"
+                if had_active_plan
+                else f"Activated Plan: {new_plan.name}"
+            )
 
             Transaction.objects.create(
                 wallet=wallet,
@@ -280,6 +289,7 @@ class FulfillmentService:
                 send_generic_sms.delay(user.phone_number, f"اشتراک جدید برای شما فعال شد.")
             except Exception as e:
                 logger.error(f"SMS Error: {e}")
+            access_service.bump_user_cache_version(user.id)
 
         # 2. Handle Credit Top-Up (if product has credit amount)
         if product.credit_amount > 0:

@@ -101,7 +101,10 @@ class SubscriptionPlan(models.Model):
     description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=18, decimal_places=0, help_text="Price in Toman")
     
-    duration_days = models.PositiveIntegerField(default=30, help_text="Length of the subscription")
+    duration_days = models.PositiveIntegerField(
+        default=30,
+        help_text="Legacy catalog field kept for compatibility; plan access no longer expires by time.",
+    )
     
     included_credits = models.DecimalField(
         max_digits=19, decimal_places=10, 
@@ -145,7 +148,11 @@ class UserWallet(models.Model):
         blank=True,
         related_name='wallets'
     )
-    plan_expires_at = models.DateTimeField(null=True, blank=True)
+    plan_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Legacy field retained for compatibility. Plan ownership no longer expires by time.",
+    )
 
     # --- CREDIT BUCKETS ---
     # Credits from Subscriptions
@@ -168,7 +175,7 @@ class UserWallet(models.Model):
     
     @property
     def is_plan_active(self):
-        return self.active_plan and self.plan_expires_at and self.plan_expires_at > timezone.now()
+        return self.active_plan is not None
 
 
 class BillingProduct(models.Model):
@@ -255,6 +262,9 @@ class Invoice(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='invoices')
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True)
+    subtotal_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('10.00'))
+    tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
     total_amount = models.DecimalField(max_digits=12, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
     

@@ -45,7 +45,7 @@ export function QuickChargeCard({ topUps, onTopUp, processingId }: QuickChargeCa
                         </div>
                         
                         <p className="text-xs text-muted-foreground mt-3 line-clamp-2 leading-relaxed opacity-80">
-                            {pack.description || "اعتبار دائمی بدون تاریخ انقضا، قابل استفاده برای تمامی سرویس‌ها."}
+                            {pack.description || "اعتبار دائمی، قابل استفاده برای تمامی سرویس‌ها."}
                         </p>
                     </div>
 

@@ -38,6 +38,7 @@ import { useCanvasSync } from "@/lib/canvas/useCanvasSync";
 import { createSimpleAttachmentAdapter, threadManager } from "@/lib/SimpleThreadAdapters";
 import { useUser } from "@/hooks/use-user";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
+import { handleBillingError } from "@/lib/billing-utils";
 import { useChatLayout } from "@/components/chat/chat-layout-context";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useTradeStore } from "@/lib/vania/tstore";
@@ -499,7 +500,10 @@ export default function ChatPage() {
     showThinking: false,
     onNewMessageWrapper: handleNewMessage,
     adapters: { history: historyAdapter, attachments: attachmentsAdapter },
-    onError: (err) => console.error("Runtime Error:", err)
+    onError: (err) => {
+      if (handleBillingError(err, router)) return;
+      console.error("Runtime Error:", err);
+    }
   });
 
   // 8. Canvas Sync Hook

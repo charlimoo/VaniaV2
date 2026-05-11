@@ -16,20 +16,12 @@ app.conf.beat_schedule = {
         'task': 'billing.tasks.reset_daily_free_credits',
         'schedule': crontab(hour=0, minute=0),
     },
-    'clean-expired-plans': {
-        'task': 'billing.tasks.clean_expired_plans',
-        'schedule': crontab(hour=1, minute=0),
-    },
     'cancel-stale-invoices': {  # [NEW]
         'task': 'billing.tasks.cancel_stale_invoices',
         'schedule': crontab(hour=2, minute=0),
     },
     
     # --- SERVICES / NOTIFICATIONS ---
-    'check-expiring-plans': {
-        'task': 'services.tasks.check_expiring_plans',
-        'schedule': crontab(hour=10, minute=0),
-    },
     'reset-stuck-documents': { # [NEW] Run hourly
         'task': 'services.tasks.reset_stuck_documents',
         'schedule': crontab(minute=30), # Run at XX:30 every hour

@@ -358,13 +358,33 @@ export function ProfileTab({
         data: f.data || {},
       }));
 
-      const testsPayload = (tests || []).map((t) => ({
-        id: t.id,
-        catalog_id: t.catalog_id ?? null,
-        title: t.title || "",
-        url: t.url || "",
-        result_summary: t.result_summary || "",
-      }));
+      const testsPayload = (tests || []).map((t) => {
+        const attachments = Array.isArray(t.attachments)
+          ? t.attachments
+          : t.file_name
+            ? [{
+                id: "legacy-file",
+                file_name: t.file_name,
+                content_type: t.file_name.toLowerCase().endsWith(".pdf") ? "application/pdf" : null,
+                file_uploaded_at: t.file_uploaded_at || null,
+              }]
+            : [];
+
+        return {
+          id: t.id,
+          catalog_id: t.catalog_id ?? null,
+          title: t.title || "",
+          url: t.url || "",
+          result_text: t.result_text || t.result_summary || "",
+          attachment_count: attachments.length,
+          attachments: attachments.map((attachment: any) => ({
+            id: attachment.id || null,
+            file_name: attachment.file_name || "",
+            content_type: attachment.content_type || null,
+            file_uploaded_at: attachment.file_uploaded_at || null,
+          })),
+        };
+      });
 
       const patientInfo = {
         patient_profile: {
@@ -378,9 +398,11 @@ export function ProfileTab({
       const prompt = [
         "[SYSTEM: GENERATE_FORMS_TESTS_ANALYSIS]",
         `Patient: ${patientProfile.name} (${patientProfile.id})`,
-        "از تمام اطلاعات مراجع، فرم های تکمیل شده، و خلاصه نتایج تست ها استفاده کن.",
-        "فایل PDF را مستقیما تحلیل نکن و فقط بر اساس متن/خلاصه های موجود تحلیل تولید کن.",
-        "لطفا با توجه به فرم های تکمیل شده و خلاصه نتایج تست ها، یک تحلیل بالینی یکپارچه تولید کن.",
+        "از تمام اطلاعات مراجع، فرم های تکمیل شده، خلاصه نتایج تست ها، و فایل های پیوست تست ها استفاده کن.",
+        "برای هر تستی که attachment_count بزرگتر از صفر دارد، قبل از تولید تحلیل با ابزار get_test_result_details(test_id=...) محتوای فایل های آن تست را بررسی کن.",
+        "اگر لازم شد فقط یک فایل مشخص را بخوانی، از get_test_attachment_details(test_id=..., attachment_id=...) استفاده کن. شناسه های test_id و attachment_id دقیقا در Tests JSON آمده اند.",
+        "فقط بر اساس داده های موجود، متن های ثبت شده، و فایل هایی که ابزارها واقعا در اختیار تو قرار می دهند تحلیل بنویس؛ اگر فایلی قابل خواندن نبود، بر اساس آن حدس نزن.",
+        "لطفا با توجه به فرم های تکمیل شده، خلاصه نتایج تست ها، و محتوای فایل های خوانده شده، یک تحلیل بالینی یکپارچه تولید کن.",
         "خروجی باید فارسی و حرفه ای باشد و شامل: الگوهای اصلی، فرضیه های بالینی محتاطانه، ریسک ها/حمایت ها، و پیشنهاد مسیر درمانی کوتاه باشد.",
         "پس از تولید تحلیل، حتما با ابزار update_forms_tests_analysis آن را ذخیره کن.",
         "",
@@ -390,7 +412,7 @@ export function ProfileTab({
         "",
         `Forms JSON:\n${JSON.stringify(formsPayload, null, 2)}`,
         "",
-        `Tests JSON (summaries only):\n${JSON.stringify(testsPayload, null, 2)}`,
+        `Tests JSON (summaries and attachment handles):\n${JSON.stringify(testsPayload, null, 2)}`,
       ].join("\n");
 
       await runtime.thread.append({

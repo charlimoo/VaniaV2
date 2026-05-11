@@ -19,6 +19,7 @@ import type { AgUiEvent } from "./types";
 import { RunAggregator } from "./adapter/run-aggregator";
 import { toAgUiMessages, toAgUiTools } from "./adapter/conversions";
 import { createAgUiSubscriber } from "./adapter/subscriber";
+import { showBillingRequiredDialog } from "@/lib/billing-utils";
 
 export type ReadonlyJSONValue =
   | string
@@ -449,6 +450,17 @@ export class AgUiThreadRuntimeCore {
     switch (event.type) {
       case "CUSTOM": {
         if (event.name === "assistant_output_complete") {
+          this.setRunning(false);
+          this.markLatestAssistantComplete();
+          return;
+        }
+        if (event.name === "billing_required") {
+          const value = event.value && typeof event.value === "object" ? event.value as Record<string, any> : {};
+          showBillingRequiredDialog({
+            title: typeof value.title === "string" ? value.title : "اعتبار گفتگو تمام شد",
+            message: typeof value.message === "string" ? value.message : "برای ادامه، یک طرح یا بسته اعتبار تهیه کنید.",
+            source: typeof value.source === "string" ? value.source : "chat",
+          });
           this.setRunning(false);
           this.markLatestAssistantComplete();
           return;

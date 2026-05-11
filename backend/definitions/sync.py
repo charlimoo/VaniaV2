@@ -303,7 +303,7 @@ class DefinitionSync:
             pk=1,
             defaults={
                 "currency_symbol": "اعتبار",
-                "currency_name": "اعتبار گفتگو",
+                "currency_name": "سرمایه گفتگو",
                 
                 # --- ECONOMY SETTINGS ---
                 # Defined here instead of Environment Variables

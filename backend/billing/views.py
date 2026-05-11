@@ -1,7 +1,7 @@
 # backend/billing/views.py
 import uuid
 import logging
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
@@ -29,6 +29,14 @@ from users.eligibility import is_user_eligible_for_plan
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
+
+VAT_RATE = Decimal("10.00")
+def quantize_money(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def calculate_tax_amount(subtotal: Decimal, tax_rate: Decimal = VAT_RATE) -> Decimal:
+    return quantize_money(subtotal * (tax_rate / Decimal("100")))
 
 class BillingConfigView(APIView):
     """
@@ -106,11 +114,16 @@ class PurchaseDirectView(APIView):
 
         try:
             with transaction.atomic():
+                subtotal = quantize_money(product.price)
+                tax_amount = calculate_tax_amount(subtotal)
                 # Create a PENDING Invoice
                 invoice = Invoice.objects.create(
                     user=request.user,
                     status=Invoice.Status.PENDING,
-                    total_amount=product.price,
+                    subtotal_amount=subtotal,
+                    tax_rate=VAT_RATE,
+                    tax_amount=tax_amount,
+                    total_amount=subtotal + tax_amount,
                     content_object=product
                 )
                 
@@ -165,22 +178,29 @@ class ApplyDiscountView(APIView):
              return Response({"error": "Discount usage limit reached."}, status=status.HTTP_400_BAD_REQUEST)
 
         with transaction.atomic():
-            # Calculate based on original price (total + current discount) to allow code switching
-            original_price = invoice.total_amount + invoice.discount_amount
+            # Calculate discounts before VAT. Existing legacy invoices may not have a stored subtotal.
+            original_price = invoice.subtotal_amount or (invoice.total_amount + invoice.discount_amount)
             
             discount_value = (original_price * discount.percent) / 100
             if discount.max_amount_per_usage and discount_value > discount.max_amount_per_usage:
                 discount_value = discount.max_amount_per_usage
+            discount_value = quantize_money(discount_value)
+
+            discounted_subtotal = max(Decimal(0), quantize_money(original_price - discount_value))
+            tax_rate = invoice.tax_rate if invoice.tax_rate is not None else VAT_RATE
+            tax_amount = calculate_tax_amount(discounted_subtotal, tax_rate)
             
             invoice.discount_code = discount
             invoice.discount_amount = discount_value
-            # Prevent negative total
-            invoice.total_amount = max(Decimal(0), original_price - discount_value)
+            invoice.tax_amount = tax_amount
+            invoice.total_amount = discounted_subtotal + tax_amount
             invoice.save()
 
             return Response({
                 "message": "Discount applied successfully",
                 "new_total": invoice.total_amount,
+                "tax_amount": invoice.tax_amount,
+                "subtotal_amount": invoice.subtotal_amount,
                 "discount_amount": invoice.discount_amount,
             })
 

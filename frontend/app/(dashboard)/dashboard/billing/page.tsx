@@ -175,9 +175,6 @@ const { user, loading: userLoading, refreshUser } = useUser();
                                 <div className="flex items-baseline gap-1 mt-3">
                                     <span className="text-3xl font-black tracking-tight">{formatCurrency(prod.price).replace(APP_CONFIG.ECONOMY.CURRENCY_SYMBOL, '')}</span>
                                     <span className="text-sm text-muted-foreground font-medium">{APP_CONFIG.ECONOMY.CURRENCY_SYMBOL}</span>
-                                    <span className="text-xs text-muted-foreground mr-2 bg-muted px-2 py-0.5 rounded-md">
-                                       / {plan.duration_days} روز
-                                    </span>
                                 </div>
                                 <p className="text-sm text-muted-foreground mt-3 min-h-[40px] leading-relaxed">
                                     {plan.description}
@@ -223,7 +220,7 @@ const { user, loading: userLoading, refreshUser } = useUser();
                                     {processingId === prod.id ? (
                                         <Loader2 className="w-5 h-5 animate-spin" />
                                     ) : isCurrent ? (
-                                        "تمدید اشتراک"
+                                        "افزایش اعتبار طرح"
                                     ) : (
                                         "خرید و فعال‌سازی"
                                     )}

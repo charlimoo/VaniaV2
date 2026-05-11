@@ -3,6 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from .models import CustomUser, UserProfile, UserRole, OTPRequest, ContextDefinition, UserContextEntry, ExpertProfession
 from billing.models import UserWallet
 from billing.forms import UserWalletAdminForm
+from billing.services import activate_default_expert_plan_for_transferred_credits
 from vania_core.models import RoleVerificationRequest
 from .roles import CANONICAL_EXPERT_SLUG, normalize_role_slug
 
@@ -11,7 +12,7 @@ class UserWalletInline(admin.StackedInline):
     form = UserWalletAdminForm
     can_delete = False
     verbose_name = "User Wallet"
-    fields = ('balance_plan', 'balance_paid', 'daily_free_used', 'active_plan', 'plan_expires_at')
+    fields = ('balance_plan', 'balance_paid', 'daily_free_used', 'active_plan')
     readonly_fields = ('updated_at',)
 
 class UserProfileInline(admin.StackedInline):
@@ -79,6 +80,7 @@ class CustomUserAdmin(UserAdmin):
         )
 
         if role_slug == CANONICAL_EXPERT_SLUG and getattr(obj, "is_expert_verified", False):
+            activate_default_expert_plan_for_transferred_credits(obj)
             if latest_request:
                 if latest_request.status != RoleVerificationRequest.Status.APPROVED or latest_request.data != request_data:
                     latest_request.status = RoleVerificationRequest.Status.APPROVED

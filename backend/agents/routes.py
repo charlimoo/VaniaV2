@@ -756,7 +756,7 @@ async def transcribe_audio(
             logger.warning(f"User {user.id} failed to pay for transcription. Cost: {total_cost}")
             raise HTTPException(
                 status_code=402, 
-                detail=f"اعتبار کافی نیست. هزینه تبدیل صوت: {total_cost} اعتبار گفتگو."
+                detail=f"اعتبار کافی نیست. هزینه تبدیل صوت: {total_cost} سرمایه گفتگو."
             )
 
         return {
