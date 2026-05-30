@@ -1,8 +1,12 @@
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.forms import UserChangeForm
+from django import forms
 from .models import CustomUser, UserProfile, UserRole, OTPRequest, ContextDefinition, UserContextEntry, ExpertProfession
+from .password_policy import validate_password_policy
 from billing.models import UserWallet
 from billing.forms import UserWalletAdminForm
+from billing.admin_exports import ExportAllWhenNoSelectionMixin, export_users_csv
 from billing.services import activate_default_expert_plan_for_transferred_credits
 from vania_core.models import RoleVerificationRequest
 from .roles import CANONICAL_EXPERT_SLUG, normalize_role_slug
@@ -21,8 +25,48 @@ class UserProfileInline(admin.StackedInline):
     fields = ('skin_type', 'updated_at')
     readonly_fields = ('updated_at',)
 
+
+class CustomUserAdminForm(UserChangeForm):
+    admin_new_password1 = forms.CharField(
+        label="New password",
+        required=False,
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
+        help_text="Leave blank to keep the current password.",
+    )
+    admin_new_password2 = forms.CharField(
+        label="Confirm new password",
+        required=False,
+        strip=False,
+        widget=forms.PasswordInput(attrs={"autocomplete": "new-password"}),
+    )
+
+    class Meta(UserChangeForm.Meta):
+        model = CustomUser
+        fields = "__all__"
+
+    def clean(self):
+        cleaned_data = super().clean()
+        password1 = cleaned_data.get("admin_new_password1")
+        password2 = cleaned_data.get("admin_new_password2")
+
+        if not password1 and not password2:
+            return cleaned_data
+
+        if password1 != password2:
+            raise forms.ValidationError({"admin_new_password2": "The two password fields did not match."})
+
+        try:
+            validate_password_policy(password1, user=self.instance)
+        except Exception as exc:
+            messages = getattr(exc, "messages", None) or [str(exc)]
+            raise forms.ValidationError({"admin_new_password1": messages})
+
+        return cleaned_data
+
 @admin.register(CustomUser)
-class CustomUserAdmin(UserAdmin):
+class CustomUserAdmin(ExportAllWhenNoSelectionMixin, UserAdmin):
+    form = CustomUserAdminForm
     list_display = (
         'phone_number',
         'full_name',
@@ -42,20 +86,40 @@ class CustomUserAdmin(UserAdmin):
         (None, {'fields': ('phone_number', 'password')}),
         ('Personal info', {'fields': ('full_name', 'email', 'national_code', 'role')}),
         ('Doctor Info', {'fields': ('expert_profession', 'medical_license', 'is_verified_doctor', 'is_expert_verified', 'expert_verified_at', 'expert_verification_meta')}),
+        ('Set New Password', {
+            'fields': ('admin_new_password1', 'admin_new_password2'),
+            'description': 'Use these fields to manually set a new password for this user.',
+        }),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups')}),
         ('Important dates', {'fields': ('last_login', 'date_joined')}),
     )
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
-            'fields': ('phone_number', 'password1', 'password2', 'full_name', 'email', 'national_code', 'role', 'expert_profession', 'is_active', 'is_staff'),
+            'fields': (
+                'phone_number', 'password1', 'password2',
+                'full_name', 'email', 'national_code', 'role', 'expert_profession',
+                'is_active', 'is_staff', 'is_superuser', 'groups',
+            ),
         }),
     )
     readonly_fields = ('expert_verified_at', 'expert_verification_meta', 'date_joined', 'last_login')
     inlines = (UserWalletInline, UserProfileInline)
+    actions = ('export_users_and_purchases',)
+    export_all_when_no_selection_actions = ('export_users_and_purchases',)
+
+    @admin.action(description="Export selected users and purchase details as CSV")
+    def export_users_and_purchases(self, request, queryset):
+        return export_users_csv(queryset)
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
+
+        admin_new_password = form.cleaned_data.get("admin_new_password1") if hasattr(form, "cleaned_data") else None
+        if admin_new_password:
+            obj.set_password(admin_new_password)
+            obj.save(update_fields=["password"])
+            self.message_user(request, "Password was updated successfully.", level=messages.SUCCESS)
 
         expert_role = UserRole.objects.filter(slug=CANONICAL_EXPERT_SLUG).first()
         if not expert_role:

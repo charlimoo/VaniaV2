@@ -66,7 +66,7 @@ def process_role_approval(sender, instance, created, **kwargs):
                     specialty = instance.data.get('specialty', 'General Practice')
                     profile, created_profile = DoctorProfile.objects.get_or_create(
                         user=user,
-                        defaults={'specialty': specialty, 'is_public': True}
+                        defaults={'specialty': specialty, 'is_public': False}
                     )
                     if created_profile:
                         logger.info(f"   -> DoctorProfile created for User {user.id}")

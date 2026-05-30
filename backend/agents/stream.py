@@ -36,6 +36,7 @@ from .utils import (
     extract_tool_info,
     extract_ui_attachment_metadata,
     build_branch_history_prompt,
+    clean_internal_prompt_content,
     safe_get,
     safe_serialize,
 )
@@ -223,6 +224,58 @@ async def resolve_session_knowledge_flag(agent, thread_id: str, session=None) ->
         return False
 
 
+def _clean_message_list_internal_prompts(messages: list | None) -> bool:
+    changed = False
+    for message in messages or []:
+        role = safe_get(message, "role")
+        if role != "user":
+            continue
+
+        content = safe_get(message, "content")
+        cleaned_content = clean_internal_prompt_content(content)
+        if cleaned_content == content:
+            continue
+
+        if isinstance(message, dict):
+            message["content"] = cleaned_content
+        else:
+            try:
+                setattr(message, "content", cleaned_content)
+            except Exception:
+                continue
+        changed = True
+    return changed
+
+
+async def clean_persisted_internal_prompts(agent, thread_id: str) -> None:
+    """
+    Agno persists the exact message passed to arun. When we wrap the user turn
+    with branch-history context, replace that stored internal prompt with the
+    real user-visible message before history is read back by the UI.
+    """
+    changed = False
+    if hasattr(agent, "memory") and agent.memory and hasattr(agent.memory, "messages"):
+        changed = _clean_message_list_internal_prompts(agent.memory.messages) or changed
+    if hasattr(agent, "messages"):
+        changed = _clean_message_list_internal_prompts(agent.messages) or changed
+
+    storage = get_storage()
+    session = await sync_to_async(get_session_safe)(storage, thread_id, str(agent.user.id))
+    if not session:
+        return
+
+    if hasattr(session, "memory") and session.memory is not None and hasattr(session.memory, "messages"):
+        changed = _clean_message_list_internal_prompts(session.memory.messages) or changed
+    elif hasattr(session, "messages"):
+        changed = _clean_message_list_internal_prompts(session.messages) or changed
+
+    if changed:
+        if hasattr(storage, "upsert_session"):
+            await sync_to_async(storage.upsert_session)(session=session)
+        else:
+            await sync_to_async(storage.upsert)(session=session)
+
+
 async def agui_stream_generator(
     agent, 
     input_data: RunAgentInput, 
@@ -358,6 +411,8 @@ async def agui_stream_generator(
                     agent.add_session_summary_to_context = original_add_session_summary_to_context
                 if original_num_history_runs is not None:
                     agent.num_history_runs = original_num_history_runs
+
+            await clean_persisted_internal_prompts(agent, thread_id)
             
             # Signal completion
             await output_queue.put("DONE")

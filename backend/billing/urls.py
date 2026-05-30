@@ -1,6 +1,7 @@
 from django.urls import path
 from .views import (
     BillingConfigView,
+    AdminProductListView,
     ProductListView,
     TransactionHistoryView,
     PurchaseDirectView,
@@ -20,6 +21,7 @@ urlpatterns = [
     
     # --- Storefront ---
     path('products/', ProductListView.as_view(), name='product-list'),
+    path('admin/products/', AdminProductListView.as_view(), name='admin-product-list'),
     path('history/', TransactionHistoryView.as_view(), name='transaction-history'),
     
     # --- Purchase Flow ---

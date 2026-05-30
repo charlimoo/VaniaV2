@@ -39,11 +39,12 @@ import {
   API_BASE_URL,
   getAuthHeaders,
   getExpertProfessions,
+  setAdminExpertProfession,
   upgradeExpert,
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import { toast } from "sonner"
-import { isExpertRoleSlug, isVisitorRoleSlug } from "@/lib/roles"
+import { hasExpertFeatures, hasVisitorFeatures, isStaffOrAdminUser } from "@/lib/roles"
 
 // [NEW] Import the Doctor Profile Modal
 import { DoctorProfileModal } from "@/components/settings/DoctorProfileModal"
@@ -83,12 +84,16 @@ export default function SettingsPage() {
 
           
           <section id="security">
-            <PasswordForm user={user} />
+            <PasswordForm user={user} refreshUser={refreshUser} />
           </section>
 
           {/* Upgrade Section (Only visible if NOT a verified doctor yet) */}
           <section id="upgrade">
-            <DoctorUpgradeSection user={user} refreshUser={refreshUser} />
+            {isStaffOrAdminUser(user) ? (
+              <AdminExpertProfessionSection user={user} refreshUser={refreshUser} />
+            ) : (
+              <DoctorUpgradeSection user={user} refreshUser={refreshUser} />
+            )}
           </section>
             
         </div>
@@ -104,7 +109,7 @@ function DoctorPublicProfileSection({ user }: { user: any }) {
 
   // 1. Guard Clause: Only show for doctors
   // We check role_slug (preferred) or role name fallback
-  const isDoctor = isExpertRoleSlug(user?.role_slug) || isExpertRoleSlug(user?.role);
+  const isDoctor = hasExpertFeatures(user);
   
   if (!isDoctor) return null;
 
@@ -122,7 +127,7 @@ function DoctorPublicProfileSection({ user }: { user: any }) {
             <div className="flex flex-col gap-1">
               <h3 className="font-bold text-base text-foreground">پروفایل عمومی متخصص</h3>
               <p className="text-sm text-muted-foreground">
-                مدیریت اطلاعات نمایش داده شده در لیست متخصصین (بیوگرافی، آدرس، هزینه).
+                برای نمایش در لیست متخصصین، تخصص اصلی، شهر، آدرس مطب و درباره من را کامل کنید.
               </p>
             </div>
           </div>
@@ -146,13 +151,7 @@ function DoctorPublicProfileSection({ user }: { user: any }) {
 
 function VisitorBaseProfileSection({ user, refreshUser }: { user: any, refreshUser: () => Promise<any> }) {
   const [isOpen, setIsOpen] = useState(false);
-  const hasVisitorFeatures =
-    isVisitorRoleSlug(user?.role_slug) ||
-    isVisitorRoleSlug(user?.role) ||
-    isExpertRoleSlug(user?.role_slug) ||
-    isExpertRoleSlug(user?.role);
-
-  if (!hasVisitorFeatures) return null;
+  if (!hasVisitorFeatures(user)) return null;
 
   return (
     <>
@@ -195,6 +194,115 @@ type ExpertProfessionOption = {
   credential_placeholder?: string;
   validation_kind?: string;
 };
+
+function AdminExpertProfessionSection({ user, refreshUser }: { user: any, refreshUser: () => Promise<any> }) {
+  const [professions, setProfessions] = useState<ExpertProfessionOption[]>([])
+  const [selectedProfession, setSelectedProfession] = useState<string>("")
+  const [loadingProfessions, setLoadingProfessions] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const selectedProfessionOption = professions.find((p) => p.slug === selectedProfession) || null;
+
+  useEffect(() => {
+    setLoadingProfessions(true)
+    getExpertProfessions()
+      .then((data) => {
+        setProfessions(data || [])
+        if (data?.length) {
+          const preferredProfession = user?.expert_profession_slug || data[0].slug;
+          setSelectedProfession((current) =>
+            current && data.some((item) => item.slug === current) ? current : preferredProfession
+          )
+        }
+      })
+      .catch(() => toast.error("دریافت حوزه‌های تخصصی ناموفق بود"))
+      .finally(() => setLoadingProfessions(false))
+  }, [user?.expert_profession_slug])
+
+  const handleSave = async () => {
+    if (!selectedProfession) {
+      toast.error("حوزه تخصصی را انتخاب کنید")
+      return
+    }
+
+    setSaving(true)
+    try {
+      const res = await setAdminExpertProfession(selectedProfession)
+      toast.success(res.message || "حوزه تخصصی ادمین بروزرسانی شد.")
+      await refreshUser()
+    } catch {
+      toast.error("بروزرسانی حوزه تخصصی ناموفق بود")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="rounded-xl border bg-card text-card-foreground shadow-sm p-4">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+        <div className="flex items-start gap-3">
+          <div className="rounded-full bg-primary/12 p-2 text-primary">
+            <ShieldCheck className="w-4 h-4" />
+          </div>
+          <div className="space-y-1 text-start">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium">تنظیم حوزه تخصصی ادمین</span>
+              <Badge variant="outline" className="border-border bg-accent text-accent-foreground">
+                بدون اعتبارسنجی
+              </Badge>
+            </div>
+            <p className="text-xs leading-6 text-muted-foreground">
+              این انتخاب فقط زمینه تخصصی حساب ادمین را برای ابزارها، بوم‌ها و دسترسی‌های متخصص مشخص می‌کند.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              حوزه فعلی: {user?.expert_profession_label || "انتخاب نشده"}
+            </p>
+          </div>
+        </div>
+        <Button
+          onClick={handleSave}
+          disabled={saving || loadingProfessions || !selectedProfession || selectedProfession === user?.expert_profession_slug}
+          size="sm"
+          className="h-9 min-w-36 gap-2"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+          ذخیره
+        </Button>
+      </div>
+
+      <div className="mt-4">
+        {loadingProfessions ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            در حال دریافت حوزه‌ها...
+          </div>
+        ) : professions.length ? (
+          <div className="space-y-3">
+            <Tabs value={selectedProfession} onValueChange={setSelectedProfession} className="w-full">
+              <TabsList className="w-full h-auto p-1 grid grid-cols-2 gap-1 rounded-xl bg-muted/70 md:grid-cols-4">
+                {professions.map((profession) => (
+                  <TabsTrigger
+                    key={profession.slug}
+                    value={profession.slug}
+                    className="h-9 rounded-lg px-2 text-[11px] md:text-sm whitespace-nowrap"
+                  >
+                    {profession.name}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            {selectedProfessionOption && (
+              <div className="rounded-lg border bg-background p-3 text-start text-sm">
+                {selectedProfessionOption.name}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">حوزه تخصصی فعالی برای انتخاب وجود ندارد.</p>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function DoctorUpgradeSection({ user, refreshUser }: { user: any, refreshUser: () => Promise<any> }) {
   const [isOpen, setIsOpen] = useState(false)
@@ -638,7 +746,7 @@ function ProfileForm({ user, refreshUser }: { user: any, refreshUser: () => Prom
 
 // --- SUB-COMPONENT: PASSWORD FORM ---
 
-function PasswordForm({ user }: { user: any }) {
+function PasswordForm({ user, refreshUser }: { user: any, refreshUser: () => Promise<any> }) {
   const [isLoading, setIsLoading] = useState(false)
   const [success, setSuccess] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -669,7 +777,11 @@ function PasswordForm({ user }: { user: any }) {
     }
 
     const headers = getAuthHeaders()
-    if (!headers.Authorization) return
+    if (!headers.Authorization) {
+      setError("برای تغییر رمز عبور باید وارد حساب شوید.")
+      setIsLoading(false)
+      return
+    }
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/auth/change-password/`, {
@@ -689,6 +801,7 @@ function PasswordForm({ user }: { user: any }) {
         throw new Error(msg)
       }
 
+      await refreshUser()
       setSuccess(hasPassword ? "رمز عبور با موفقیت تغییر یافت." : "رمز عبور اولیه با موفقیت تنظیم شد.")
       setPasswords({ old_password: "", new_password: "", confirm_password: "" })
       setTimeout(() => setSuccess(null), 3000)

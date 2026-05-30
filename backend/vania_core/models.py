@@ -1,8 +1,22 @@
 # backend/vania_core/models.py
 import uuid
+from urllib.parse import urlsplit
 from django.db import models
 from django.conf import settings
 from users.models import UserRole, UserContextEntry
+
+
+def normalize_tutorial_path(value: str) -> str:
+    value = (value or "").strip()
+    if not value:
+        return "/"
+
+    parsed = urlsplit(value)
+    path = parsed.path if parsed.scheme or parsed.netloc else value.split("?", 1)[0].split("#", 1)[0]
+    path = "/" + path.strip("/")
+    while "//" in path:
+        path = path.replace("//", "/")
+    return path if path == "/" else path.rstrip("/")
 
 # --- 1. PROFESSIONAL IDENTITY & VERIFICATION ---
 
@@ -94,6 +108,33 @@ class DoctorProfile(models.Model):
 
     def __str__(self):
         return f"Dr. {self.user.full_name or self.user.phone_number}"
+
+    @staticmethod
+    def _has_profile_text(value) -> bool:
+        return bool(str(value or "").strip())
+
+    @staticmethod
+    def _has_profile_sentence(value) -> bool:
+        text = " ".join(str(value or "").split())
+        return len(text) >= 10 and len(text.split()) >= 2
+
+    def get_public_profile_missing_fields(self) -> list[str]:
+        missing: list[str] = []
+
+        if not self._has_profile_text(self.specialty):
+            missing.append("specialty")
+        if not self.location_id:
+            missing.append("location")
+        if not self._has_profile_text(self.clinic_address):
+            missing.append("clinic_address")
+        if not self._has_profile_sentence(self.bio):
+            missing.append("bio")
+
+        return missing
+
+    @property
+    def is_public_profile_complete(self) -> bool:
+        return not self.get_public_profile_missing_fields()
 
 
 # --- 2. RELATIONSHIPS (THE GRAPH) ---
@@ -411,6 +452,44 @@ class ExpertMeetingLink(models.Model):
 
     def __str__(self):
         return f"Meet by {self.creator_id} for {self.visitor_id} at {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class PageTutorial(models.Model):
+    title = models.CharField(max_length=255)
+    page_path = models.CharField(
+        max_length=500,
+        help_text="Page path or full URL. Examples: /dashboard/patients or https://panel.vaniaapp.app/chat/tashkil-parvande/",
+    )
+    normalized_path = models.CharField(max_length=500, db_index=True, editable=False)
+    video = models.FileField(upload_to="tutorials/videos/", max_length=500)
+    is_public = models.BooleanField(default=True, help_text="If enabled, users can see this tutorial.")
+    match_prefix = models.BooleanField(
+        default=False,
+        help_text="Enable for dynamic nested pages. Example: /chat/tashkil-parvande matches /chat/tashkil-parvande/local-...",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["normalized_path", "title"]
+        indexes = [
+            models.Index(fields=["is_public", "normalized_path"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.normalized_path = normalize_tutorial_path(self.page_path)
+        super().save(*args, **kwargs)
+
+    def matches_path(self, value: str) -> bool:
+        current_path = normalize_tutorial_path(value)
+        target_path = self.normalized_path or normalize_tutorial_path(self.page_path)
+        if self.match_prefix:
+            return current_path == target_path or current_path.startswith(f"{target_path}/")
+        return current_path == target_path
+
+    def __str__(self):
+        mode = "prefix" if self.match_prefix else "exact"
+        return f"{self.title} ({self.normalized_path}, {mode})"
 
 
 class CaseContextEntry(UserContextEntry):

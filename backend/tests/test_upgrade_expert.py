@@ -132,3 +132,29 @@ class UpgradeExpertViewTests(TestCase):
         self.assertEqual(self.user.role.slug, "expert")
         self.assertEqual(self.user.expert_profession_id, self.psychiatrist.id)
         self.assertEqual(self.user.expert_verification_meta.get("status"), "approved")
+
+    def test_staff_user_can_select_expert_profession_without_verification(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+
+        response = self.client.post(
+            "/api/auth/admin-expert-profession/",
+            {"profession_slug": "psychiatrist"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.expert_profession_id, self.psychiatrist.id)
+        self.assertTrue(self.user.is_expert_verified)
+        self.assertTrue(self.user.is_verified_doctor)
+        self.assertTrue(self.user.expert_verification_meta.get("admin_bypass"))
+
+    def test_non_staff_user_cannot_select_admin_expert_profession(self):
+        response = self.client.post(
+            "/api/auth/admin-expert-profession/",
+            {"profession_slug": "psychiatrist"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 403)

@@ -70,6 +70,13 @@ class PublicDoctorSerializer(serializers.ModelSerializer):
         
 class DoctorProfileUpdateSerializer(serializers.ModelSerializer):
     """Serializer for allowing a doctor to update their own profile."""
+    PUBLIC_PROFILE_FIELD_LABELS = {
+        "specialty": "تخصص اصلی",
+        "location": "استان یا شهر محل فعالیت",
+        "clinic_address": "آدرس دقیق مطب",
+        "bio": "درباره من",
+    }
+
     location_id = serializers.PrimaryKeyRelatedField(
         queryset=Location.objects.all(), 
         source='location', 
@@ -84,6 +91,34 @@ class DoctorProfileUpdateSerializer(serializers.ModelSerializer):
             'bio', 'clinic_address', 'location_id', 'specialty',
             'is_public', 'accepting_new_patients', 'meeting_price', 'avatar'
         ]
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+
+        final_is_public = attrs.get(
+            "is_public",
+            getattr(self.instance, "is_public", False),
+        )
+
+        if final_is_public is True:
+            profile = self.instance or DoctorProfile()
+            for key, value in attrs.items():
+                setattr(profile, key, value)
+
+            missing_fields = profile.get_public_profile_missing_fields()
+            if missing_fields:
+                missing_labels = [
+                    self.PUBLIC_PROFILE_FIELD_LABELS.get(field, field)
+                    for field in missing_fields
+                ]
+                raise serializers.ValidationError({
+                    "is_public": (
+                        "برای نمایش در لیست متخصصین ابتدا این موارد را تکمیل کنید: "
+                        + "، ".join(missing_labels)
+                    )
+                })
+
+        return attrs
 
 # ==============================================================================
 # == 2. PATIENT MANAGEMENT & CONNECTION SERIALIZERS

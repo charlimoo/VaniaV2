@@ -4,9 +4,10 @@
 import * as React from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Command, Share2 } from "lucide-react"
+import { BookOpen, Command, Share2 } from "lucide-react"
 import { toast } from "sonner"
 
+import { GuideModal } from "@/components/guide/GuideModal"
 import {
   Sidebar,
   SidebarContent,
@@ -23,13 +24,19 @@ import {
 import { UserProfileMenu } from "@/components/user-profile-menu"
 import { useUser } from "@/hooks/use-user"
 import { APP_CONFIG } from "@/lib/config"
-import { normalizeRoleSlug } from "@/lib/roles"
+import { isStaffOrAdminUser, normalizeRoleSlug } from "@/lib/roles"
 import { cn } from "@/lib/utils"
 
 export function DashboardSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const pathname = usePathname()
   const { user, logout } = useUser()
-  const { open } = useSidebar()
+  const { isMobile, open, setOpenMobile } = useSidebar()
+
+  const closeMobileSidebar = React.useCallback(() => {
+    if (isMobile) {
+      setOpenMobile(false)
+    }
+  }, [isMobile, setOpenMobile])
 
   const handleSharePlatform = React.useCallback(async () => {
     const shareUrl = window.location.origin
@@ -79,6 +86,7 @@ panel.vaniaapp.app
     
     // If no specific roles defined, everyone sees it
     if (!allowedRoles || allowedRoles.length === 0) return true;
+    if (isStaffOrAdminUser(user)) return true;
 
     // If roles defined, check if user has the matching role
     const normalizedUserRole = normalizeRoleSlug(user?.role_slug)
@@ -101,7 +109,7 @@ panel.vaniaapp.app
                 asChild
                 className="w-full justify-start gap-2 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
               >
-                <Link href="/dashboard">
+                <Link href="/dashboard" onClick={closeMobileSidebar}>
                   <div className="flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary-foreground overflow-hidden">
                     {APP_CONFIG.IMAGES.LOGO_ICON ? (
                       <img src={APP_CONFIG.IMAGES.LOGO_ICON} alt="Logo" className="size-full object-contain p-1" />
@@ -121,6 +129,7 @@ panel.vaniaapp.app
           <div className="w-full flex items-center justify-center">
             <Link 
               href="/dashboard" 
+              onClick={closeMobileSidebar}
               className="flex aspect-square size-10 items-center justify-center rounded-lg hover:bg-sidebar-accent transition-colors"
             >
               <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/10 text-primary-foreground overflow-hidden">
@@ -158,7 +167,7 @@ panel.vaniaapp.app
                         relative overflow-visible
                       "
                     >
-                      <Link href={item.url} className="flex items-center gap-3 relative z-10">
+                      <Link href={item.url} onClick={closeMobileSidebar} className="flex items-center gap-3 relative z-10">
                         {isActive && (
                           <div className="absolute right-[-12px] top-1/2 -translate-y-1/2 h-6 w-1 rounded-l-full bg-primary shadow-[0_0_10px_rgba(var(--primary),0.5)]" />
                         )}
@@ -187,6 +196,24 @@ panel.vaniaapp.app
 
       <SidebarFooter className="border-t border-sidebar-border p-0">
         <SidebarMenu className="px-2 pt-2">
+          <SidebarMenuItem>
+            <GuideModal
+              user={user}
+              triggerMode="custom"
+              trigger={
+                <SidebarMenuButton
+                  title="راهنمای وانیا"
+                  className="relative w-full justify-start gap-3 px-3 py-2 h-10 overflow-hidden transition-all duration-200 ease-in-out hover:bg-sidebar-accent/50"
+                >
+                  <span className="relative flex size-4 shrink-0 items-center justify-center">
+                    <span className="absolute size-4 rounded-full bg-primary/25 motion-safe:animate-ping" />
+                    <BookOpen className="relative size-4 text-primary" />
+                  </span>
+                  {open && <span className="text-start">راهنمای وانیا</span>}
+                </SidebarMenuButton>
+              }
+            />
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               tooltip="معرفی به دوستان"

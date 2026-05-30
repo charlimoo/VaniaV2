@@ -752,14 +752,16 @@ export default function PatientManagerCanvas({ canvasId, data, onEdit, isLocked 
           />
         )}
 
-        {activeView === "CASES" && selectedCase && activeTab === "RESCUENET" && featurePolicy?.rescue_net_enabled && (
-          <RescueNetTab
-            tasks={selectedCase.tasks || []}
-            patientId={data.patient_profile.id}
-            caseId={selectedCase.id}
-            onEdit={handleSelectedCaseEdit}
-            readOnly={isSelectedCaseReadOnly}
-          />
+          {activeView === "CASES" && selectedCase && activeTab === "RESCUENET" && featurePolicy?.rescue_net_enabled && (
+            <RescueNetTab
+              tasks={selectedCase.tasks || []}
+              patientId={data.patient_profile.id}
+              caseId={selectedCase.id}
+              patientName={data.patient_profile.name}
+              caseTitle={selectedCase.title}
+              onEdit={handleSelectedCaseEdit}
+              readOnly={isSelectedCaseReadOnly}
+            />
         )}
 
         {activeView === "CASES" && selectedCase && activeTab === "MEDICATIONS" && featurePolicy?.medications_enabled && (
@@ -772,14 +774,16 @@ export default function PatientManagerCanvas({ canvasId, data, onEdit, isLocked 
           />
         )}
 
-        {activeView === "CASES" && selectedCase && activeTab === "APPENDIX" && featurePolicy?.appendix_enabled && (
-          <AppendixTab
-            library={selectedCase.appendix_data}
-            patientId={data.patient_profile.id}
-            caseId={selectedCase.id}
-            onEdit={handleSelectedCaseEdit}
-            readOnly={isSelectedCaseReadOnly}
-          />
+          {activeView === "CASES" && selectedCase && activeTab === "APPENDIX" && featurePolicy?.appendix_enabled && (
+            <AppendixTab
+              library={selectedCase.appendix_data}
+              patientId={data.patient_profile.id}
+              caseId={selectedCase.id}
+              patientName={data.patient_profile.name}
+              caseTitle={selectedCase.title}
+              onEdit={handleSelectedCaseEdit}
+              readOnly={isSelectedCaseReadOnly}
+            />
         )}
 
         {activeView === "CASES" && selectedCase && activeTab === "FILES" && featurePolicy?.files_enabled && (

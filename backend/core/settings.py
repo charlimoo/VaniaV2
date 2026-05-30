@@ -124,10 +124,32 @@ if USE_S3:
     AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL') 
     
     # 2. NEW: External Domain (For Browser -> MinIO)
-    AWS_S3_CUSTOM_DOMAIN = os.getenv('AWS_S3_CUSTOM_DOMAIN') 
+    # django-storages expects this without a URL scheme; protocol is configured separately.
+    AWS_S3_CUSTOM_DOMAIN_RAW = os.getenv('AWS_S3_CUSTOM_DOMAIN')
+    AWS_S3_CUSTOM_DOMAIN = AWS_S3_CUSTOM_DOMAIN_RAW
+    AWS_S3_PUBLIC_SCHEME = None
+    if AWS_S3_CUSTOM_DOMAIN_RAW:
+        parsed_custom_domain = urllib.parse.urlparse(
+            AWS_S3_CUSTOM_DOMAIN_RAW if "://" in AWS_S3_CUSTOM_DOMAIN_RAW else f"//{AWS_S3_CUSTOM_DOMAIN_RAW}"
+        )
+        AWS_S3_CUSTOM_DOMAIN = f"{parsed_custom_domain.netloc}{parsed_custom_domain.path}".strip("/")
+        AWS_S3_PUBLIC_SCHEME = parsed_custom_domain.scheme or None
 
     AWS_S3_REGION_NAME = os.getenv('AWS_S3_REGION_NAME', 'us-east-1')
     AWS_S3_SIGNATURE_VERSION = 's3v4'
+    AWS_S3_ENDPOINT_PARSED = urllib.parse.urlparse(AWS_S3_ENDPOINT_URL or "")
+    AWS_S3_ENDPOINT_SCHEME = AWS_S3_ENDPOINT_PARSED.scheme
+    AWS_S3_CUSTOM_HOST = urllib.parse.urlparse(f"//{AWS_S3_CUSTOM_DOMAIN}").hostname if AWS_S3_CUSTOM_DOMAIN else None
+    AWS_S3_IS_LOCAL_PUBLIC_DOMAIN = AWS_S3_CUSTOM_HOST in {"localhost", "127.0.0.1", "0.0.0.0"}
+    AWS_S3_URL_PROTOCOL = os.getenv('AWS_S3_URL_PROTOCOL')
+    if not AWS_S3_URL_PROTOCOL:
+        AWS_S3_URL_PROTOCOL = (
+            f"{AWS_S3_PUBLIC_SCHEME}:"
+            if AWS_S3_PUBLIC_SCHEME
+            else ("http:" if AWS_S3_ENDPOINT_SCHEME == "http" and (DEBUG or AWS_S3_IS_LOCAL_PUBLIC_DOMAIN) else "https:")
+        )
+    elif not AWS_S3_URL_PROTOCOL.endswith(":"):
+        AWS_S3_URL_PROTOCOL = f"{AWS_S3_URL_PROTOCOL.rstrip(':/')}:"
     AWS_QUERYSTRING_AUTH = False
 
     STORAGES = {
@@ -145,7 +167,7 @@ if USE_S3:
 
     # 3. Construct Media URL based on Public Domain if available, else fallback
     if AWS_S3_CUSTOM_DOMAIN:
-        MEDIA_URL = f'https://{AWS_S3_CUSTOM_DOMAIN}/{AWS_STORAGE_BUCKET_NAME}/'
+        MEDIA_URL = f'{AWS_S3_URL_PROTOCOL}//{AWS_S3_CUSTOM_DOMAIN}/'
     elif AWS_S3_ENDPOINT_URL:
         MEDIA_URL = f'{AWS_S3_ENDPOINT_URL}/{AWS_STORAGE_BUCKET_NAME}/'
     else:

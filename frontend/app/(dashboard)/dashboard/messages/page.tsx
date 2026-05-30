@@ -43,7 +43,7 @@ import {
 
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { isExpertRoleSlug } from "@/lib/roles";
+import { hasExpertFeatures } from "@/lib/roles";
 import { resolveExpertCaseAgentSlug } from "@/lib/expert-agent";
 import { useAudioRecorder } from "@/hooks/use-audio-recorder";
 import { MessageBubble, MessageData } from "@/components/messages/MessageBubble";
@@ -124,7 +124,7 @@ function MessagesContent() {
   
   // [FIX] Get current user to check role
   const { user: currentUser } = useUser();
-  const isDoctor = isExpertRoleSlug(currentUser?.role_slug);
+  const isDoctor = hasExpertFeatures(currentUser);
 
   // --- STATE ---
   const [conversations, setConversations] = useState<Conversation[]>([]);

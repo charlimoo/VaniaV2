@@ -17,6 +17,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { GuideModal } from "@/components/guide/GuideModal"
+import { useUser } from "@/hooks/use-user"
 import { cn } from "@/lib/utils"
 import { useConfig } from "@/components/providers/config-provider"
 import { API_BASE_URL } from "@/lib/api"
@@ -30,6 +31,7 @@ interface FAQItem {
 
 export default function FaqPage() {
   const { config } = useConfig();
+  const { user } = useUser();
   const contacts = Array.isArray(config.support_contacts) ? config.support_contacts : [];
   
   const [faqs, setFaqs] = useState<FAQItem[]>([]);
@@ -138,7 +140,7 @@ export default function FaqPage() {
             </p>
           </div>
 
-          <GuideModal triggerLabel="مشاهده راهنمای کامل" triggerClassName="w-full md:w-auto" />
+          <GuideModal user={user} triggerLabel="مشاهده راهنمای کامل" triggerClassName="w-full md:w-auto" />
         </div>
       </div>
 

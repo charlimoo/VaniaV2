@@ -29,7 +29,7 @@ from .schemas import SessionCreate, SessionUpdate
 from .storage import get_storage, get_session_safe
 from .stream import agui_stream_generator
 from .tool_result_sanitizer import sanitize_tool_result_content
-from .utils import safe_serialize, build_branch_history_messages
+from .utils import safe_serialize, build_branch_history_messages, clean_internal_prompt_content
 from .session_metadata import adjust_session_knowledge_file_count, apply_session_metadata_defaults
 
 from services.access_service import access_service
@@ -271,9 +271,13 @@ async def get_session_history(
             if role == 'function':
                 role = 'tool'
 
+            content = m_data.get('content')
+            if role == "user":
+                content = clean_internal_prompt_content(content)
+
             item = {
                 "role": role,
-                "content": m_data.get('content'),
+                "content": content,
                 "created_at": m_data.get('created_at') or m_data.get('timestamp')
             }
 
@@ -588,9 +592,13 @@ async def get_shared_chat(token: str):
             # Skip system messages for public view
             if role == 'system': continue
 
+            content = m_data.get('content')
+            if role == "user":
+                content = clean_internal_prompt_content(content)
+
             item = {
                 "role": role,
-                "content": m_data.get('content'),
+                "content": content,
                 "created_at": m_data.get('created_at') or m_data.get('timestamp')
             }
 

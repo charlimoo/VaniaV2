@@ -45,6 +45,8 @@ from .models import (
     Location, 
     GoogleCalendarConnection,
     ExpertMeetingLink,
+    PageTutorial,
+    normalize_tutorial_path,
 )
 from .permissions import IsDoctorUser, VaniaAccessControl
 from .google_calendar import calendar_service, SCOPES
@@ -262,6 +264,14 @@ class PublicDoctorListView(generics.ListAPIView):
     """Provides a list of public doctor profiles for the 'Find a Doctor' directory."""
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = PublicDoctorSerializer
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+        complete_profile_ids = [
+            profile.pk for profile in queryset
+            if profile.is_public_profile_complete
+        ]
+        return queryset.filter(pk__in=complete_profile_ids)
     
     def get_queryset(self):
         queryset = DoctorProfile.objects.filter(is_public=True).select_related('user', 'location')
@@ -1972,6 +1982,45 @@ class LocationListView(generics.ListAPIView):
     pagination_class = None
     queryset = Location.objects.all().order_by('name')
     serializer_class = LocationSerializer
+
+
+class PageTutorialMatchView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        current_path = normalize_tutorial_path(request.query_params.get("path") or "")
+        tutorials = PageTutorial.objects.filter(is_public=True).order_by("-match_prefix", "-updated_at", "-id")
+
+        best_match = None
+        best_score = -1
+        for tutorial in tutorials:
+            target_path = tutorial.normalized_path or normalize_tutorial_path(tutorial.page_path)
+            if not tutorial.matches_path(current_path):
+                continue
+
+            score = len(target_path)
+            if not tutorial.match_prefix:
+                score += 10000
+            if score > best_score:
+                best_match = tutorial
+                best_score = score
+
+        if not best_match:
+            return Response({"tutorial": None})
+
+        video_url = best_match.video.url if best_match.video else ""
+        if video_url and not video_url.startswith(("http://", "https://")):
+            video_url = request.build_absolute_uri(video_url)
+
+        return Response({
+            "tutorial": {
+                "id": best_match.id,
+                "title": best_match.title,
+                "path": best_match.normalized_path,
+                "video_url": video_url,
+                "match_prefix": best_match.match_prefix,
+            }
+        })
     
 class SessionReportView(APIView):
     """

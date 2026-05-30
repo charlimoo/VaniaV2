@@ -94,10 +94,16 @@ const normalizeId = (id: string | undefined) => {
 
 const cleanContent = (text: string) => {
   if (!text) return "";
+  const currentUserMatch = text.match(/<current_user_message>\s*([\s\S]*?)\s*<\/current_user_message>/i);
+  if (text.includes("<active_branch_history>") && currentUserMatch?.[1]) {
+    return currentUserMatch[1].trim();
+  }
+
   return text
     .replace(/<additional context>[\s\S]*?<\/additional context>/gi, "")
     .replace(/additional context>[\s\S]*?<<\/additional context>/gi, "")
     .replace(/<additional_context>[\s\S]*?<\/additional_context>/gi, "")
+    .replace(/<active_branch_history>[\s\S]*?<\/active_branch_history>/gi, "")
     .trim();
 };
 

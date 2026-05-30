@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from users.roles import CANONICAL_EXPERT_SLUG, CANONICAL_VISITOR_SLUG, normalize_role_slug
+from users.roles import CANONICAL_EXPERT_SLUG, CANONICAL_VISITOR_SLUG, is_staff_or_admin_user, normalize_role_slug
 
 
 def _user_role_slug(user) -> str | None:
@@ -18,6 +18,9 @@ def _has_visitor_audience_access(role_slug: str | None) -> bool:
 
 
 def is_user_eligible_for_agent(user, agent) -> bool:
+    if is_staff_or_admin_user(user):
+        return True
+
     audience = getattr(agent, "audience", "ALL")
     role_slug = _user_role_slug(user)
 
@@ -38,6 +41,9 @@ def is_user_eligible_for_agent(user, agent) -> bool:
 
 
 def is_user_eligible_for_plan(user, plan) -> bool:
+    if is_staff_or_admin_user(user):
+        return True
+
     audience = getattr(plan, "audience", "ALL")
     role_slug = _user_role_slug(user)
 

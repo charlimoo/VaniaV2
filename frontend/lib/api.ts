@@ -173,3 +173,19 @@ export async function upgradeExpert(
     }),
   });
 }
+
+export async function setAdminExpertProfession(professionSlug: string) {
+  return fetcher<{
+    message: string;
+    profession_slug?: string;
+    profession_label?: string;
+    user?: {
+      expert_profession_slug?: string | null;
+      expert_profession_label?: string | null;
+      expert_verification_status?: 'none' | 'pending' | 'approved' | 'rejected';
+    };
+  }>('/api/auth/admin-expert-profession/', {
+    method: 'POST',
+    body: JSON.stringify({ profession_slug: professionSlug }),
+  });
+}

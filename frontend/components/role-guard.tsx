@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/hooks/use-user";
 import { Loader2 } from "lucide-react";
-import { normalizeRoleSlug } from "@/lib/roles";
+import { isStaffOrAdminUser, normalizeRoleSlug } from "@/lib/roles";
 
 interface RoleGuardProps {
   children: React.ReactNode;
@@ -20,7 +20,7 @@ export function RoleGuard({ children, allowedRoles }: RoleGuardProps) {
   useEffect(() => {
     if (!loading) {
       // If user is logged in BUT their role is not in the allowed list
-      if (user && normalizedUserRole && !normalizedAllowedRoles.includes(normalizedUserRole)) {
+      if (user && !isStaffOrAdminUser(user) && normalizedUserRole && !normalizedAllowedRoles.includes(normalizedUserRole)) {
         // Redirect to main dashboard
         router.replace("/dashboard");
       }
@@ -36,7 +36,7 @@ export function RoleGuard({ children, allowedRoles }: RoleGuardProps) {
   }
 
   // Use optional chaining or check to ensure user exists before checking role
-  if (!user || !normalizedUserRole || !normalizedAllowedRoles.includes(normalizedUserRole)) {
+  if (!user || (!isStaffOrAdminUser(user) && (!normalizedUserRole || !normalizedAllowedRoles.includes(normalizedUserRole)))) {
     return null; // Don't render protected content while redirecting
   }
 

@@ -5,7 +5,7 @@ from django.db import transaction
 from .utils import calculate_credit_cost 
 from .models import UserWallet, Transaction, BillingConfig, BillingProduct, Invoice, SubscriptionPlan
 from users.tasks import send_generic_sms 
-from users.eligibility import is_user_eligible_for_plan
+from users.eligibility import is_staff_or_admin_user, is_user_eligible_for_plan
 from services.access_service import access_service
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,14 @@ def process_usage_charge(user, input_tokens: int, output_tokens: int, run_id: st
     - If final usage exceeds usable credit, deduct the remaining usable amount and leave the wallet at zero.
     """
     cost = calculate_credit_cost(input_tokens, output_tokens)
+
+    if is_staff_or_admin_user(user):
+        return {
+            "success": True,
+            "deducted": Decimal(0),
+            "new_daily_used": Decimal(0),
+            "staff_unlimited": True,
+        }
     
     if cost <= 0: 
         return {
@@ -162,6 +170,9 @@ def process_service_charge(user, amount: Decimal, description: str) -> dict:
     """
     if amount <= 0:
         return {"success": True}
+
+    if is_staff_or_admin_user(user):
+        return {"success": True, "deducted": Decimal(0), "staff_unlimited": True}
 
     daily_limit = BillingConfig.load().daily_free_credits
 

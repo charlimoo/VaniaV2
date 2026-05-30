@@ -14,7 +14,7 @@ from capabilities.registry import CapabilityRegistry
 
 from .models import AgentService
 from .serializers import ServiceSerializer
-from users.eligibility import is_user_eligible_for_agent
+from users.eligibility import is_staff_or_admin_user, is_user_eligible_for_agent
 
 logger = logging.getLogger(__name__)
 
@@ -30,19 +30,25 @@ class ServiceListView(APIView):
         user = request.user
         
         # 1. Fetch Agent Services with optimizations
+        service_filters = {"is_active": True}
+        if not is_staff_or_admin_user(user):
+            service_filters["is_public"] = True
+
         visible_services_qs = AgentService.objects.filter(
-            is_active=True,
-            is_public=True
+            **service_filters
         ).prefetch_related(
             'plans', 
             'suggestions', 
             # [FIX] Removed 'interaction_forms' as it no longer exists on the AgentService model.
             'canvas_configs__canvas' 
         ).distinct()
-        visible_services = [
-            service for service in visible_services_qs
-            if is_user_eligible_for_agent(user, service)
-        ]
+        if is_staff_or_admin_user(user):
+            visible_services = list(visible_services_qs)
+        else:
+            visible_services = [
+                service for service in visible_services_qs
+                if is_user_eligible_for_agent(user, service)
+            ]
         
         # 2. Extract User's Active Plan Context for Serializer logic
         active_plan_id = None
@@ -68,7 +74,7 @@ class ServiceDebugContextView(APIView):
         service = AgentService.objects.filter(slug=slug, is_active=True, is_public=True).first()
         if not service:
             return Response({"detail": "Service not found."}, status=status.HTTP_404_NOT_FOUND)
-        if not is_user_eligible_for_agent(user, service):
+        if not is_staff_or_admin_user(user) and not is_user_eligible_for_agent(user, service):
             return Response({"detail": "Not allowed."}, status=status.HTTP_403_FORBIDDEN)
 
         session_id = request.query_params.get("session_id") or ""

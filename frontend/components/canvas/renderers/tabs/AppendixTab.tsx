@@ -12,6 +12,8 @@ interface Props {
   library: ThoughtAppendix;
   patientId: number;
   caseId?: string;
+  patientName?: string;
+  caseTitle?: string;
   onEdit: (delta: any) => void;
   readOnly?: boolean;
 }
@@ -22,7 +24,7 @@ const CONFIG: Record<ResourceType, { icon: any, label: string, color: string }> 
   "POEM": { icon: Feather, label: "شعر", color: "text-purple-600 bg-purple-100 border-purple-200" }
 };
 
-export function AppendixTab({ library, patientId, caseId, onEdit, readOnly = false }: Props) {
+export function AppendixTab({ library, patientId, caseId, patientName, caseTitle, onEdit, readOnly = false }: Props) {
   
   const resources = library?.resources || [];
 
@@ -58,7 +60,7 @@ export function AppendixTab({ library, patientId, caseId, onEdit, readOnly = fal
                 </Button>
             }
         /> : null}
-        <AppendixDownloadButton library={library} patientId={patientId} />
+        <AppendixDownloadButton library={library} patientId={patientId} patientName={patientName} caseTitle={caseTitle} />
       </div>
     );
   }
@@ -68,7 +70,7 @@ export function AppendixTab({ library, patientId, caseId, onEdit, readOnly = fal
       
       {/* Header Action */}
       <div className="mb-2 flex flex-wrap justify-end gap-2">
-         <AppendixDownloadButton library={library} patientId={patientId} />
+         <AppendixDownloadButton library={library} patientId={patientId} patientName={patientName} caseTitle={caseTitle} />
          {!readOnly ? <AddResourceDialog 
             patientId={patientId}
             caseId={caseId}

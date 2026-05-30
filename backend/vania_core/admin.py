@@ -15,6 +15,7 @@ from .models import (
     Location,
     GoogleCalendarConnection,
     ExpertMeetingLink,
+    PageTutorial,
 )
 
 @admin.register(RoleVerificationRequest)
@@ -213,3 +214,12 @@ class ExpertMeetingLinkAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(PageTutorial)
+class PageTutorialAdmin(admin.ModelAdmin):
+    list_display = ("title", "normalized_path", "match_prefix", "is_public", "updated_at")
+    list_filter = ("is_public", "match_prefix", "created_at", "updated_at")
+    search_fields = ("title", "page_path", "normalized_path")
+    readonly_fields = ("normalized_path", "created_at", "updated_at")
+    fields = ("title", "page_path", "normalized_path", "video", "match_prefix", "is_public", "created_at", "updated_at")

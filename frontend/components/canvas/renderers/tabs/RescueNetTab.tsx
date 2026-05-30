@@ -17,6 +17,8 @@ interface Props {
   tasks: RescueTask[];
   patientId: number;
   caseId?: string;
+  patientName?: string;
+  caseTitle?: string;
   onEdit: (delta: any) => void;
   readOnly?: boolean;
 }
@@ -45,7 +47,7 @@ const formatDueDate = (value?: string) => {
   }
 };
 
-export function RescueNetTab({ tasks, patientId, caseId, onEdit, readOnly = false }: Props) {
+export function RescueNetTab({ tasks, patientId, caseId, patientName, caseTitle, onEdit, readOnly = false }: Props) {
   
   // Group tasks
   const groupedTasks = DIMENSIONS.map(dim => ({
@@ -143,7 +145,7 @@ export function RescueNetTab({ tasks, patientId, caseId, onEdit, readOnly = fals
             </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-center sm:gap-4">
-          <RescueNetDownloadButton tasks={tasks || []} patientId={patientId} />
+          <RescueNetDownloadButton tasks={tasks || []} patientId={patientId} patientName={patientName} caseTitle={caseTitle} />
             <div className="min-w-[64px]">
                 <div className="text-xl font-black text-primary">{`${completedTasks}/${totalTasks}`}</div>
                 <div className="text-[10px] text-muted-foreground">انجام شده</div>

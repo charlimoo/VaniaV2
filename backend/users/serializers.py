@@ -164,6 +164,7 @@ class UserSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'phone_number', 'email', 'full_name', 
             'date_joined', 'password', 'wallet',
+            'is_staff', 'is_superuser',
             'role_label', 'role_slug', 'national_code', 'medical_license', 'is_verified_doctor',
             'is_expert_verified', 'expert_profession_slug', 'expert_profession_label',
             'expert_verification_status', 'expert_verification_message',
@@ -172,6 +173,7 @@ class UserSerializer(serializers.ModelSerializer):
         )
         read_only_fields = (
             'phone_number', 'date_joined', 'id', 'role_label', 'role_slug',
+            'is_staff', 'is_superuser',
             'national_code', 'is_verified_doctor', 'is_expert_verified', 'expert_profession_slug', 'expert_profession_label',
             'expert_verification_status', 'expert_verification_message', 'expert_verification_requested_at',
             'expert_verification_can_retry'

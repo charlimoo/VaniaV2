@@ -4,7 +4,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { 
-  LogOut, Wallet, Crown, Zap, Coins, Settings, User, ChevronsUpDown
+  LogOut, Wallet, Crown, Zap, Coins, Settings, User, ChevronsUpDown, Infinity
 } from "lucide-react";
 
 import {
@@ -35,6 +35,7 @@ export function UserProfileMenu({ user, onLogout }: UserProfileMenuProps) {
   // --- Wallet Data Logic ---
   const wallet = user.wallet;
   const displayName = user.full_name || user.phone_number;
+  const hasUnlimitedAccess = Boolean(user.is_staff || user.is_superuser);
   
   // Balance calculations
   const balancePaid = parseFloat(wallet?.balance_paid || "0");
@@ -52,6 +53,7 @@ export function UserProfileMenu({ user, onLogout }: UserProfileMenuProps) {
   // Calculate Display Total based on status
   // If Plan: Plan + Paid. If Free: Free only.
   const displayTotal = hasPlan ? (balancePlan + balancePaid) : freeRemaining;
+  const accountLabel = hasUnlimitedAccess ? "دسترسی ادمین" : hasPlan ? planName : "نسخه رایگان";
 
   // Number formatter
   const fmt = (n: number) => n.toLocaleString(APP_CONFIG.ECONOMY.LOCALE, { maximumFractionDigits: 0 });
@@ -67,7 +69,7 @@ export function UserProfileMenu({ user, onLogout }: UserProfileMenuProps) {
             </Avatar>
             <div className="grid flex-1 text-start text-sm leading-tight">
               <span className="truncate font-semibold">{displayName}</span>
-              <span className="truncate text-xs text-muted-foreground">{hasPlan ? planName : "نسخه رایگان"}</span>
+              <span className="truncate text-xs text-muted-foreground">{accountLabel}</span>
             </div>
             <ChevronsUpDown className="ms-auto size-4 text-muted-foreground" />
           </SidebarMenuButton>
@@ -105,7 +107,14 @@ export function UserProfileMenu({ user, onLogout }: UserProfileMenuProps) {
                  <div className="p-3 space-y-2.5">
                      
                      {/* SCENARIO A: HAS PLAN */}
-                     {hasPlan ? (
+                     {hasUnlimitedAccess ? (
+                        <div className="flex justify-between items-center text-xs">
+                            <span className="flex items-center gap-2 text-muted-foreground">
+                                <Infinity className="size-3.5 text-primary" /> دسترسی بدون محدودیت
+                            </span>
+                            <span className="font-medium text-primary">بی‌نهایت</span>
+                        </div>
+                     ) : hasPlan ? (
                         <>
                             <div className="flex justify-between items-center text-xs">
                                 <span className="flex items-center gap-2 text-muted-foreground">
@@ -139,7 +148,7 @@ export function UserProfileMenu({ user, onLogout }: UserProfileMenuProps) {
                  <div className="bg-primary/5 px-3 py-2.5 border-t border-border/50 flex items-center justify-between">
                     <span className="text-xs font-semibold text-primary/80">موجودی قابل استفاده</span>
                     <span className="text-sm font-bold text-primary tracking-tight">
-                        {fmt(displayTotal)} <span className="text-[10px] font-normal opacity-80">{APP_CONFIG.CREDITS.SYMBOL}</span>
+                        {hasUnlimitedAccess ? "بی‌نهایت" : fmt(displayTotal)} <span className="text-[10px] font-normal opacity-80">{APP_CONFIG.CREDITS.SYMBOL}</span>
                     </span>
                  </div>
              </div>

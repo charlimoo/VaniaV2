@@ -2,7 +2,7 @@
 import logging
 from django.core.cache import cache
 from users.models import CustomUser
-from users.eligibility import is_user_eligible_for_agent
+from users.eligibility import is_staff_or_admin_user, is_user_eligible_for_agent
 from .models import AgentService
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,10 @@ class AccessControlService:
         # Rule 1: Maintenance Mode
         if not agent.is_active:
             return False, "Service is currently disabled."
+
+        # Staff and superusers can use every active agent without plan limits.
+        if is_staff_or_admin_user(user):
+            return True, "Staff/admin access"
 
         # Rule 1.5: Role/Profession Eligibility
         if not is_user_eligible_for_agent(user, agent):

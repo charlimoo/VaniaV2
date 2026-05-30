@@ -12,17 +12,24 @@ import { AppendixPDF } from "./AppendixPDF";
 interface Props {
   library: ThoughtAppendix;
   patientId: number;
+  patientName?: string;
+  caseTitle?: string;
 }
 
-export function AppendixDownloadButton({ library, patientId }: Props) {
+const safeFilePart = (value: string | number | undefined) =>
+  String(value || "report").replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_");
+
+export function AppendixDownloadButton({ library, patientId, patientName, caseTitle }: Props) {
   const [loading, setLoading] = useState(false);
 
   const handleDownload = async () => {
     setLoading(true);
     const toastId = toast.loading("در حال آماده‌سازی PDF پیوست اندیشه...");
     try {
-      const blob = await pdf(<AppendixPDF library={library} patientId={patientId} />).toBlob();
-      const fileName = `Vania_Appendix_${patientId}.pdf`;
+      const blob = await pdf(
+        <AppendixPDF library={library} patientId={patientId} patientName={patientName} caseTitle={caseTitle} />,
+      ).toBlob();
+      const fileName = `Vania_Appendix_${safeFilePart(patientName || patientId)}.pdf`;
       saveAs(blob, fileName);
       toast.dismiss(toastId);
       toast.success("گزارش پیوست اندیشه دانلود شد.");
@@ -42,4 +49,3 @@ export function AppendixDownloadButton({ library, patientId }: Props) {
     </Button>
   );
 }
-

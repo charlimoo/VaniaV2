@@ -6,6 +6,11 @@ from django.utils.html import format_html
 
 from .models import BillingConfig, UserWallet, Transaction, BillingProduct, Invoice, DiscountCode, SubscriptionPlan, FAQ
 from .forms import WalletAdjustmentForm, BillingProductAdminForm, UserWalletAdminForm, format_initial_decimal
+from .admin_exports import (
+    ExportAllWhenNoSelectionMixin,
+    export_discount_codes_csv,
+    export_purchases_csv,
+)
 
 @admin.register(BillingConfig)
 class BillingConfigAdmin(admin.ModelAdmin):
@@ -154,14 +159,26 @@ class TransactionAdmin(admin.ModelAdmin):
     get_clean_amount.short_description = "Amount"
 
 @admin.register(Invoice)
-class InvoiceAdmin(admin.ModelAdmin):
+class InvoiceAdmin(ExportAllWhenNoSelectionMixin, admin.ModelAdmin):
     list_display = ('id', 'user', 'status', 'total_amount', 'created_at')
     list_filter = ('status', 'created_at')
     search_fields = ('id', 'user__phone_number', 'transaction_ref_id')
     readonly_fields = ('id', 'user', 'content_type', 'object_id', 'created_at')
+    actions = ('export_purchases',)
+    export_all_when_no_selection_actions = ('export_purchases',)
+
+    @admin.action(description="Export selected purchases as CSV")
+    def export_purchases(self, request, queryset):
+        return export_purchases_csv(queryset)
 
 @admin.register(DiscountCode)
-class DiscountCodeAdmin(admin.ModelAdmin):
+class DiscountCodeAdmin(ExportAllWhenNoSelectionMixin, admin.ModelAdmin):
     list_display = ('code', 'percent', 'is_active', 'expiry_date')
     search_fields = ('code',)
     list_filter = ('is_active',)
+    actions = ('export_discount_codes',)
+    export_all_when_no_selection_actions = ('export_discount_codes',)
+
+    @admin.action(description="Export selected discount codes as CSV")
+    def export_discount_codes(self, request, queryset):
+        return export_discount_codes_csv(queryset)

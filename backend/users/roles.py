@@ -17,13 +17,24 @@ def normalize_role_slug(slug: Optional[str]) -> Optional[str]:
     return ROLE_SLUG_ALIASES.get(slug, slug)
 
 
+def is_staff_or_admin_user(user) -> bool:
+    return bool(
+        getattr(user, "is_authenticated", True)
+        and (getattr(user, "is_staff", False) or getattr(user, "is_superuser", False))
+    )
+
+
 def is_expert(user) -> bool:
+    if is_staff_or_admin_user(user):
+        return True
     role = getattr(user, "role", None)
     slug = getattr(role, "slug", None)
     return normalize_role_slug(slug) == CANONICAL_EXPERT_SLUG
 
 
 def is_visitor(user) -> bool:
+    if is_staff_or_admin_user(user):
+        return True
     role = getattr(user, "role", None)
     slug = getattr(role, "slug", None)
     return normalize_role_slug(slug) == CANONICAL_VISITOR_SLUG

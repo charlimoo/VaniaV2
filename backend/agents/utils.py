@@ -3,6 +3,7 @@ import uuid
 import base64
 import logging
 import json
+import re
 from typing import Any, Tuple, Optional, List, Dict
 
 # --- Agno Imports ---
@@ -14,6 +15,43 @@ from ag_ui.core import RunAgentInput
 
 # Configure Logger
 logger = logging.getLogger(__name__)
+
+ACTIVE_BRANCH_HISTORY_OPEN_TAG = "<active_branch_history>"
+ACTIVE_BRANCH_HISTORY_CLOSE_TAG = "</active_branch_history>"
+CURRENT_USER_MESSAGE_OPEN_TAG = "<current_user_message>"
+CURRENT_USER_MESSAGE_CLOSE_TAG = "</current_user_message>"
+
+
+def clean_internal_prompt_content(content: Any) -> Any:
+    """
+    Removes backend-only branch-history wrappers from content that may have been
+    persisted by the agent runtime as a normal user message.
+    """
+    if not isinstance(content, str):
+        return content
+
+    if ACTIVE_BRANCH_HISTORY_OPEN_TAG not in content:
+        return content
+
+    current_message_match = re.search(
+        rf"{re.escape(CURRENT_USER_MESSAGE_OPEN_TAG)}\s*([\s\S]*?)\s*{re.escape(CURRENT_USER_MESSAGE_CLOSE_TAG)}",
+        content,
+        flags=re.IGNORECASE,
+    )
+    if current_message_match:
+        return current_message_match.group(1).strip()
+
+    without_branch_history = re.sub(
+        rf"{re.escape(ACTIVE_BRANCH_HISTORY_OPEN_TAG)}[\s\S]*?{re.escape(ACTIVE_BRANCH_HISTORY_CLOSE_TAG)}",
+        "",
+        content,
+        flags=re.IGNORECASE,
+    )
+    if without_branch_history != content:
+        return without_branch_history.strip()
+
+    return ""
+
 
 def safe_serialize(obj: Any) -> Any:
     """
@@ -165,7 +203,7 @@ def parse_multimodal_input(input_data: RunAgentInput) -> Tuple[str, List[Any], L
     # Case 1: Simple String
     if isinstance(content, str):
         logger.debug("   [Utils] Content is simple text.")
-        return content, [], []
+        return str(clean_internal_prompt_content(content)), [], []
         
     # Case 2: Complex Content Array (Multimodal)
     if isinstance(content, list):
@@ -176,7 +214,7 @@ def parse_multimodal_input(input_data: RunAgentInput) -> Tuple[str, List[Any], L
             
             # --- TEXT ---
             if itype == "text":
-                text_val = safe_get(item, "text")
+                text_val = clean_internal_prompt_content(safe_get(item, "text"))
                 if text_val:
                     prompt_parts.append(str(text_val))
             
@@ -306,13 +344,14 @@ def build_branch_history_messages(input_messages: List[Any]) -> List[Message]:
         text_parts: List[str] = []
 
         if isinstance(content, str):
-            if content.strip():
-                text_parts.append(content.strip())
+            clean_content = clean_internal_prompt_content(content)
+            if isinstance(clean_content, str) and clean_content.strip():
+                text_parts.append(clean_content.strip())
         elif isinstance(content, list):
             for item in content:
                 if safe_get(item, "type") != "text":
                     continue
-                text_value = safe_get(item, "text")
+                text_value = clean_internal_prompt_content(safe_get(item, "text"))
                 if text_value:
                     text_parts.append(str(text_value).strip())
 
@@ -339,13 +378,14 @@ def build_branch_history_prompt(input_messages: List[Any]) -> str:
         text_parts: List[str] = []
 
         if isinstance(content, str):
-            if content.strip():
-                text_parts.append(content.strip())
+            clean_content = clean_internal_prompt_content(content)
+            if isinstance(clean_content, str) and clean_content.strip():
+                text_parts.append(clean_content.strip())
         elif isinstance(content, list):
             for item in content:
                 if safe_get(item, "type") != "text":
                     continue
-                text_value = safe_get(item, "text")
+                text_value = clean_internal_prompt_content(safe_get(item, "text"))
                 if text_value:
                     text_parts.append(str(text_value).strip())
 

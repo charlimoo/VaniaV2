@@ -42,6 +42,7 @@ from .views import (
     ClinicalTestFileDownloadView,
     CaseFilesView,
     CaseFileDownloadView,
+    PageTutorialMatchView,
     google_calendar_login,
     google_calendar_callback,
 )
@@ -91,6 +92,7 @@ urlpatterns = [
     path('case-profile/', CaseProfileNotesView.as_view(), name='case-profile-notes'),
     path('case-profile/voice-notes/<str:voice_note_id>/download/', CaseProfileVoiceNoteDownloadView.as_view(), name='case-profile-voice-note-download'),
     path('locations/', LocationListView.as_view(), name='location-list'),
+    path('page-tutorials/match/', PageTutorialMatchView.as_view(), name='page-tutorial-match'),
 
     # --- [NEW] Endpoints for Vania Clinical Operating System (VCOS) ---
     

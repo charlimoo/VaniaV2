@@ -12,9 +12,14 @@ import { RescueNetPDF } from "./RescueNetPDF";
 interface Props {
   tasks: RescueTask[];
   patientId: number;
+  patientName?: string;
+  caseTitle?: string;
 }
 
-export function RescueNetDownloadButton({ tasks, patientId }: Props) {
+const safeFilePart = (value: string | number | undefined) =>
+  String(value || "report").replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_");
+
+export function RescueNetDownloadButton({ tasks, patientId, patientName, caseTitle }: Props) {
   const [loading, setLoading] = useState(false);
 
   const handleDownload = async () => {
@@ -22,8 +27,10 @@ export function RescueNetDownloadButton({ tasks, patientId }: Props) {
     const toastId = toast.loading("در حال آماده‌سازی PDF تور نجات...");
 
     try {
-      const blob = await pdf(<RescueNetPDF tasks={tasks} patientId={patientId} />).toBlob();
-      const fileName = `Vania_RescueNet_${patientId}.pdf`;
+      const blob = await pdf(
+        <RescueNetPDF tasks={tasks} patientId={patientId} patientName={patientName} caseTitle={caseTitle} />,
+      ).toBlob();
+      const fileName = `Vania_RescueNet_${safeFilePart(patientName || patientId)}.pdf`;
       saveAs(blob, fileName);
       toast.dismiss(toastId);
       toast.success("گزارش تور نجات دانلود شد.");
@@ -43,4 +50,3 @@ export function RescueNetDownloadButton({ tasks, patientId }: Props) {
     </Button>
   );
 }
-

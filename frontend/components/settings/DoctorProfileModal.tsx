@@ -125,12 +125,24 @@ function getMeetingPriceDisplay(value: number | string | null | undefined): { wo
   };
 }
 
+function hasProfileSentence(value: string | null | undefined): boolean {
+  const text = (value || "").trim().replace(/\s+/g, " ");
+  return text.length >= 10 && text.split(" ").length >= 2;
+}
+
+function extractProfileError(payload: any): string {
+  const publicProfileError = payload?.is_public;
+  if (Array.isArray(publicProfileError)) return publicProfileError.join(" ");
+  if (typeof publicProfileError === "string") return publicProfileError;
+  return "خطا در بروزرسانی پروفایل.";
+}
+
 export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorProfileModalProps) {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [locations, setLocations] = useState<Location[]>([]);
   const [locationPickerOpen, setLocationPickerOpen] = useState(false);
-  const { register, handleSubmit, reset, setValue, watch, control } = useForm<ProfileFormData>();
+  const { register, handleSubmit, reset, setValue, watch, control, formState: { errors } } = useForm<ProfileFormData>();
   
   // Image State
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -214,9 +226,9 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
       });
 
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => null);
         console.error("Upload Error:", errData);
-        throw new Error("Failed to update profile.");
+        throw new Error(extractProfileError(errData));
       }
       
       toast.success("پروفایل شما با موفقیت بروزرسانی شد.");
@@ -224,7 +236,7 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
       onOpenChange(false);
     } catch (error) {
       console.error(error);
-      toast.error("خطا در بروزرسانی پروفایل.");
+      toast.error(error instanceof Error ? error.message : "خطا در بروزرسانی پروفایل.");
     } finally {
       setSubmitting(false);
     }
@@ -268,6 +280,9 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
                     <ImageIcon className="h-3.5 w-3.5 ml-1.5" />
                     تغییر تصویر پروفایل
                 </Button>
+                <p className="max-w-xs text-center text-[11px] leading-5 text-muted-foreground">
+                  برای اعتماد و جذب بهتر مخاطب، پیشنهاد می‌کنیم تصویر واضحی از خودتان اضافه کنید.
+                </p>
                 <input 
                     type="file" 
                     ref={fileInputRef} 
@@ -280,7 +295,17 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
             <div className="grid gap-4">
                 <div className="grid gap-2">
                     <Label htmlFor="specialty">تخصص اصلی</Label>
-                    <Input id="specialty" {...register("specialty")} placeholder="مثلا: روانشناس بالینی" />
+                    <Input
+                      id="specialty"
+                      {...register("specialty", {
+                        validate: (value) => !isPublic || Boolean(value?.trim()) || "برای نمایش در لیست متخصصین، تخصص اصلی را وارد کنید.",
+                      })}
+                      placeholder="مثلا: روانشناس بالینی"
+                      aria-invalid={Boolean(errors.specialty)}
+                    />
+                    {errors.specialty?.message && (
+                      <p className="text-[11px] text-destructive">{errors.specialty.message}</p>
+                    )}
                 </div>
 
                 {/* Location Selection */}
@@ -289,6 +314,9 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
                     <Controller
                         control={control}
                         name="location_id"
+                        rules={{
+                          validate: (value) => !isPublic || Boolean(value) || "برای نمایش در لیست متخصصین، استان یا شهر را انتخاب کنید.",
+                        }}
                         render={({ field }) => (
                             <Popover open={locationPickerOpen} onOpenChange={setLocationPickerOpen}>
                               <PopoverTrigger asChild>
@@ -365,6 +393,9 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
                             </Popover>
                         )}
                     />
+                    {errors.location_id?.message && (
+                      <p className="text-[11px] text-destructive">{errors.location_id.message}</p>
+                    )}
                     <p className="text-[11px] text-muted-foreground">
                       برای دیده شدن بهتر در جستجوی عمومی، شهر دقیق یا در صورت نیاز نام استان را انتخاب کنید.
                     </p>
@@ -372,12 +403,33 @@ export function DoctorProfileModal({ isOpen, onOpenChange, onUpdate }: DoctorPro
 
                 <div className="grid gap-2">
                     <Label htmlFor="clinic_address">آدرس دقیق مطب</Label>
-                    <Input id="clinic_address" {...register("clinic_address")} placeholder="خیابان..." />
+                    <Input
+                      id="clinic_address"
+                      {...register("clinic_address", {
+                        validate: (value) => !isPublic || Boolean(value?.trim()) || "برای نمایش در لیست متخصصین، آدرس دقیق مطب را وارد کنید.",
+                      })}
+                      placeholder="خیابان..."
+                      aria-invalid={Boolean(errors.clinic_address)}
+                    />
+                    {errors.clinic_address?.message && (
+                      <p className="text-[11px] text-destructive">{errors.clinic_address.message}</p>
+                    )}
                 </div>
 
                 <div className="grid gap-2">
                     <Label htmlFor="bio">درباره من (بیوگرافی)</Label>
-                    <Textarea id="bio" {...register("bio")} placeholder="سوابق تحصیلی، حوزه فعالیت و..." className="min-h-[100px]" />
+                    <Textarea
+                      id="bio"
+                      {...register("bio", {
+                        validate: (value) => !isPublic || hasProfileSentence(value) || "برای نمایش در لیست متخصصین، حداقل یک جمله درباره خودتان بنویسید.",
+                      })}
+                      placeholder="سوابق تحصیلی، حوزه فعالیت و..."
+                      className="min-h-[100px]"
+                      aria-invalid={Boolean(errors.bio)}
+                    />
+                    {errors.bio?.message && (
+                      <p className="text-[11px] text-destructive">{errors.bio.message}</p>
+                    )}
                 </div>
                 
                 <div className="grid gap-2">

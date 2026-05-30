@@ -1,6 +1,8 @@
 "use client";
 
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
+import { BookOpen, CheckCircle2, Compass, MessageSquareText, Sparkles } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -10,112 +12,282 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import type { UserData } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { hasExpertFeatures, isVisitorRoleSlug, normalizeRoleSlug } from "@/lib/roles";
 
-type GuideAssistant = {
-  name: string;
+type GuideAudience = "all" | "visitor" | "expert";
+
+type GuideCard = {
+  title: string;
   description: string;
-  useCases?: string[];
-  note?: string;
+  items?: string[];
+  audience?: GuideAudience[];
+  professions?: string[];
 };
 
-const guideAssistants: GuideAssistant[] = [
+type GuideStep = {
+  title: string;
+  description: string;
+  audience?: GuideAudience[];
+};
+
+const commonSteps: GuideStep[] = [
   {
-    name: "روانیار",
-    description: "برای گفتگو درباره احساسات، روابط، نگرانی‌ها و مسائل روانشناختی روزمره.",
-    useCases: ["مدیریت استرس و اضطراب", "بهبود روابط", "درک بهتر احساسات", "تصمیم‌گیری در مسائل شخصی"],
-    note: "روانیار جایگزین درمانگر نیست، اما می‌تواند شما را برای مراجعه به متخصص آماده کند.",
+    title: "از پیشخوان شروع کنید",
+    description: "در پیشخوان وضعیت حساب، دستیارهای قابل استفاده، پیام‌ها و مسیرهای مهم را یکجا می‌بینید.",
   },
   {
-    name: "فال قهوه و تفسیر روانشناختی",
-    description:
-      "یک فضای تجربه‌ای و الهام‌بخش که از نمادهای فال قهوه برای ارائه پیام‌های انگیزشی و تأمل‌برانگیز استفاده می‌کند.",
-    useCases: ["سرگرمی", "نمادشناسی", "تفسیر روانشناختی"],
+    title: "دستیار مناسب را انتخاب کنید",
+    description: "هر دستیار برای یک نیاز مشخص ساخته شده است. قبل از شروع، توضیح کارت دستیار و محدودیت‌های دسترسی را بخوانید.",
   },
   {
-    name: "همیار مراجع",
-    description: "این دستیار به شما کمک می‌کند قبل از مراجعه به متخصص مسئله خود را بهتر تنظیم و توضیح دهید.",
-    useCases: ["آماده‌سازی برای جلسه", "جمع‌آوری اطلاعات اولیه", "ثبت توضیحات مسئله", "پیشنهاد متخصص مناسب"],
+    title: "مسئله را با زمینه کافی توضیح دهید",
+    description: "هرچه هدف، شرایط، فایل‌ها و محدودیت‌های خود را دقیق‌تر بگویید، پاسخ دستیار کاربردی‌تر می‌شود.",
   },
   {
-    name: "همیار تحصیلی",
-    description: "مناسب برای دانش‌آموزان و دانشجویان.",
-    useCases: ["برنامه‌ریزی درسی", "مدیریت زمان", "روش‌های مطالعه مؤثر", "آمادگی برای امتحان"],
-  },
-  {
-    name: "همیار چالش مطالعه‌ای",
-    description: "برای افرادی که در شروع مطالعه، تمرکز یا تداوم برنامه مشکل دارند.",
-    useCases: ["چالش‌های مطالعه", "پیگیری پیشرفت", "افزایش تمرکز", "کاهش اهمال‌کاری"],
-  },
-  {
-    name: "همیار شغلی",
-    description: "برای مدیریت مسیر شغلی و چالش‌های محیط کار.",
-    useCases: ["انتخاب شغل", "تغییر مسیر حرفه‌ای", "مدیریت تعارض در محیط کار", "برنامه‌ریزی شغلی", "رزومه‌نویسی"],
-  },
-  {
-    name: "همیار عدالت",
-    description: "برای آگاهی اولیه درباره مسائل حقوقی.",
-    useCases: ["تحلیل ساده قراردادها", "آشنایی با حقوق قانونی", "آماده‌سازی برای مراجعه به وکیل", "جمع‌آوری اطلاعات پرونده"],
-    note: "این دستیار جایگزین مشاوره حقوقی تخصصی نیست.",
+    title: "خروجی‌ها را در مسیر من و پیام‌ها پیگیری کنید",
+    description: "تحلیل‌ها، برنامه‌ها، پیام‌ها و ادامه گفتگوها از بخش‌های مربوطه قابل پیگیری هستند.",
   },
 ];
 
-const guidePlatformSections = [
-  { title: "پیشخوان", description: "نمای کلی فعالیت‌ها، پیام‌ها و پیشنهادهای دستیار." },
-  { title: "گفتگو", description: "محل اصلی ارتباط با دستیارهای هوشمند." },
-  { title: "مسیر من", description: "تمام تحلیل‌ها، توصیه‌ها و مراحل پیگیری در این بخش ثبت می‌شود." },
-  { title: "متخصصان من", description: "نمایش متخصصانی که با آن‌ها در ارتباط هستید و امکان درخواست جلسه." },
-  { title: "جلسات", description: "مدیریت نوبت‌ها و جلسات." },
-  { title: "بارگذاری مدارک", description: "امکان ارسال فایل‌ها، تصاویر، اسناد و آزمایش‌ها برای تحلیل بهتر." },
-  { title: "سفارشات", description: "سوابق پرداخت و اشتراک‌ها." },
-  { title: "تنظیمات", description: "مدیریت اطلاعات حساب کاربری." },
+const roleSteps: GuideStep[] = [
+  {
+    title: "برای مراجعه به متخصص آماده شوید",
+    description: "اگر مراجع هستید، ابتدا مشکل، علائم، هدف جلسه و مدارک مرتبط را ثبت کنید تا متخصص تصویر دقیق‌تری داشته باشد.",
+    audience: ["visitor"],
+  },
+  {
+    title: "متخصص مناسب را پیدا کنید",
+    description: "از بخش متخصصان من می‌توانید ارتباط‌ها، درخواست‌ها و مسیرهای مرتبط با متخصصان را دنبال کنید.",
+    audience: ["visitor"],
+  },
+  {
+    title: "قبل از کار، مراجع یا پرونده را انتخاب کنید",
+    description: "اگر متخصص هستید، دستیارهای تخصصی وقتی بهترین خروجی را می‌دهند که مراجع و زمینه پرونده درست انتخاب شده باشد.",
+    audience: ["expert"],
+  },
+  {
+    title: "خروجی دستیار را به عنوان پیش‌نویس حرفه‌ای بررسی کنید",
+    description: "تحلیل‌ها، خلاصه‌ها و برنامه‌ها باید با قضاوت تخصصی شما بازبینی و تکمیل شوند.",
+    audience: ["expert"],
+  },
 ];
 
-const guideSpecialists = [
-  { role: "روانشناسان", description: "متخصصان می‌توانند از دستیار هوشمند برای مصاحبه اولیه، تحلیل تست‌ها، طراحی طرح درمان و مدیریت جلسات استفاده کنند." },
-  { role: "روانپزشکان", description: "امکان بررسی اطلاعات بیمار، تحلیل داده‌های پرونده و کمک در طراحی مسیر درمان." },
-  { role: "پزشکان", description: "کمک در تحلیل علائم، بررسی مدارک پزشکی و پیشنهاد مسیر تشخیصی." },
-  { role: "وکلا و حقوقدانان", description: "تحلیل اسناد و پرونده‌ها، استخراج نکات کلیدی و کمک در تنظیم متون حقوقی." },
+const assistantCards: GuideCard[] = [
+  {
+    title: "روانیار",
+    description: "برای گفتگو درباره احساسات، روابط، نگرانی‌ها و تصمیم‌های شخصی.",
+    items: ["مدیریت استرس و اضطراب", "شفاف‌سازی احساسات", "آماده شدن برای مراجعه به روانشناس"],
+    audience: ["visitor"],
+  },
+  {
+    title: "همیار مراجع",
+    description: "برای آماده‌سازی اطلاعات قبل از مراجعه به متخصص.",
+    items: ["شرح مسئله", "جمع‌آوری سوابق", "پیشنهاد مسیر مراجعه"],
+    audience: ["visitor"],
+  },
+  {
+    title: "همیار تحصیلی و مطالعه",
+    description: "برای برنامه‌ریزی درس، تمرکز، عادت مطالعه و آمادگی امتحان.",
+    items: ["برنامه روزانه", "کاهش اهمال‌کاری", "پیگیری پیشرفت"],
+    audience: ["visitor"],
+  },
+  {
+    title: "همیار شغلی",
+    description: "برای تصمیم‌های شغلی، رزومه، تعارض کاری و تغییر مسیر حرفه‌ای.",
+    items: ["انتخاب مسیر", "آمادگی مصاحبه", "مدیریت چالش‌های محیط کار"],
+    audience: ["visitor"],
+  },
+  {
+    title: "همیار عدالت",
+    description: "برای آگاهی اولیه و آماده‌سازی اطلاعات حقوقی؛ جایگزین مشاوره وکالت نیست.",
+    items: ["مرور ساده قرارداد", "جمع‌آوری اطلاعات پرونده", "آماده‌سازی سوال برای وکیل"],
+    audience: ["visitor"],
+  },
+  {
+    title: "دستیار تخصصی پرونده",
+    description: "برای متخصصان؛ با زمینه مراجع کار می‌کند و کنار چت، داده‌های ساختاریافته را در بوم نشان می‌دهد.",
+    items: ["خلاصه پرونده", "سوال‌های پیگیری", "پیشنهاد گام بعدی"],
+    audience: ["expert"],
+  },
 ];
 
-const shortGuideAssistants = [
-  { name: "روانیار", description: "برای گفتگو درباره احساسات، روابط و مسائل روانشناختی." },
-  { name: "فال قهوه", description: "برای دریافت تفسیر نمادین و پیام‌های الهام‌بخش." },
-  { name: "همیار مراجع", description: "برای آماده شدن قبل از مراجعه به متخصص." },
-  { name: "همیار تحصیلی", description: "برای برنامه‌ریزی و مدیریت درس و امتحان." },
-  { name: "همیار چالش مطالعه‌ای", description: "برای ایجاد عادت مطالعه و افزایش تمرکز." },
-  { name: "همیار شغلی", description: "برای تصمیم‌های شغلی و مدیریت مسیر حرفه‌ای." },
-  { name: "همیار عدالت", description: "برای آگاهی اولیه درباره مسائل حقوقی." },
+const platformCards: GuideCard[] = [
+  {
+    title: "گفتگو",
+    description: "محل اصلی پرسیدن سوال، ادامه دادن بحث و دریافت خروجی از دستیارها.",
+  },
+  {
+    title: "بوم همکاری",
+    description: "در دستیارهای دارای بوم، اطلاعات مهم کنار گفتگو به‌صورت ساختاریافته نمایش داده یا تکمیل می‌شود.",
+  },
+  {
+    title: "بارگذاری مدارک",
+    description: "فایل‌ها، تصاویر و اسناد مرتبط را اضافه کنید تا دستیار زمینه دقیق‌تری داشته باشد.",
+  },
+  {
+    title: "مسیر من",
+    description: "برای مراجع، محل پیگیری تحلیل‌ها، توصیه‌ها و برنامه‌های ادامه مسیر است.",
+    audience: ["visitor"],
+  },
+  {
+    title: "متخصصان من",
+    description: "برای مراجع، محل مشاهده ارتباط با متخصصان و پیگیری درخواست‌هاست.",
+    audience: ["visitor"],
+  },
+  {
+    title: "مدیریت مراجعین",
+    description: "برای متخصص، محل مشاهده مراجعین، انتخاب زمینه همکاری و پیگیری پرونده‌هاست.",
+    audience: ["expert"],
+  },
+  {
+    title: "پیام‌ها",
+    description: "برای پیگیری ارتباط‌ها و پیام‌های مهم مربوط به همکاری‌ها.",
+  },
+  {
+    title: "طرح‌ها و سفارشات",
+    description: "برای مدیریت اشتراک، اعتبار گفتگو، فاکتورها و پرداخت‌ها.",
+  },
+  {
+    title: "تنظیمات",
+    description: "برای تکمیل پروفایل، اطلاعات حساب و موارد مرتبط با نقش کاربری.",
+  },
 ];
 
-const shortGuideSections = [
-  { title: "پیشخوان", description: "نمای کلی فعالیت‌ها و پیام‌ها." },
-  { title: "گفتگو", description: "محل طرح سوال و دریافت پاسخ از دستیار." },
-  { title: "مسیر من", description: "پیگیری تحلیل‌ها و توصیه‌ها." },
-  { title: "متخصصان من", description: "ارتباط با متخصصان و درخواست جلسه." },
-  { title: "جلسات", description: "مدیریت زمان جلسات." },
-  { title: "بارگذاری مدارک", description: "ارسال فایل‌ها و اسناد برای تحلیل." },
-  { title: "سفارشات", description: "مدیریت اشتراک و پرداخت‌ها." },
-  { title: "تنظیمات", description: "مدیریت اطلاعات حساب کاربری." },
+const expertProfessionCards: GuideCard[] = [
+  {
+    title: "راهنمای روانشناس",
+    description: "از وانیا برای منظم‌سازی داده‌های مراجع، آماده‌سازی جلسه و ساخت پیش‌نویس برنامه مداخله استفاده کنید.",
+    items: ["مصاحبه اولیه و خلاصه‌سازی", "تحلیل تست‌ها و نشانه‌ها", "طرح درمان، تکلیف و پیگیری جلسه"],
+    audience: ["expert"],
+    professions: ["psychologist"],
+  },
+  {
+    title: "راهنمای روانپزشک",
+    description: "از وانیا برای مرور سوابق، نشانه‌ها و آماده‌سازی ساختار تصمیم‌گیری بالینی استفاده کنید.",
+    items: ["خلاصه سوابق بیمار", "مرور علائم و روند درمان", "آماده‌سازی نکات پیگیری برای ویزیت"],
+    audience: ["expert"],
+    professions: ["psychiatrist"],
+  },
+  {
+    title: "راهنمای پزشک",
+    description: "از وانیا برای مرتب‌سازی شرح حال، مدارک پزشکی و سوال‌های تکمیلی استفاده کنید.",
+    items: ["مرور مدارک و آزمایش‌ها", "خلاصه علائم", "پیشنهاد سوال‌های تکمیلی برای ارزیابی"],
+    audience: ["expert"],
+    professions: ["general_doctor", "doctor", "physician"],
+  },
+  {
+    title: "راهنمای وکیل",
+    description: "از وانیا برای نظم‌دهی اطلاعات پرونده، مرور اسناد و آماده‌سازی پیش‌نویس‌های قابل بازبینی استفاده کنید.",
+    items: ["استخراج نکات کلیدی سند", "ساخت خط زمانی پرونده", "آماده‌سازی سوال‌ها و متن اولیه"],
+    audience: ["expert"],
+    professions: ["lawyer"],
+  },
+];
+
+const expertFallbackCards: GuideCard[] = [
+  {
+    title: "راهنمای عمومی متخصصان",
+    description: "اگر تخصص شما در راهنمای اختصاصی نیامده، از وانیا برای جمع‌آوری زمینه، خلاصه‌سازی و ساخت پیش‌نویس قابل بازبینی استفاده کنید.",
+    items: ["انتخاب مراجع قبل از شروع", "ثبت داده‌های مهم در گفتگو یا بوم", "بازبینی حرفه‌ای خروجی قبل از استفاده"],
+    audience: ["expert"],
+  },
+];
+
+const safetyCards: GuideCard[] = [
+  {
+    title: "حدود استفاده",
+    description: "وانیا دستیار تصمیم‌یار است و جایگزین متخصص، تشخیص قطعی، درمان، نسخه، رای حقوقی یا اقدام اورژانسی نیست.",
+  },
+  {
+    title: "اطلاعات دقیق‌تر، پاسخ بهتر",
+    description: "نام بخش، هدف، زمان‌بندی، محدودیت‌ها و فایل‌های مرتبط را بنویسید. از ارسال اطلاعات غیرضروری و حساس خودداری کنید.",
+  },
+  {
+    title: "ادامه مسیر",
+    description: "بعد از هر خروجی، از دستیار بخواهید خلاصه، برنامه قدم‌به‌قدم یا سوال‌های لازم برای مراجعه بعدی را آماده کند.",
+  },
 ];
 
 type GuideModalProps = {
+  user?: UserData | null;
   triggerLabel?: string;
-  triggerMode?: "button" | "text";
+  triggerMode?: "button" | "text" | "custom";
   buttonVariant?: ComponentProps<typeof Button>["variant"];
   triggerClassName?: string;
+  trigger?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 };
 
+function getAudience(user?: UserData | null): GuideAudience {
+  if (hasExpertFeatures(user)) return "expert";
+  const role = normalizeRoleSlug(user?.role_slug);
+  if (isVisitorRoleSlug(role)) return "visitor";
+  return "visitor";
+}
+
+function isVisibleForAudience(card: GuideCard | GuideStep, audience: GuideAudience) {
+  return !card.audience || card.audience.includes("all") || card.audience.includes(audience);
+}
+
+function isVisibleForProfession(card: GuideCard, professionSlug?: string | null) {
+  if (!card.professions?.length) return true;
+  return Boolean(professionSlug && card.professions.includes(professionSlug));
+}
+
+function GuideCardList({ cards }: { cards: GuideCard[] }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {cards.map((card) => (
+        <article key={card.title} className="rounded-lg border border-border/50 bg-background/70 p-3">
+          <h4 className="font-semibold">{card.title}</h4>
+          <p className="mt-1 text-xs leading-6 text-muted-foreground">{card.description}</p>
+          {!!card.items?.length && (
+            <ul className="mt-2 space-y-1 text-xs text-foreground/85">
+              {card.items.map((item) => (
+                <li key={item} className="flex items-start gap-2">
+                  <CheckCircle2 className="mt-1 size-3 shrink-0 text-primary" />
+                  <span>{item}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </article>
+      ))}
+    </div>
+  );
+}
+
 export function GuideModal({
+  user,
   triggerLabel = "مشاهده راهنمای کامل",
   triggerMode = "button",
   buttonVariant = "outline",
   triggerClassName,
+  trigger,
+  open,
+  onOpenChange,
 }: GuideModalProps) {
+  const audience = getAudience(user);
+  const professionSlug = user?.expert_profession_slug || null;
+  const isExpert = audience === "expert";
+  const roleLabel = isExpert ? user?.expert_profession_label || "متخصص" : "مراجع";
+  const steps = [...commonSteps, ...roleSteps].filter((step) => isVisibleForAudience(step, audience));
+  const visibleAssistants = assistantCards.filter((card) => isVisibleForAudience(card, audience));
+  const visiblePlatformCards = platformCards.filter((card) => isVisibleForAudience(card, audience));
+  const visibleExpertCards = expertProfessionCards.filter(
+    (card) => isVisibleForAudience(card, audience) && isVisibleForProfession(card, professionSlug),
+  );
+  const expertCards = visibleExpertCards.length > 0 ? visibleExpertCards : expertFallbackCards;
+
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
-        {triggerMode === "text" ? (
+        {triggerMode === "custom" && trigger ? (
+          trigger
+        ) : triggerMode === "text" ? (
           <button
             type="button"
             className={cn("hover:text-zinc-300 transition-colors", triggerClassName)}
@@ -131,106 +303,75 @@ export function GuideModal({
 
       <DialogContent className="w-[calc(100vw-2rem)] max-w-4xl max-h-[85vh] overflow-y-auto" dir="rtl">
         <DialogHeader className="text-right">
-          <DialogTitle className="text-xl">راهنمای مرکز راهنمای وانیا آپ</DialogTitle>
-          <DialogDescription>مروری سریع و کاربردی برای استفاده بهتر از پلتفرم.</DialogDescription>
+          <DialogTitle className="flex items-center gap-2 text-xl">
+            <BookOpen className="size-5 text-primary" />
+            راهنمای وانیا آپ برای {roleLabel}
+          </DialogTitle>
+          <DialogDescription>
+            آموزش کوتاه و نقش‌محور برای اینکه بدانید از کجا شروع کنید، هر بخش چه کاری انجام می‌دهد و چطور خروجی بهتری بگیرید.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6 text-sm leading-7 text-foreground/90">
-          <section className="rounded-lg border border-border/60 p-4 bg-muted/20">
-            <h3 className="font-semibold text-base mb-2">آشنایی با وانیا آپ</h3>
-            <p>
-              وانیا آپ یک پلتفرم دستیار هوشمند (IA) است که با ترکیب هوش مصنوعی و همکاری متخصصان به کاربران کمک می‌کند
-              مسائل شخصی، روانشناختی، تحصیلی، شغلی، پزشکی و حقوقی خود را بهتر مدیریت کنند.
-            </p>
-            <p className="mt-2">
-              کاربران می‌توانند با دستیارهای مختلف گفتگو کنند، مدارک خود را بارگذاری کنند و در صورت نیاز با متخصصان
-              مرتبط ارتباط برقرار نمایند.
-            </p>
-            <p className="mt-2 font-medium text-primary">شعار پلتفرم: وانیا آپ، همراه هوشمند شما</p>
+          <section className="rounded-lg border border-border/60 bg-muted/20 p-4">
+            <div className="flex items-start gap-3">
+              <div className="mt-1 rounded-lg bg-primary/10 p-2 text-primary">
+                <Sparkles className="size-4" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-base">وانیا آپ چه کمکی می‌کند؟</h3>
+                <p className="mt-1">
+                  وانیا آپ یک پلتفرم همکاری با دستیارهای هوشمند است. شما می‌توانید گفتگو کنید، مدارک را اضافه کنید،
+                  خروجی‌های ساختاریافته را در بوم ببینید و در صورت نیاز مسیر ارتباط با متخصص یا مراجع را پیگیری کنید.
+                </p>
+                <p className="mt-2 font-medium text-primary">هدف اصلی: تبدیل مسئله پراکنده به قدم بعدی روشن و قابل پیگیری.</p>
+              </div>
+            </div>
           </section>
 
           <section>
-            <h3 className="font-semibold text-base mb-3">بخش کاربران عمومی</h3>
-            <p className="text-muted-foreground mb-3">
-              کاربران عمومی در وانیا آپ به ۷ دستیار هوشمند دسترسی دارند که هر کدام برای یک حوزه طراحی شده‌اند.
-            </p>
+            <h3 className="mb-3 flex items-center gap-2 font-semibold text-base">
+              <Compass className="size-4 text-primary" />
+              مسیر شروع سریع
+            </h3>
             <div className="grid gap-3">
-              {guideAssistants.map((assistant) => (
-                <article key={assistant.name} className="rounded-lg border border-border/50 p-3 bg-background/60">
-                  <h4 className="font-semibold">{assistant.name}</h4>
-                  <p className="text-muted-foreground mt-1">{assistant.description}</p>
-                  {!!assistant.useCases?.length && (
-                    <ul className="mt-2 list-disc pr-5 space-y-1 text-xs text-foreground/90">
-                      {assistant.useCases.map((useCase) => (
-                        <li key={useCase}>{useCase}</li>
-                      ))}
-                    </ul>
-                  )}
-                  {assistant.note && <p className="mt-2 text-xs text-primary">{assistant.note}</p>}
-                </article>
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <h3 className="font-semibold text-base mb-3">بخش‌های اصلی پلتفرم برای کاربران</h3>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {guidePlatformSections.map((section) => (
-                <div key={section.title} className="rounded-lg border border-border/50 p-3">
-                  <p className="font-medium">{section.title}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{section.description}</p>
+              {steps.map((step, index) => (
+                <div key={step.title} className="flex gap-3 rounded-lg border border-border/50 bg-background/70 p-3">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                    {(index + 1).toLocaleString("fa-IR")}
+                  </span>
+                  <div>
+                    <p className="font-medium">{step.title}</p>
+                    <p className="mt-1 text-xs leading-6 text-muted-foreground">{step.description}</p>
+                  </div>
                 </div>
               ))}
             </div>
           </section>
 
           <section>
-            <h3 className="font-semibold text-base mb-3">بخش متخصصان</h3>
-            <div className="grid gap-2">
-              {guideSpecialists.map((specialist) => (
-                <div key={specialist.role} className="rounded-lg border border-border/50 p-3">
-                  <p className="font-medium">{specialist.role}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{specialist.description}</p>
-                </div>
-              ))}
-            </div>
+            <h3 className="mb-3 flex items-center gap-2 font-semibold text-base">
+              <MessageSquareText className="size-4 text-primary" />
+              دستیارها و کاربردها
+            </h3>
+            <GuideCardList cards={visibleAssistants} />
           </section>
+
+          <section>
+            <h3 className="mb-3 font-semibold text-base">بخش‌های مهم پلتفرم</h3>
+            <GuideCardList cards={visiblePlatformCards} />
+          </section>
+
+          {isExpert && (
+            <section>
+              <h3 className="mb-3 font-semibold text-base">راهنمای اختصاصی نقش تخصصی شما</h3>
+              <GuideCardList cards={expertCards} />
+            </section>
+          )}
 
           <section className="rounded-lg border border-primary/30 bg-primary/5 p-4">
-            <h3 className="font-semibold text-base mb-2">راهنمای کوتاه (Onboarding داخل هر بخش)</h3>
-            <p className="font-medium">پیام خوش‌آمد</p>
-            <p className="mt-1">
-              به وانیا آپ خوش آمدید. وانیا آپ دستیار هوشمند شما برای مدیریت مسائل زندگی، تحصیل، شغل، سلامت و حقوق است.
-            </p>
-            <ul className="mt-2 list-disc pr-5 space-y-1">
-              <li>با یک دستیار گفتگو کنید.</li>
-              <li>مدارک خود را بارگذاری کنید.</li>
-              <li>یا با یک متخصص ارتباط بگیرید.</li>
-            </ul>
-          </section>
-
-          <section>
-            <h3 className="font-semibold text-base mb-3">راهنمای دستیارها</h3>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {shortGuideAssistants.map((assistant) => (
-                <div key={assistant.name} className="rounded-lg border border-border/50 p-3">
-                  <p className="font-medium">{assistant.name}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{assistant.description}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section>
-            <h3 className="font-semibold text-base mb-3">راهنمای بخش‌های پلتفرم</h3>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {shortGuideSections.map((section) => (
-                <div key={section.title} className="rounded-lg border border-border/50 p-3">
-                  <p className="font-medium">{section.title}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{section.description}</p>
-                </div>
-              ))}
-            </div>
+            <h3 className="mb-3 font-semibold text-base">نکات مهم قبل از استفاده</h3>
+            <GuideCardList cards={safetyCards} />
           </section>
         </div>
       </DialogContent>

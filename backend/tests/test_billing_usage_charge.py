@@ -58,3 +58,21 @@ class ProcessUsageChargeTests(TestCase):
         self.assertEqual(self.wallet.balance_plan, Decimal("0E-10"))
         self.assertEqual(self.wallet.balance_paid, Decimal("0E-10"))
         self.assertEqual(tx.amount, Decimal("-2.0000000000"))
+
+    def test_staff_usage_is_unlimited_and_not_deducted(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+        self.wallet.daily_free_used = Decimal("4.00")
+        self.wallet.balance_paid = Decimal("1.00")
+        self.wallet.save(update_fields=["daily_free_used", "balance_paid", "updated_at"])
+
+        result = process_usage_charge(self.user, input_tokens=10000, output_tokens=10000, run_id="run-staff")
+
+        self.wallet.refresh_from_db()
+
+        self.assertTrue(result["success"])
+        self.assertTrue(result["staff_unlimited"])
+        self.assertEqual(result["deducted"], Decimal("0"))
+        self.assertEqual(self.wallet.daily_free_used, Decimal("4.0000000000"))
+        self.assertEqual(self.wallet.balance_paid, Decimal("1.0000000000"))
+        self.assertFalse(Transaction.objects.filter(reference_id="run-staff").exists())

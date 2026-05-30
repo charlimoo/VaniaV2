@@ -20,6 +20,7 @@ from agno.models.message import Message
 # --- Project Imports ---
 from billing.services import process_usage_charge, calculate_credit_cost
 from billing.models import UserWallet, BillingConfig
+from users.eligibility import is_staff_or_admin_user
 from core.ai_provider import get_agno_openai_kwargs
 from .models import SanitizedOpenAIChat
 from .prompt_culture import compose_agent_instructions
@@ -386,6 +387,9 @@ class ServiceAgent(Agent):
     @sync_to_async
     def _check_access(self) -> tuple[bool, str]:
         try:
+            if is_staff_or_admin_user(self.user):
+                return True, ""
+
             config = BillingConfig.load()
             daily_limit = config.daily_free_credits
             wallet, _ = UserWallet.objects.get_or_create(user=self.user)

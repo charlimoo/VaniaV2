@@ -64,6 +64,8 @@ export interface UserData {
   full_name?: string;
   email?: string;
   date_joined: string;
+  is_staff?: boolean;
+  is_superuser?: boolean;
   role_slug?: string;  // e.g., 'expert' | 'visitor' (legacy aliases may still appear)
   role_label?: string; // e.g., 'متخصص' | 'مراجعه‌کننده'
   national_code?: string | null;

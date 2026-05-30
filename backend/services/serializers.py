@@ -5,6 +5,7 @@ from django.core.cache import cache
 
 from .models import AgentService, ServiceSuggestion
 from .models_canvas import AgentCanvasConfig
+from users.eligibility import is_staff_or_admin_user
 
 # --- SERVICE DISCOVERY SERIALIZERS ---
 
@@ -86,6 +87,9 @@ class ServiceSerializer(serializers.ModelSerializer):
         return config
 
     def get_is_owned(self, obj):
+        request = self.context.get('request')
+        if request and is_staff_or_admin_user(request.user):
+            return True
         if obj.is_free: return True
         user_plan_id = self.context.get('user_active_plan_id')
         if not user_plan_id: return False

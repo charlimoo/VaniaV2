@@ -8,6 +8,7 @@ from django.conf import settings
 from django.shortcuts import get_object_or_404, redirect
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+from django.utils.cache import patch_cache_control
 
 from rest_framework.views import APIView
 from rest_framework import generics, status
@@ -51,6 +52,22 @@ class BillingConfigView(APIView):
 
 # --- STOREFRONT ---
 
+def _dedupe_product_ids(products):
+    visible_ids = []
+    seen_plan_ids = set()
+    seen_topup_names = set()
+    for product in products:
+        if product.linked_plan_id:
+            if product.linked_plan_id in seen_plan_ids:
+                continue
+            seen_plan_ids.add(product.linked_plan_id)
+        else:
+            if product.name in seen_topup_names:
+                continue
+            seen_topup_names.add(product.name)
+        visible_ids.append(product.id)
+    return visible_ids
+
 class ProductListView(generics.ListAPIView):
     """
     Lists available products (Both Top-ups and Plans).
@@ -63,14 +80,45 @@ class ProductListView(generics.ListAPIView):
     def get_queryset(self):
         products = BillingProduct.objects.filter(is_active=True).select_related("linked_plan").order_by("price")
         user = self.request.user
-        visible_ids = []
+        visible_products = []
         for product in products:
             if not product.linked_plan:
-                visible_ids.append(product.id)
+                visible_products.append(product)
                 continue
             if is_user_eligible_for_plan(user, product.linked_plan):
-                visible_ids.append(product.id)
+                visible_products.append(product)
+        visible_ids = _dedupe_product_ids(visible_products)
         return BillingProduct.objects.filter(id__in=visible_ids).select_related("linked_plan").order_by("price")
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        patch_cache_control(response, no_cache=True, no_store=True, must_revalidate=True, private=True)
+        return response
+
+
+class AdminProductListView(generics.ListAPIView):
+    """
+    Staff/admin storefront catalog. Admin users can see and buy every active product,
+    while the frontend may still prioritize the selected expert profession.
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = BillingProductSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        user = self.request.user
+        if not (user.is_staff or user.is_superuser):
+            return BillingProduct.objects.none()
+        products = BillingProduct.objects.filter(is_active=True).select_related("linked_plan").order_by("price", "id")
+        visible_ids = _dedupe_product_ids(products)
+        return BillingProduct.objects.filter(id__in=visible_ids).select_related("linked_plan").order_by("price", "id")
+
+    def list(self, request, *args, **kwargs):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({"detail": "Only admin users can access this catalog."}, status=status.HTTP_403_FORBIDDEN)
+        response = super().list(request, *args, **kwargs)
+        patch_cache_control(response, no_cache=True, no_store=True, must_revalidate=True, private=True)
+        return response
 
 class TransactionHistoryView(generics.ListAPIView):
     """

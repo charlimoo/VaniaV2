@@ -1,26 +1,17 @@
 import React from "react";
-import { Document, Page, Text, View, StyleSheet, Font } from "@react-pdf/renderer";
+import { Document, Page, Text, View } from "@react-pdf/renderer";
 import { ThoughtAppendix } from "@/lib/types/vania";
+import {
+  normalizePdfText,
+  PdfField,
+  PdfFooter,
+  PdfHeader,
+  PdfSection,
+  pdfStyles,
+  registerPersianPdfFont,
+} from "../pdf/PersianPdf";
 
-Font.register({
-  family: "Estedad",
-  fonts: [
-    { src: "/fonts/Estedad-Medium.ttf" },
-    { src: "/fonts/Estedad-Bold.ttf", fontWeight: "bold" },
-  ],
-});
-
-const normalizePersianText = (input: any): string => {
-  const raw = String(input ?? "");
-  return raw
-    .normalize("NFC")
-    .replace(/ي/g, "ی")
-    .replace(/ك/g, "ک")
-    .replace(/ة/g, "ه")
-    .replace(/[\u200B\u200D\u200E\u200F\u2066-\u2069\uFEFF]/g, "")
-    .replace(/[ \t]+/g, " ")
-    .trim();
-};
+registerPersianPdfFont();
 
 const TYPE_LABEL: Record<string, string> = {
   BOOK: "کتاب",
@@ -28,121 +19,48 @@ const TYPE_LABEL: Record<string, string> = {
   POEM: "شعر",
 };
 
-const styles = StyleSheet.create({
-  page: {
-    padding: 32,
-    fontFamily: "Estedad",
-    fontSize: 10,
-    lineHeight: 1.6,
-    backgroundColor: "#ffffff",
-  },
-  header: {
-    borderBottomWidth: 2,
-    borderBottomColor: "#1d4ed8",
-    paddingBottom: 10,
-    marginBottom: 16,
-    alignItems: "flex-end",
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#1e3a8a",
-    textAlign: "right",
-  },
-  meta: {
-    fontSize: 9,
-    color: "#475569",
-    marginTop: 2,
-    textAlign: "right",
-  },
-  resource: {
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 6,
-    padding: 10,
-    marginBottom: 10,
-  },
-  resourceTitle: {
-    fontSize: 11,
-    fontWeight: "bold",
-    color: "#0f172a",
-    textAlign: "right",
-    marginBottom: 3,
-  },
-  resourceMeta: {
-    fontSize: 9,
-    color: "#475569",
-    textAlign: "right",
-    marginBottom: 4,
-  },
-  text: {
-    textAlign: "right",
-    color: "#334155",
-    marginBottom: 3,
-  },
-  label: {
-    fontWeight: "bold",
-  },
-  footer: {
-    position: "absolute",
-    bottom: 16,
-    left: 32,
-    right: 32,
-    textAlign: "center",
-    color: "#94a3b8",
-    fontSize: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#e2e8f0",
-    paddingTop: 6,
-  },
-});
-
 interface Props {
   library: ThoughtAppendix;
   patientId: number;
+  patientName?: string;
+  caseTitle?: string;
 }
 
-export const AppendixPDF = ({ library, patientId }: Props) => {
+export const AppendixPDF = ({ library, patientId, patientName, caseTitle }: Props) => {
   const resources = library?.resources || [];
 
   return (
-    <Document title={`Appendix_${patientId}`}>
-      <Page size="A4" style={styles.page}>
-        <View style={styles.header}>
-          <Text style={styles.title}>گزارش پیوست اندیشه</Text>
-          <Text style={styles.meta}>
-            <Text style={styles.label}>پرونده:</Text> {patientId} | <Text style={styles.label}>تعداد منابع:</Text> {resources.length}
-          </Text>
-        </View>
+    <Document title={`گزارش پیوست اندیشه ${patientId}`}>
+      <Page size="A4" style={pdfStyles.page}>
+        <PdfHeader
+          title="گزارش پیوست اندیشه"
+          subtitle={`مراجع: ${normalizePdfText(patientName) || patientId}`}
+        />
+
+        <PdfSection title="خلاصه">
+          <PdfField label="مراجع" value={patientName || patientId} />
+          {caseTitle ? <PdfField label="پرونده" value={caseTitle} /> : null}
+          <PdfField label="تعداد منابع" value={resources.length.toLocaleString("fa-IR")} />
+        </PdfSection>
 
         {resources.length === 0 ? (
-          <View style={styles.resource}>
-            <Text style={styles.text}>— منبعی ثبت نشده است —</Text>
-          </View>
+          <PdfSection title="منابع">
+            <Text style={pdfStyles.muted}>هنوز منبعی ثبت نشده است.</Text>
+          </PdfSection>
         ) : (
-          resources.map((res) => (
-            <View key={res.id} style={styles.resource}>
-              <Text style={styles.resourceTitle}>{normalizePersianText(res.title)}</Text>
-              <Text style={styles.resourceMeta}>
-                نوع: {TYPE_LABEL[res.type] || normalizePersianText(res.type)} | پدیدآورنده: {normalizePersianText(res.creator)}
-              </Text>
-              {!!res.content_excerpt && (
-                <Text style={styles.text}>
-                  <Text style={styles.label}>بخشی از اثر:</Text> {normalizePersianText(res.content_excerpt)}
-                </Text>
-              )}
-              <Text style={styles.text}>
-                <Text style={styles.label}>دلیل تجویز:</Text> {normalizePersianText(res.reason_for_prescription)}
-              </Text>
-            </View>
+          resources.map((resource, index) => (
+            <PdfSection key={resource.id || `${resource.title}-${index}`} title={resource.title || `منبع ${index + 1}`}>
+              <PdfField label="نوع" value={TYPE_LABEL[resource.type] || resource.type} />
+              <PdfField label="پدیدآورنده" value={resource.creator} />
+              {resource.content_excerpt ? <PdfField label="بخشی از اثر" value={resource.content_excerpt} /> : null}
+              <PdfField label="دلیل پیشنهاد" value={resource.reason_for_prescription} />
+              <PdfField label="وضعیت" value={resource.status === "CONSUMED" ? "مطالعه یا مشاهده شده" : "پیشنهاد شده"} />
+            </PdfSection>
           ))
         )}
 
-        <Text style={styles.footer} fixed>
-          این سند در تاریخ {new Date().toLocaleDateString("fa-IR")} تولید شده است.
-        </Text>
+        <PdfFooter />
       </Page>
     </Document>
   );
 };
-

@@ -13,6 +13,7 @@ from .views import (
     VerifyDoctorView,
     ExpertProfessionListView,
     UpgradeExpertView,
+    AdminExpertProfessionView,
 )
 
 urlpatterns = [
@@ -35,4 +36,5 @@ urlpatterns = [
     path('verify-expert/', VerifyDoctorView.as_view(), name='verify-expert'),
     path('expert-professions/', ExpertProfessionListView.as_view(), name='expert-professions'),
     path('upgrade-expert/', UpgradeExpertView.as_view(), name='upgrade-expert'),
+    path('admin-expert-profession/', AdminExpertProfessionView.as_view(), name='admin-expert-profession'),
 ]

@@ -9,7 +9,15 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useUser } from "@/hooks/use-user";
 import { APP_CONFIG } from "@/lib/config";
-import { LOGIN_PWA_PROMPT_KEY, PWA_DISMISSED_KEY, SIGNUP_PROFILE_PROMPT_KEY } from "@/lib/onboarding-prompts";
+import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
+import {
+  LOGIN_PWA_PROMPT_KEY,
+  PROFILE_PROMPT_SESSION_KEY,
+  PROFILE_PROMPT_SHOWN_KEY,
+  PWA_DISMISSED_KEY,
+  SIGNUP_PROFILE_PROMPT_KEY,
+} from "@/lib/onboarding-prompts";
+import { hasExpertFeatures, hasVisitorFeatures } from "@/lib/roles";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -17,6 +25,14 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 const DISMISS_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const PROFILE_PROMPT_TTL_MS = 12 * 60 * 60 * 1000;
+
+type ProfilePromptReason = "account" | "visitor" | "expert";
+
+type ProfileCompletionStatus = {
+  isComplete: boolean;
+  reasons: ProfilePromptReason[];
+};
 
 const isStandalone = () => {
   if (typeof window === "undefined") return false;
@@ -43,10 +59,111 @@ const wasRecentlyDismissed = () => {
   return dismissedAt > 0 && Date.now() - dismissedAt < DISMISS_TTL_MS;
 };
 
+const hasMeaningfulValue = (value: unknown) => {
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "string") return value.trim().length > 0;
+  if (typeof value === "number") return Number.isFinite(value) && value > 0;
+  if (typeof value === "boolean") return true;
+  return Boolean(value);
+};
+
+const hasProfileSentence = (value: unknown) => {
+  if (typeof value !== "string") return false;
+  const text = value.trim().replace(/\s+/g, " ");
+  return text.length >= 10 && text.split(" ").length >= 2;
+};
+
+const hasAnyMeaningfulField = (data: Record<string, unknown>, fields: string[]) =>
+  fields.some((field) => hasMeaningfulValue(data[field]));
+
+const wasProfilePromptShownRecently = () => {
+  if (typeof window === "undefined") return true;
+  const shownAt = Number(localStorage.getItem(PROFILE_PROMPT_SHOWN_KEY) || "0");
+  return shownAt > 0 && Date.now() - shownAt < PROFILE_PROMPT_TTL_MS;
+};
+
+const markProfilePromptShown = () => {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(PROFILE_PROMPT_SESSION_KEY, "1");
+  localStorage.setItem(PROFILE_PROMPT_SHOWN_KEY, String(Date.now()));
+};
+
+async function resolveProfileCompletionStatus(user: any): Promise<ProfileCompletionStatus> {
+  const reasons: ProfilePromptReason[] = [];
+  const userHasVisitorFeatures = hasVisitorFeatures(user);
+  const userHasExpertFeatures = hasExpertFeatures(user);
+
+  if (!hasMeaningfulValue(user?.full_name)) {
+    reasons.push("account");
+  }
+
+  if (userHasVisitorFeatures) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/vania/my-base-profile/`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const payload = await res.json().catch(() => null);
+        const data = (payload?.data || {}) as Record<string, unknown>;
+        const hasBaseIdentity = hasMeaningfulValue(data.full_name) && hasMeaningfulValue(data.mobile_phone);
+        const hasPersonalContext = hasAnyMeaningfulField(data, [
+          "gender",
+          "birth_date",
+          "marital_status",
+          "education_level",
+          "education_major",
+          "job_status",
+          "job_title",
+          "address_home",
+          "preferred_contact_method",
+          "referral_source",
+          "family_history",
+        ]);
+        if (!hasBaseIdentity || !hasPersonalContext) {
+          reasons.push("visitor");
+        }
+      } else {
+        reasons.push("visitor");
+      }
+    } catch {
+      reasons.push("visitor");
+    }
+  }
+
+  if (userHasExpertFeatures && user?.is_expert_verified) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/vania/my-profile/`, {
+        headers: getAuthHeaders(),
+      });
+      if (res.ok) {
+        const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        const hasPublicProfile =
+          hasMeaningfulValue(data.specialty) &&
+          hasProfileSentence(data.bio) &&
+          hasMeaningfulValue(data.clinic_address) &&
+          hasMeaningfulValue(data.location_id);
+        if (!hasPublicProfile) {
+          reasons.push("expert");
+        }
+      } else {
+        reasons.push("expert");
+      }
+    } catch {
+      reasons.push("expert");
+    }
+  }
+
+  return {
+    isComplete: reasons.length === 0,
+    reasons: Array.from(new Set(reasons)),
+  };
+}
+
 export function GlobalOnboardingPrompts() {
   const router = useRouter();
   const { user, loading } = useUser();
   const [profileOpen, setProfileOpen] = useState(false);
+  const [profileReasons, setProfileReasons] = useState<ProfilePromptReason[]>([]);
   const [pwaOpen, setPwaOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isIosGuide, setIsIosGuide] = useState(false);
@@ -73,11 +190,30 @@ export function GlobalOnboardingPrompts() {
     if (hasSignupPrompt) {
       sessionStorage.removeItem(SIGNUP_PROFILE_PROMPT_KEY);
       sessionStorage.removeItem(LOGIN_PWA_PROMPT_KEY);
-      setProfileOpen(true);
+      resolveProfileCompletionStatus(user).then((status) => {
+        if (!status.isComplete) {
+          setProfileReasons(status.reasons);
+          markProfilePromptShown();
+          setProfileOpen(true);
+        }
+      });
       return;
     }
 
     const hasPwaPrompt = sessionStorage.getItem(LOGIN_PWA_PROMPT_KEY) === "1";
+    const shownInSession = sessionStorage.getItem(PROFILE_PROMPT_SESSION_KEY) === "1";
+    const shouldCheckProfilePrompt = !shownInSession && (hasPwaPrompt || !wasProfilePromptShownRecently());
+    if (shouldCheckProfilePrompt) {
+      resolveProfileCompletionStatus(user).then((status) => {
+        if (!status.isComplete) {
+          setProfileReasons(status.reasons);
+          markProfilePromptShown();
+          setProfileOpen(true);
+        }
+      });
+      return;
+    }
+
     if (!hasPwaPrompt || isStandalone() || !isMobileOrTablet() || wasRecentlyDismissed()) return;
 
     const shouldShowGuide = Boolean(installPrompt) || isIosSafari();
@@ -87,6 +223,10 @@ export function GlobalOnboardingPrompts() {
     setIsIosGuide(isIosSafari() && !installPrompt);
     setPwaOpen(true);
   }, [installPrompt, loading, user]);
+
+  const showAccountReason = profileReasons.includes("account");
+  const showVisitorReason = profileReasons.includes("visitor");
+  const showExpertReason = profileReasons.includes("expert");
 
   const pwaDescription = useMemo(() => {
     if (isIosGuide) return "برای دسترسی سریع‌تر، وانیا را به صفحه اصلی آیفون اضافه کنید.";
@@ -118,31 +258,41 @@ export function GlobalOnboardingPrompts() {
             </div>
             <DialogTitle>پروفایل را کامل کن</DialogTitle>
             <DialogDescription>
-              تنظیمات مرکز مدیریت حساب شماست. این کارها را می‌توانید همان‌جا انجام دهید:
+              برای اینکه دستیارها، بوم‌ها و ارتباط با متخصصان با اطلاعات درست کار کنند، این بخش‌های پروفایل را تکمیل کنید.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2 text-sm">
-            <div className="flex gap-3 rounded-lg border bg-muted/30 p-3">
-              <BadgeCheck className="mt-0.5 size-4 shrink-0 text-primary" />
-              <div className="space-y-0.5">
-                <p className="font-medium text-foreground">تکمیل اطلاعات حساب</p>
-                <p className="text-xs leading-6 text-muted-foreground">نام، ایمیل، رمز عبور و اطلاعات پایه پروفایل را ویرایش کنید.</p>
+            {(showAccountReason || profileReasons.length === 0) && (
+              <div className="flex gap-3 rounded-lg border bg-muted/30 p-3">
+                <BadgeCheck className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div className="space-y-0.5">
+                  <p className="font-medium text-foreground">ویرایش پروفایل عمومی</p>
+                  <p className="text-xs leading-6 text-muted-foreground">نام و نام خانوادگی و ایمیل حساب را در بخش اطلاعات کاربری تنظیم کنید.</p>
+                </div>
               </div>
-            </div>
-            <div className="flex gap-3 rounded-lg border bg-muted/30 p-3">
-              <BriefcaseBusiness className="mt-0.5 size-4 shrink-0 text-primary" />
-              <div className="space-y-0.5">
-                <p className="font-medium text-foreground">ارتقا به حساب متخصص</p>
-                <p className="text-xs leading-6 text-muted-foreground">حوزه تخصص، کد نظام/مجوز و اطلاعات تایید هویت حرفه‌ای را ثبت کنید.</p>
+            )}
+            {(showVisitorReason || profileReasons.length === 0) && (
+              <div className="flex gap-3 rounded-lg border bg-muted/30 p-3">
+                <Smartphone className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div className="space-y-0.5">
+                  <p className="font-medium text-foreground">پروفایل پایه مراجع</p>
+                  <p className="text-xs leading-6 text-muted-foreground">
+                    اطلاعات هویتی، تماس، وضعیت فردی، تحصیلی و شغلی را تکمیل کنید تا پاسخ‌ها و بوم همکاری دقیق‌تر شوند.
+                  </p>
+                </div>
               </div>
-            </div>
-            <div className="flex gap-3 rounded-lg border bg-muted/30 p-3">
-              <Smartphone className="mt-0.5 size-4 shrink-0 text-primary" />
-              <div className="space-y-0.5">
-                <p className="font-medium text-foreground">باز کردن دستیارهای حرفه‌ای</p>
-                <p className="text-xs leading-6 text-muted-foreground">بعد از تایید متخصص، دسترسی به دستیارهای تخصصی و تنظیمات پروفایل حرفه‌ای فعال می‌شود.</p>
+            )}
+            {showExpertReason && (
+              <div className="flex gap-3 rounded-lg border bg-muted/30 p-3">
+                <BriefcaseBusiness className="mt-0.5 size-4 shrink-0 text-primary" />
+                <div className="space-y-0.5">
+                  <p className="font-medium text-foreground">ویرایش پروفایل عمومی متخصص</p>
+                  <p className="text-xs leading-6 text-muted-foreground">
+                    تخصص اصلی، استان یا شهر، آدرس دقیق مطب و حداقل یک جمله درباره خودتان را ثبت کنید. افزودن تصویر هم به اعتماد و جذب مخاطب کمک می‌کند.
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
           <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:justify-between">
             <Button variant="outline" onClick={() => setProfileOpen(false)}>

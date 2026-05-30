@@ -97,9 +97,14 @@ export default function ChatPage() {
   const restoredContextRef = useRef<string | null>(null);
 
   const isDraft = threadId.startsWith("local-") && !isCreatedOnBackend;
-  const effectivePatientId = contextResourceId ? Number(contextResourceId) : patientId;
-  const effectiveDoctorId = contextDoctorId ? Number(contextDoctorId) : doctorId;
-  const effectiveCaseId = contextCaseId ?? caseId;
+  const isPendingPatientContextSwitch = Boolean(
+    contextResourceId &&
+    contextResourceId !== (patientId ? String(patientId) : null) &&
+    (patientId || isCreatedOnBackend || !threadId.startsWith("local-"))
+  );
+  const effectivePatientId = isPendingPatientContextSwitch ? patientId : contextResourceId ? Number(contextResourceId) : patientId;
+  const effectiveDoctorId = isPendingPatientContextSwitch ? doctorId : contextDoctorId ? Number(contextDoctorId) : doctorId;
+  const effectiveCaseId = isPendingPatientContextSwitch ? caseId : contextCaseId ?? caseId;
   const patientManagerCanvas = useMemo(
     () => Object.values(canvasInstances).find((canvas) => canvas.component_key === "VANIA_PATIENT_MANAGER"),
     [canvasInstances]
@@ -217,6 +222,17 @@ export default function ChatPage() {
 
     const query = new URLSearchParams(searchParams.toString());
 
+    const isPatientContextSwitch = !!nextPatientId && nextPatientId !== currentPatientId;
+    const currentThreadAlreadyOwnsContext = !!currentPatientId || isCreatedOnBackend || !threadId.startsWith("local-");
+
+    if (isPatientContextSwitch && currentThreadAlreadyOwnsContext) {
+      const nextThreadId = `local-${crypto.randomUUID()}`;
+      const nextQuery = new URLSearchParams();
+      nextQuery.set("visitorId", nextPatientId);
+      router.push(`/chat/${agentId}/${nextThreadId}?${nextQuery.toString()}`);
+      return;
+    }
+
     if (nextPatientId) {
       query.set("visitorId", nextPatientId);
       query.delete("patientId");
@@ -240,7 +256,7 @@ export default function ChatPage() {
     }
 
     router.replace(`/chat/${agentId}/${threadId}${query.toString() ? `?${query.toString()}` : ""}`);
-  }, [agentId, threadId, searchParams, router, patientId, doctorId, caseId, contextResourceId, contextDoctorId, contextCaseId]);
+  }, [agentId, threadId, searchParams, router, patientId, doctorId, caseId, contextResourceId, contextDoctorId, contextCaseId, isCreatedOnBackend]);
 
   useEffect(() => {
     if (!threadId.startsWith("local-")) return;
@@ -521,6 +537,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (threadId.startsWith("local-")) return;
+    if (isPendingPatientContextSwitch) return;
     const headers = getAuthHeaders();
     if (!headers.Authorization) return;
     const session_state: Record<string, any> = {};
@@ -564,7 +581,7 @@ export default function ChatPage() {
       },
       body: JSON.stringify({ session_state }),
     }).catch(() => {});
-  }, [threadId, effectivePatientId, effectiveDoctorId, effectiveCaseId, sessionContextLabels]);
+  }, [threadId, effectivePatientId, effectiveDoctorId, effectiveCaseId, sessionContextLabels, isPendingPatientContextSwitch]);
 
   // 9. Mobile Gestures
   const handleMobileToggle = () => setMobileView(prev => prev === 'chat' ? 'canvas' : 'chat');

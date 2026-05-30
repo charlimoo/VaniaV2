@@ -429,6 +429,55 @@ class UpgradeExpertView(APIView):
             status=200,
         )
 
+
+class AdminExpertProfessionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response({"detail": "Only admin users can select an expert profession this way."}, status=403)
+
+        profession_slug = (request.data.get("profession_slug") or "").strip()
+        if not profession_slug:
+            return Response({"detail": "profession_slug is required."}, status=400)
+
+        profession = ExpertProfession.objects.filter(slug=profession_slug, is_active=True).first()
+        if not profession:
+            return Response({"detail": "Invalid profession_slug."}, status=400)
+
+        with transaction.atomic():
+            user = request.user
+            user.expert_profession = profession
+            user.is_expert_verified = True
+            user.is_verified_doctor = True
+            user.expert_verified_at = timezone.now()
+            user.expert_verification_meta = {
+                **(user.expert_verification_meta or {}),
+                "submitted_profession_slug": profession.slug,
+                "status": "approved",
+                "admin_bypass": True,
+                "latest_message": "حوزه تخصصی ادمین بدون نیاز به اعتبارسنجی تنظیم شد.",
+                "updated_at": timezone.now().isoformat(),
+            }
+            user.save(update_fields=[
+                "expert_profession",
+                "is_expert_verified",
+                "is_verified_doctor",
+                "expert_verified_at",
+                "expert_verification_meta",
+            ])
+
+        user.refresh_from_db()
+        return Response(
+            {
+                "message": "حوزه تخصصی ادمین بروزرسانی شد.",
+                "profession_slug": profession.slug,
+                "profession_label": profession.name,
+                "user": UserSerializer(user).data,
+            },
+            status=200,
+        )
+
 class UserProfileDetailView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = UserProfileSerializer
