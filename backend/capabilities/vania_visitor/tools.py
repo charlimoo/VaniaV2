@@ -506,6 +506,15 @@ async def update_my_test_result(
         return
     doctor_id = int(selected_case["doctor_id"])
     case_id = selected_case["id"]
+    current_test = await sync_to_async(ClinicalTestsService.get_test)(
+        patient,
+        test_id,
+        doctor_id,
+        case_id,
+    )
+    if current_test and current_test.get("source") == "interactive":
+        yield "❌ این تست تعاملی است و نتیجه آن فقط با تکمیل آزمون در پلتفرم ثبت می‌شود."
+        return
     updated = await sync_to_async(ClinicalTestsService.update_test)(
         patient=patient,
         created_by=patient,

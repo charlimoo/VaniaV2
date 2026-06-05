@@ -46,8 +46,10 @@ from .models import (
     GoogleCalendarConnection,
     ExpertMeetingLink,
     PageTutorial,
+    EsanjTestAccessRule,
     normalize_tutorial_path,
 )
+from .esanj_serializers import user_can_access_esanj_rule
 from .permissions import IsDoctorUser, VaniaAccessControl
 from .google_calendar import calendar_service, SCOPES
 from .serializers import (
@@ -944,9 +946,27 @@ class ClinicalTestsView(APIView):
         title = request.data.get("title")
         url = request.data.get("url")
         result_summary = request.data.get("result_summary") or request.data.get("result_text")
+        source = request.data.get("source")
+        interactive_test_id = request.data.get("interactive_test_id")
         case_id = request.data.get("case_id") or request.headers.get("X-Target-Case-ID")
         if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
             return Response({"error": "This case is read-only for you."}, status=403)
+        if source == "interactive" or interactive_test_id:
+            try:
+                interactive_test_id = int(interactive_test_id)
+            except (TypeError, ValueError):
+                return Response({"error": "interactive_test_id is required."}, status=400)
+            rule = (
+                EsanjTestAccessRule.objects.prefetch_related("eligible_expert_professions")
+                .filter(esanj_test_id=interactive_test_id)
+                .first()
+            )
+            if not rule or not user_can_access_esanj_rule(request.user, rule):
+                return Response({"error": "This interactive test is not available for this expert."}, status=403)
+            source = "interactive"
+            title = rule.title
+            url = ""
+            result_summary = ""
         new_test = ClinicalTestsService.add_test(
             patient=patient,
             created_by=request.user,
@@ -956,6 +976,8 @@ class ClinicalTestsView(APIView):
             result_summary=result_summary,
             doctor_id=request.user.id,
             case_id=case_id,
+            source=source,
+            interactive_test_id=interactive_test_id,
         )
         return Response(new_test, status=201)
 

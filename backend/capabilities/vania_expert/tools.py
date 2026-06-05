@@ -43,6 +43,8 @@ from vania_core.appendix_service import normalize_resource_type
 from vania_core.task_service import normalize_rescue_dimension
 from vania_core.tests_service import ClinicalTestsService
 from vania_core.tests_catalog import TEST_CATALOG
+from vania_core.models import EsanjTestAccessRule
+from vania_core.esanj_serializers import user_can_access_esanj_rule
 
 from .forms import ALL_FORMS_LIST
 
@@ -305,10 +307,14 @@ def _compact_roadmap_payload(roadmap: Any) -> Dict[str, Any]:
 
 def _compact_test_item(test: Dict[str, Any]) -> Dict[str, Any]:
     attachments = test.get("attachments", []) or []
-    return {
+    payload = {
         "id": test.get("id"),
         "title": test.get("title"),
+        "source": test.get("source") or "manual",
         "catalog_id": test.get("catalog_id"),
+        "interactive_test_id": test.get("interactive_test_id"),
+        "interactive_status": test.get("interactive_status"),
+        "interactive_attempt_id": test.get("interactive_attempt_id"),
         "url": test.get("url"),
         "result_summary": test.get("result_summary") or test.get("result_text") or "",
         "attachment_count": len(attachments),
@@ -325,6 +331,35 @@ def _compact_test_item(test: Dict[str, Any]) -> Dict[str, Any]:
         "updated_at": test.get("updated_at"),
         "case_id": test.get("case_id"),
     }
+    return payload
+
+
+def _available_interactive_tests_for_user(user: CustomUser) -> List[Dict[str, Any]]:
+    rules = (
+        EsanjTestAccessRule.objects.filter(is_active=True)
+        .prefetch_related("eligible_expert_professions")
+        .order_by("esanj_test_id")
+    )
+    return [
+        {
+            "interactive_test_id": rule.esanj_test_id,
+            "title": rule.title,
+            "kind": "interactive",
+        }
+        for rule in rules
+        if user_can_access_esanj_rule(user, rule)
+    ]
+
+
+def _get_accessible_interactive_rule_for_user(user: CustomUser, interactive_test_id: int):
+    rule = (
+        EsanjTestAccessRule.objects.prefetch_related("eligible_expert_professions")
+        .filter(esanj_test_id=interactive_test_id)
+        .first()
+    )
+    if not rule or not user_can_access_esanj_rule(user, rule):
+        return None
+    return rule
 
 
 def _compact_task_item(task: Dict[str, Any]) -> Dict[str, Any]:
@@ -1322,7 +1357,7 @@ async def submit_clinical_form(run_context: RunContext, form_key: str, **kwargs)
 
 
 @tool
-async def manage_clinical_tests(run_context: RunContext, action: str, data: Dict[str, Any] = {}) -> AsyncGenerator[Any, None]:
+async def manage_clinical_tests(run_context: RunContext, action: str, data: Dict[str, str | int | bool | None] | None = None) -> AsyncGenerator[Any, None]:
     """
     Manage case-scoped clinical tests.
 
@@ -1336,10 +1371,12 @@ async def manage_clinical_tests(run_context: RunContext, action: str, data: Dict
     - DELETE_ATTACHMENT
 
     Important:
+    - For an interactive test, call LIST first and then ADD_TEST with data={"source": "interactive", "interactive_test_id": <id>}.
     - If the user asks about files attached to a test, use LIST/SNAPSHOT to identify the test when needed, then call get_test_result_details.
     - If the user asks about one specific attachment such as "the PDF" or "the image", prefer get_test_attachment_details with that attachment id.
     - Do not use this tool for the case-level forms/tests analysis panel.
     """
+    data = data or {}
     patient = await _get_active_patient()
     doctor = await _get_active_doctor(run_context)
     blocked = _tool_family_error(doctor, "tests")
@@ -1367,11 +1404,13 @@ async def manage_clinical_tests(run_context: RunContext, action: str, data: Dict
     action_key = action_aliases.get(action_key, action_key)
     if action_key in {"LIST", "GET", "SNAPSHOT"}:
         tests = await sync_to_async(ClinicalTestsService.get_tests)(patient, doctor_id, active_case["id"])
+        interactive_catalog = await sync_to_async(_available_interactive_tests_for_user)(doctor)
         yield json.dumps(
             {
                 "case": _compact_case_item(active_case),
                 "count": len(tests),
                 "tests": [_compact_test_item(item) for item in tests],
+                "available_interactive_tests": interactive_catalog,
             },
             ensure_ascii=False,
             indent=2,
@@ -1382,13 +1421,35 @@ async def manage_clinical_tests(run_context: RunContext, action: str, data: Dict
         yield editable_error
         return
     if action_key == "ADD_TEST":
+        interactive_test_id = data.get("interactive_test_id")
+        is_interactive = data.get("source") == "interactive" or bool(interactive_test_id)
         if policy.get("test_mode") == "exams_only":
-            if data.get("catalog_id"):
-                yield "❌ General doctors can register only manual exam entries without catalog-based tests."
+            if data.get("catalog_id") or is_interactive:
+                yield "❌ General doctors can register only manual exam entries without catalog-based or interactive tests."
                 return
             data = {**data, "url": ""}
+        if is_interactive:
+            try:
+                interactive_test_id = int(interactive_test_id)
+            except (TypeError, ValueError):
+                yield "❌ interactive_test_id is required for interactive tests."
+                return
+            rule = await sync_to_async(_get_accessible_interactive_rule_for_user)(doctor, interactive_test_id)
+            if not rule:
+                yield "❌ This interactive test is not available for your expert profession."
+                return
+            data = {**data, "source": "interactive", "interactive_test_id": interactive_test_id, "title": rule.title, "url": ""}
         await sync_to_async(ClinicalTestsService.add_test)(
-            patient, doctor, data.get("catalog_id"), data.get("title"), data.get("url"), None, doctor_id, active_case["id"]
+            patient,
+            doctor,
+            data.get("catalog_id"),
+            data.get("title"),
+            data.get("url"),
+            None,
+            doctor_id,
+            active_case["id"],
+            data.get("source"),
+            data.get("interactive_test_id"),
         )
     elif action_key in {"UPDATE_SUMMARY", "UPDATE_RESULT_TEXT"}:
         updated = await sync_to_async(ClinicalTestsService.update_test)(

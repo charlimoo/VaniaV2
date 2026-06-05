@@ -24,6 +24,8 @@ from vania_core.services import (
 )
 from vania_core.medication_service import MedicationService
 from vania_core.tests_catalog import TEST_CATALOG
+from vania_core.models import EsanjTestAccessRule
+from vania_core.esanj_serializers import user_can_access_esanj_rule
 
 from .forms import ALL_FORMS_LIST
 
@@ -58,12 +60,12 @@ Privacy rules:
 - `BASE_PROFILE_V1` is shared.
 - Non-base forms and tests are visible only to the patient and the submitting expert.
 - Tool-based updates synchronize the shared workspace state.
-- Test results may include free-text notes plus attached PDF/image files.
+- Test results may include free-text notes, attached PDF/image files, or structured results from an interactive test.
 - When you need the contents of a test result file, use `get_test_result_details` instead of guessing from metadata.
 - When the user points to one specific attachment inside a test, such as "the PDF", "the image", or a filename, use `get_test_attachment_details` with that attachment's id.
 - If the user asks to inspect, read, reopen, retry, or check a test attachment again, call `get_test_result_details` again for that test.
 - Do not say you lack a file/PDF-reading tool for test attachments when `get_test_result_details` is available. If an attachment is not loadable, say that specific attachment could not be loaded from storage.
-- To add a new test entry, use `manage_clinical_tests` with action `ADD_TEST`.
+- To add a new test entry, use `manage_clinical_tests` with action `ADD_TEST`; for an interactive test, use the ID from AVAILABLE INTERACTIVE TESTS as `interactive_test_id`.
 - To write or edit the text result of one specific test, use `manage_clinical_tests` with action `UPDATE_SUMMARY` and include `test_id` plus `result_summary` in `data`.
 - Do not use `update_forms_tests_analysis` for a single test result. That tool updates the case-level combined analysis panel, not the selected test item.
 - For medication updates, the saved fields are `drug_name`, `dosage`, `timing`, `duration`, `usage_instructions`, and `notes`.
@@ -266,6 +268,13 @@ Do not send localized or freeform values such as `کتاب`, `فیلم`, or `ش�
             policy = get_policy_for_user(user)
             allowed_forms = filter_form_definitions(ALL_FORMS_LIST, getattr(getattr(user, "expert_profession", None), "slug", None))
             allowed_tests = filter_tests_catalog(TEST_CATALOG, getattr(getattr(user, "expert_profession", None), "slug", None))
+            interactive_tests = [
+                rule
+                for rule in EsanjTestAccessRule.objects.filter(is_active=True)
+                .prefetch_related("eligible_expert_professions")
+                .order_by("esanj_test_id")
+                if user_can_access_esanj_rule(user, rule)
+            ]
             return f"""
 ### ACTIVE PATIENT
 - Visitor: {patient.full_name or patient.phone_number} (ID: {patient.id})
@@ -290,6 +299,9 @@ Do not send localized or freeform values such as `کتاب`, `فیلم`, or `ش�
 
 ### AVAILABLE TESTS
 {chr(10).join([f"- `{t['id']}` | {t['title']}" for t in allowed_tests]) or "- No catalog-based tests available for your profession."}
+
+### AVAILABLE INTERACTIVE TESTS
+{chr(10).join([f"- `{t.esanj_test_id}` | {t.title}" for t in interactive_tests]) or "- No interactive tests available for your profession."}
 
 ### PROFESSION ACCESS
 - Profession policy: {policy.get('profession_slug') or 'unknown'}

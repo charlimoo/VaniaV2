@@ -31,6 +31,13 @@ class BillingConfig(models.Model):
         max_digits=10, decimal_places=2, default=Decimal('10.00'),
         help_text="Cost in Credits per minute of audio."
     )
+
+    esanj_test_markup_percent = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=Decimal('10.00'),
+        help_text="Markup percentage added to upstream interactive test base prices.",
+    )
     
     support_phone = models.CharField(max_length=50, default="09123456789", blank=True)
     support_email = models.EmailField(default="support@example.com", blank=True)

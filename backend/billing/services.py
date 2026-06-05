@@ -256,7 +256,14 @@ class FulfillmentService:
         if isinstance(product, BillingProduct):
             cls._fulfill_product(user, product, invoice)
         else:
-            logger.error(f"Unknown content object in invoice {invoice.id}: {type(product)}")
+            wallet, _ = UserWallet.objects.select_for_update().get_or_create(user=user)
+            Transaction.objects.create(
+                wallet=wallet,
+                amount=Decimal("0"),
+                transaction_type=Transaction.TransactionType.SERVICE_CHARGE,
+                description=f"Unlocked service purchase: {product}",
+                reference_id=str(invoice.id),
+            )
 
     @staticmethod
     def _fulfill_product(user, product: BillingProduct, invoice: Invoice):

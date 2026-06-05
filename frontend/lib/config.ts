@@ -8,7 +8,8 @@ import {
   MessageSquare,
   Stethoscope,  
   Users,
-  Route
+  Route,
+  ClipboardList
 } from "lucide-react";
 
 export const APP_CONFIG = {
@@ -94,6 +95,14 @@ export const APP_CONFIG = {
         title: "مسیر من",
         url: "/dashboard/journey",
         icon: Route,
+        visible: true,
+        allowedRoles: ["visitor", "expert"]
+      },
+      {
+        key: "tests",
+        title: "تست‌ها",
+        url: "/dashboard/tests",
+        icon: ClipboardList,
         visible: true,
         allowedRoles: ["visitor", "expert"]
       },

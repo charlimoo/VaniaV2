@@ -13,6 +13,7 @@ class BillingConfigSerializer(serializers.ModelSerializer):
             'currency_symbol', 
             'daily_free_credits', 
             'transcription_cost_per_minute',
+            'esanj_test_markup_percent',
             'bank_card_number',
             'bank_holder_name',
             'manual_payment_tips',
@@ -94,10 +95,17 @@ class InvoiceSerializer(serializers.ModelSerializer):
 
     def get_item_name(self, obj):
         if obj.content_object:
-            return str(getattr(obj.content_object, 'name', 'Unknown Item'))
+            return str(
+                getattr(obj.content_object, 'name', None)
+                or getattr(obj.content_object, 'title', None)
+                or 'Unknown Item'
+            )
         return "Unknown Item"
 
     def get_item_description(self, obj):
         if obj.content_object:
-            return getattr(obj.content_object, 'description', '')
+            if hasattr(obj.content_object, 'description'):
+                return getattr(obj.content_object, 'description', '')
+            if hasattr(obj.content_object, 'esanj_test_id'):
+                return "دسترسی به تست تعاملی"
         return ""

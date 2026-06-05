@@ -104,6 +104,14 @@ export interface ClinicalTestCatalogItem {
   url: string;
 }
 
+export interface InteractiveTestCatalogItem {
+  id: number;
+  esanj_test_id: number;
+  title: string;
+  title_employee?: string;
+  is_available?: boolean;
+}
+
 export interface ClinicalTestAttachment {
   id: string;
   file_name: string;
@@ -114,7 +122,14 @@ export interface ClinicalTestAttachment {
 
 export interface ClinicalTestEntry {
   id: string;
+  source?: "manual" | "interactive";
   catalog_id?: number | null;
+  interactive_test_id?: number | null;
+  interactive_status?: "ASSIGNED" | "IN_PROGRESS" | "SUBMITTED" | "COMPLETED" | "FAILED" | null;
+  interactive_attempt_id?: string | null;
+  assigned_to_user_id?: number | null;
+  assigned_by_user_id?: number | null;
+  completed_at?: string | null;
   title: string;
   url?: string;
   result_text?: string;

@@ -1,11 +1,14 @@
 # backend/vania_core/admin.py
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.shortcuts import redirect
-from django.urls import reverse
+from django.urls import path, reverse
 from django.utils.html import format_html
 from .models import (
     CaseAccessGrant,
     CaseContextEntry,
+    EsanjTestAccessRule,
+    EsanjTestAttempt,
+    EsanjUserProfile,
     RoleVerificationRequest, 
     DoctorProfile, 
     TreatmentConnection, 
@@ -17,6 +20,8 @@ from .models import (
     ExpertMeetingLink,
     PageTutorial,
 )
+from .esanj_client import EsanjAPIError, EsanjConfigurationError
+from .esanj_views import sync_esanj_test_bank
 
 @admin.register(RoleVerificationRequest)
 class RoleVerificationRequestAdmin(admin.ModelAdmin):
@@ -223,3 +228,129 @@ class PageTutorialAdmin(admin.ModelAdmin):
     search_fields = ("title", "page_path", "normalized_path")
     readonly_fields = ("normalized_path", "created_at", "updated_at")
     fields = ("title", "page_path", "normalized_path", "video", "match_prefix", "is_public", "created_at", "updated_at")
+
+
+@admin.register(EsanjTestAccessRule)
+class EsanjTestAccessRuleAdmin(admin.ModelAdmin):
+    change_list_template = "admin/vania_core/esanjtestaccessrule/change_list.html"
+    list_display = (
+        "esanj_test_id",
+        "title",
+        "is_active",
+        "allow_visitors",
+        "allow_experts",
+        "profession_summary",
+        "base_price",
+        "last_synced_at",
+    )
+    list_editable = ("is_active", "allow_visitors", "allow_experts")
+    list_filter = ("is_active", "allow_visitors", "allow_experts", "eligible_expert_professions")
+    search_fields = ("title", "title_employee", "esanj_test_id", "notes")
+    filter_horizontal = ("eligible_expert_professions",)
+    readonly_fields = ("upstream_payload", "last_synced_at", "created_at", "updated_at")
+    actions = ("sync_from_esanj", "enable_for_visitors", "enable_for_experts", "disable_tests")
+    fieldsets = (
+        ("Test", {
+            "fields": ("esanj_test_id", "title", "title_employee", "base_price", "is_active", "notes"),
+        }),
+        ("Availability", {
+            "fields": ("allow_visitors", "allow_experts", "eligible_expert_professions"),
+            "description": "If expert professions are empty, all expert subtypes can access this test when experts are enabled.",
+        }),
+        ("Upstream", {
+            "classes": ("collapse",),
+            "fields": ("upstream_payload", "last_synced_at", "created_at", "updated_at"),
+        }),
+    )
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                "sync/",
+                self.admin_site.admin_view(self.sync_bank_view),
+                name="vania_core_esanjtestaccessrule_sync",
+            ),
+        ]
+        return custom_urls + urls
+
+    def sync_bank_view(self, request):
+        try:
+            created, updated = sync_esanj_test_bank()
+        except (EsanjConfigurationError, EsanjAPIError) as exc:
+            self.message_user(request, str(exc), level=messages.ERROR)
+        else:
+            self.message_user(
+                request,
+                f"Esanj test bank synced. Created: {created}, updated: {updated}.",
+                level=messages.SUCCESS,
+            )
+        return redirect("admin:vania_core_esanjtestaccessrule_changelist")
+
+    def profession_summary(self, obj):
+        professions = list(obj.eligible_expert_professions.values_list("name", flat=True)[:3])
+        if not professions:
+            return "All experts" if obj.allow_experts else "-"
+        suffix = " ..." if obj.eligible_expert_professions.count() > 3 else ""
+        return ", ".join(professions) + suffix
+    profession_summary.short_description = "Expert professions"
+
+    @admin.action(description="Sync test bank from Esanj")
+    def sync_from_esanj(self, request, queryset):
+        try:
+            created, updated = sync_esanj_test_bank()
+        except (EsanjConfigurationError, EsanjAPIError) as exc:
+            self.message_user(request, str(exc), level=messages.ERROR)
+            return
+        self.message_user(request, f"Esanj test bank synced. Created: {created}, updated: {updated}.", level=messages.SUCCESS)
+
+    @admin.action(description="Enable selected tests for visitors")
+    def enable_for_visitors(self, request, queryset):
+        count = queryset.update(is_active=True, allow_visitors=True)
+        self.message_user(request, f"{count} tests enabled for visitors.", level=messages.SUCCESS)
+
+    @admin.action(description="Enable selected tests for experts")
+    def enable_for_experts(self, request, queryset):
+        count = queryset.update(is_active=True, allow_experts=True)
+        self.message_user(request, f"{count} tests enabled for experts.", level=messages.SUCCESS)
+
+    @admin.action(description="Disable selected tests")
+    def disable_tests(self, request, queryset):
+        count = queryset.update(is_active=False)
+        self.message_user(request, f"{count} tests disabled.", level=messages.SUCCESS)
+
+
+@admin.register(EsanjTestAttempt)
+class EsanjTestAttemptAdmin(admin.ModelAdmin):
+    list_display = ("test_title", "user", "status", "age", "sex", "started_at", "completed_at")
+    list_filter = ("status", "sex", "started_at", "completed_at")
+    search_fields = ("test_title", "user__phone_number", "user__full_name", "id")
+    readonly_fields = (
+        "id",
+        "user",
+        "access_rule",
+        "esanj_test_id",
+        "test_title",
+        "age",
+        "sex",
+        "employee_id",
+        "questionnaire",
+        "answers",
+        "result_json",
+        "grading_json",
+        "error_message",
+        "started_at",
+        "updated_at",
+        "submitted_at",
+        "completed_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(EsanjUserProfile)
+class EsanjUserProfileAdmin(admin.ModelAdmin):
+    list_display = ("user", "employee_id", "employee_username", "last_synced_at")
+    search_fields = ("user__phone_number", "user__full_name", "employee_id", "employee_username")
+    readonly_fields = ("upstream_payload", "last_synced_at", "created_at", "updated_at")

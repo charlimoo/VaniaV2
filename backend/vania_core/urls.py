@@ -46,6 +46,14 @@ from .views import (
     google_calendar_login,
     google_calendar_callback,
 )
+from .esanj_views import (
+    EsanjAttemptDetailView,
+    EsanjAttemptListCreateView,
+    EsanjAttemptSubmitView,
+    EsanjSyncTestsView,
+    EsanjTestCatalogView,
+    EsanjTestQuestionnaireView,
+)
 
 app_name = 'vania_core'
 
@@ -119,4 +127,11 @@ urlpatterns = [
     path('case-files/', CaseFilesView.as_view(), name='case-files'),
     path('case-files/<str:file_id>/', CaseFilesView.as_view(), name='case-file-delete'),
     path('case-files/<str:file_id>/download/', CaseFileDownloadView.as_view(), name='case-file-download'),
+
+    path('esanj/tests/', EsanjTestCatalogView.as_view(), name='esanj-test-catalog'),
+    path('esanj/tests/sync/', EsanjSyncTestsView.as_view(), name='esanj-test-sync'),
+    path('esanj/tests/<int:test_id>/questionnaire/', EsanjTestQuestionnaireView.as_view(), name='esanj-test-questionnaire'),
+    path('esanj/attempts/', EsanjAttemptListCreateView.as_view(), name='esanj-attempt-list-create'),
+    path('esanj/attempts/<uuid:attempt_id>/', EsanjAttemptDetailView.as_view(), name='esanj-attempt-detail'),
+    path('esanj/attempts/<uuid:attempt_id>/submit/', EsanjAttemptSubmitView.as_view(), name='esanj-attempt-submit'),
 ]

@@ -25,6 +25,10 @@ class BillingConfigAdmin(admin.ModelAdmin):
         ('Economy Logic', {
             'fields': ('tokens_per_credit', 'daily_free_credits', 'transcription_cost_per_minute'),
         }),
+        ('Interactive Tests', {
+            'fields': ('esanj_test_markup_percent',),
+            'description': 'Percentage added to upstream interactive test base prices before VAT.',
+        }),
         ('Manual Payment', {
             'fields': ('bank_card_number', 'bank_holder_name', 'manual_payment_tips'),
         }),

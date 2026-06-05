@@ -93,7 +93,7 @@ class VaniaVisitorCapability(BaseCapability):
 - Tasks, resources, reflections, non-base forms, and tests belong to the selected case.
 - Medications shown in the selected case are read-only for you and come from the expert's prescription plan.
 - Case-scoped actions use the selected case.
-- Test results can contain written notes plus attached PDF/image files.
+- Test results can contain written notes, attached PDF/image files, or structured results from an interactive test.
 - When you need to inspect the actual contents of a saved test result, use `get_my_test_result_details`.
 - When you want one specific attachment inside a test, such as "the PDF", "the image", or a filename, use `get_my_test_attachment_details` with that attachment's id.
 - If you want to inspect, reopen, retry, or check a test attachment again, call `get_my_test_result_details` again for that test.

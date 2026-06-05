@@ -5,6 +5,7 @@ import re
 import unicodedata
 import base64
 import mimetypes
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -46,6 +47,53 @@ class ClinicalTestsService:
         return TEST_CATALOG
 
     @staticmethod
+    def get_interactive_attempt(patient, clinical_test_id: str):
+        if not clinical_test_id:
+            return None
+        from .models import EsanjTestAttempt
+
+        return (
+            EsanjTestAttempt.objects.filter(user=patient, clinical_test_id=clinical_test_id)
+            .order_by("-started_at")
+            .first()
+        )
+
+    @staticmethod
+    def summarize_interactive_attempt(attempt) -> str:
+        if not attempt:
+            return ""
+        if attempt.status != getattr(attempt.Status, "COMPLETED", "COMPLETED"):
+            return ""
+        result = {
+            "test_title": attempt.test_title,
+            "status": attempt.status,
+            "completed_at": attempt.completed_at.isoformat() if attempt.completed_at else None,
+            "result": attempt.result_json or {},
+            "grading": attempt.grading_json or {},
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _sync_interactive_attempt_fields(patient, test: Dict[str, Any]) -> Dict[str, Any]:
+        if test.get("source") != "interactive":
+            return test
+        attempt = ClinicalTestsService.get_interactive_attempt(patient, test.get("id") or "")
+        if not attempt:
+            test.setdefault("interactive_status", "ASSIGNED")
+            test.setdefault("interactive_attempt_id", None)
+            test.setdefault("completed_at", None)
+            return test
+
+        test["interactive_attempt_id"] = str(attempt.id)
+        test["interactive_status"] = attempt.status
+        test["completed_at"] = attempt.completed_at.isoformat() if attempt.completed_at else None
+        if attempt.status == attempt.Status.COMPLETED:
+            summary = ClinicalTestsService.summarize_interactive_attempt(attempt)
+            test["result_text"] = summary
+            test["result_summary"] = summary
+        return test
+
+    @staticmethod
     def _get_state(patient, doctor_id=None, case_id=None) -> Dict[str, Any]:
         if doctor_id and case_id:
             entry = migrate_doctor_scoped_to_case_once(
@@ -76,6 +124,7 @@ class ClinicalTestsService:
         tests = state.get("tests", [])
         for test in tests:
             ClinicalTestsService._normalize_test_record(test)
+            ClinicalTestsService._sync_interactive_attempt_fields(patient, test)
         tests.sort(key=lambda x: x.get("created_at", ""), reverse=True)
         return tests
 
@@ -100,13 +149,20 @@ class ClinicalTestsService:
         result_summary: Optional[str] = None,
         doctor_id=None,
         case_id=None,
+        source: Optional[str] = None,
+        interactive_test_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         tests = ClinicalTestsService.get_tests(patient, doctor_id=doctor_id, case_id=case_id)
         now_iso = datetime.now().isoformat()
 
+        normalized_source = "interactive" if source == "interactive" or interactive_test_id else "manual"
         resolved_title = title or ""
         resolved_url = url or ""
-        if catalog_id:
+        if normalized_source == "interactive":
+            catalog_id = None
+            resolved_url = ""
+            result_summary = ""
+        elif catalog_id:
             item = TEST_CATALOG_BY_ID.get(int(catalog_id))
             if item:
                 resolved_title = item["title"]
@@ -114,7 +170,14 @@ class ClinicalTestsService:
 
         new_test = {
             "id": str(uuid.uuid4()),
+            "source": normalized_source,
             "catalog_id": int(catalog_id) if catalog_id else None,
+            "interactive_test_id": int(interactive_test_id) if interactive_test_id else None,
+            "interactive_status": "ASSIGNED" if normalized_source == "interactive" else None,
+            "interactive_attempt_id": None,
+            "assigned_to_user_id": int(getattr(patient, "id", 0) or 0) if normalized_source == "interactive" else None,
+            "assigned_by_user_id": int(getattr(created_by, "id", 0) or 0) if normalized_source == "interactive" else None,
+            "completed_at": None,
             "title": resolved_title,
             "url": resolved_url,
             "result_text": (result_summary or "").strip(),
@@ -139,6 +202,8 @@ class ClinicalTestsService:
         for test in tests:
             if test.get("id") == test_id:
                 for key in ["title", "url", "result_text", "result_summary"]:
+                    if test.get("source") == "interactive" and key in {"result_text", "result_summary"}:
+                        continue
                     if key in payload:
                         if key in {"result_text", "result_summary"}:
                             next_text = (payload.get(key) or "").strip()
@@ -153,6 +218,9 @@ class ClinicalTestsService:
                         item = TEST_CATALOG_BY_ID[int(catalog_id)]
                         test["title"] = item["title"]
                         test["url"] = item["url"]
+                for key in ["interactive_status", "interactive_attempt_id", "completed_at"]:
+                    if key in payload and test.get("source") == "interactive":
+                        test[key] = payload.get(key)
                 test["updated_at"] = datetime.now().isoformat()
                 ClinicalTestsService._normalize_test_record(test)
                 updated = test
@@ -354,6 +422,17 @@ class ClinicalTestsService:
 
     @staticmethod
     def _normalize_test_record(test: Dict[str, Any]) -> Dict[str, Any]:
+        source = test.get("source") or ("interactive" if test.get("interactive_test_id") else "manual")
+        test["source"] = source
+        if source == "interactive":
+            test["catalog_id"] = None
+            test["url"] = ""
+            test["interactive_test_id"] = int(test.get("interactive_test_id") or 0) or None
+            test.setdefault("interactive_status", "ASSIGNED")
+            test.setdefault("interactive_attempt_id", None)
+            test.setdefault("assigned_to_user_id", None)
+            test.setdefault("assigned_by_user_id", None)
+            test.setdefault("completed_at", None)
         attachments = test.get("attachments", [])
         if not isinstance(attachments, list):
             attachments = []
@@ -387,6 +466,31 @@ class ClinicalTestsService:
         return test
 
     @staticmethod
+    def update_interactive_assignment_from_attempt(patient, attempt, creator=None) -> Optional[Dict[str, Any]]:
+        clinical_test_id = getattr(attempt, "clinical_test_id", "") or ""
+        if not clinical_test_id:
+            return None
+        tests = ClinicalTestsService.get_tests(patient, doctor_id=attempt.doctor_id, case_id=attempt.case_id or None)
+        updated = None
+        for test in tests:
+            if test.get("id") != clinical_test_id:
+                continue
+            test["source"] = "interactive"
+            test["interactive_attempt_id"] = str(attempt.id)
+            test["interactive_status"] = attempt.status
+            test["completed_at"] = attempt.completed_at.isoformat() if attempt.completed_at else None
+            test["result_text"] = ClinicalTestsService.summarize_interactive_attempt(attempt)
+            test["result_summary"] = test["result_text"]
+            test["updated_at"] = datetime.now().isoformat()
+            ClinicalTestsService._normalize_test_record(test)
+            updated = test
+            break
+        if updated is None:
+            return None
+        ClinicalTestsService.save_tests(patient, tests, creator=creator or patient, doctor_id=attempt.doctor_id, case_id=attempt.case_id or None)
+        return updated
+
+    @staticmethod
     def read_test_result_bundle(patient, test_id: str, doctor_id=None, case_id=None) -> Optional[Dict[str, Any]]:
         test = ClinicalTestsService.get_test(patient, test_id, doctor_id=doctor_id, case_id=case_id)
         if not test:
@@ -394,15 +498,28 @@ class ClinicalTestsService:
         attachments = []
         for attachment in test.get("attachments", []) or []:
             attachments.append(ClinicalTestsService.read_test_attachment_bundle(attachment))
-        return {
+        payload = {
             "id": test.get("id"),
             "title": test.get("title"),
             "url": test.get("url"),
             "catalog_id": test.get("catalog_id"),
+            "source": test.get("source"),
+            "interactive_test_id": test.get("interactive_test_id"),
+            "interactive_status": test.get("interactive_status"),
+            "interactive_attempt_id": test.get("interactive_attempt_id"),
+            "completed_at": test.get("completed_at"),
             "result_text": test.get("result_text", ""),
             "case_id": test.get("case_id"),
             "attachments": attachments,
         }
+        if test.get("source") == "interactive":
+            attempt = ClinicalTestsService.get_interactive_attempt(patient, test.get("id") or "")
+            payload["interactive_result"] = {
+                "status": getattr(attempt, "status", test.get("interactive_status")) if attempt else test.get("interactive_status"),
+                "json": getattr(attempt, "result_json", {}) if attempt else {},
+                "grading": getattr(attempt, "grading_json", {}) if attempt else {},
+            }
+        return payload
 
     @staticmethod
     def read_test_attachment_bundle(attachment: Dict[str, Any]) -> Dict[str, Any]:

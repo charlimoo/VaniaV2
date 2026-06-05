@@ -492,6 +492,136 @@ class PageTutorial(models.Model):
         return f"{self.title} ({self.normalized_path}, {mode})"
 
 
+class EsanjTestAccessRule(models.Model):
+    """
+    Local allowlist for Esanj tests.
+    The upstream API owns questionnaire/result logic; Vania owns who can see/use each test.
+    """
+
+    esanj_test_id = models.PositiveIntegerField(unique=True, db_index=True)
+    title = models.CharField(max_length=255)
+    title_employee = models.CharField(max_length=255, blank=True)
+    base_price = models.PositiveIntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True, help_text="Visible to eligible users when enabled.")
+    allow_visitors = models.BooleanField(default=True)
+    allow_experts = models.BooleanField(default=True)
+    eligible_expert_professions = models.ManyToManyField(
+        "users.ExpertProfession",
+        blank=True,
+        related_name="esanj_test_rules",
+        help_text="Leave empty to allow every expert subtype when experts are enabled.",
+    )
+    notes = models.TextField(blank=True, help_text="Internal admin notes.")
+    upstream_payload = models.JSONField(default=dict, blank=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["esanj_test_id"]
+        verbose_name = "Esanj Test Access Rule"
+        verbose_name_plural = "Esanj Test Access Rules"
+        indexes = [
+            models.Index(fields=["is_active", "allow_visitors"]),
+            models.Index(fields=["is_active", "allow_experts"]),
+        ]
+
+    def __str__(self):
+        status = "active" if self.is_active else "inactive"
+        return f"{self.esanj_test_id} - {self.title} ({status})"
+
+
+class EsanjUserProfile(models.Model):
+    """
+    Optional upstream employee mapping for Vania users.
+    Vania keeps its own history, but employee_id helps Esanj connect remote status/results.
+    """
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="esanj_profile",
+    )
+    employee_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    employee_username = models.CharField(max_length=100, blank=True, db_index=True)
+    upstream_payload = models.JSONField(default=dict, blank=True)
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Esanj User Profile"
+        verbose_name_plural = "Esanj User Profiles"
+
+    def __str__(self):
+        return f"{self.user} -> {self.employee_id or 'not synced'}"
+
+
+class EsanjTestAttempt(models.Model):
+    class Status(models.TextChoices):
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        COMPLETED = "COMPLETED", "Completed"
+        FAILED = "FAILED", "Failed"
+
+    class Sex(models.TextChoices):
+        MALE = "male", "Male"
+        FEMALE = "female", "Female"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="esanj_test_attempts",
+    )
+    access_rule = models.ForeignKey(
+        EsanjTestAccessRule,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="attempts",
+    )
+    clinical_test_id = models.CharField(max_length=64, blank=True, db_index=True)
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_esanj_test_attempts",
+    )
+    doctor_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    case_id = models.CharField(max_length=64, blank=True, db_index=True)
+    esanj_test_id = models.PositiveIntegerField(db_index=True)
+    test_title = models.CharField(max_length=255)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.IN_PROGRESS)
+    age = models.PositiveSmallIntegerField()
+    sex = models.CharField(max_length=10, choices=Sex.choices)
+    employee_id = models.PositiveIntegerField(null=True, blank=True)
+    questionnaire = models.JSONField(default=dict, blank=True)
+    answers = models.JSONField(default=dict, blank=True)
+    result_json = models.JSONField(default=dict, blank=True)
+    grading_json = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True)
+    started_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-started_at"]
+        indexes = [
+            models.Index(fields=["user", "-started_at"]),
+            models.Index(fields=["user", "status"]),
+            models.Index(fields=["user", "clinical_test_id"]),
+            models.Index(fields=["esanj_test_id", "status"]),
+        ]
+        verbose_name = "Esanj Test Attempt"
+        verbose_name_plural = "Esanj Test Attempts"
+
+    def __str__(self):
+        return f"{self.test_title} - {self.user} ({self.status})"
+
+
 class CaseContextEntry(UserContextEntry):
     class Meta:
         proxy = True

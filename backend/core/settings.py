@@ -318,6 +318,12 @@ API_DOMAIN = os.getenv("API_DOMAIN", "http://localhost:8000")
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 APP_URL = os.getenv("APP_URL", FRONTEND_URL)
 
+# Esanj testing API
+ESANJ_API_BASE_URL = os.getenv("ESANJ_API_BASE_URL", "https://esanj.org/api/v1").rstrip("/")
+ESANJ_API_USERNAME = os.getenv("ESANJ_API_USERNAME", "")
+ESANJ_API_PASSWORD = os.getenv("ESANJ_API_PASSWORD", "")
+ESANJ_API_TIMEOUT_SECONDS = int(os.getenv("ESANJ_API_TIMEOUT_SECONDS", "30"))
+
 # SMS Providers
 SMS_SERVICE_MODE = os.getenv("SMS_SERVICE_MODE", "CONSOLE")
 SMSIR_API_KEY = os.getenv("SMSIR_API_KEY")

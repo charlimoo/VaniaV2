@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import { DynamicForm } from "@/components/tool-ui/form/dynamic-form";
-import { FormDefinition, ClinicalTestAttachment, ClinicalTestCatalogItem, ClinicalTestEntry, TestMode } from "@/lib/types/vania";
+import { FormDefinition, ClinicalTestAttachment, ClinicalTestCatalogItem, ClinicalTestEntry, InteractiveTestCatalogItem, TestMode } from "@/lib/types/vania";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
@@ -37,6 +37,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
+import { InteractiveTestResultView } from "../shared/InteractiveTestResultView";
 interface Props {
   forms: any[];
   tests: ClinicalTestEntry[];
@@ -69,9 +70,18 @@ const formatFileSize = (size: number) => {
   return `${Math.max(1, Math.round(size / 1024))} KB`;
 };
 
+const interactiveStatusLabel = (status?: ClinicalTestEntry["interactive_status"]) => {
+  if (status === "COMPLETED") return "تکمیل شده";
+  if (status === "IN_PROGRESS" || status === "SUBMITTED") return "در حال انجام";
+  if (status === "FAILED") return "نیازمند تلاش دوباره";
+  return "در انتظار انجام";
+};
+
 interface TestDraft {
   id?: string;
+  source?: "manual" | "interactive";
   catalog_id?: number | null;
+  interactive_test_id?: number | null;
   title: string;
   url: string;
   result_summary: string;
@@ -120,7 +130,9 @@ export function FormsTab({
   const [testSaving, setTestSaving] = useState(false);
   const [testUploading, setTestUploading] = useState(false);
   const [testPickerOpen, setTestPickerOpen] = useState(false);
-  const [testDraft, setTestDraft] = useState<TestDraft>({ title: "", url: "", result_summary: "", catalog_id: null });
+  const [testDraft, setTestDraft] = useState<TestDraft>({ source: "manual", title: "", url: "", result_summary: "", catalog_id: null, interactive_test_id: null });
+  const [interactiveCatalog, setInteractiveCatalog] = useState<InteractiveTestCatalogItem[]>([]);
+  const [interactiveCatalogLoading, setInteractiveCatalogLoading] = useState(false);
   const [testMarkedDone, setTestMarkedDone] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [selectedFilePreviews, setSelectedFilePreviews] = useState<Record<string, string>>({});
@@ -130,6 +142,34 @@ export function FormsTab({
   useEffect(() => {
     onEditRef.current = onEdit;
   }, [onEdit]);
+
+  useEffect(() => {
+    if (readOnly || testMode !== "full_catalog") return;
+    let ignore = false;
+
+    const loadInteractiveCatalog = async () => {
+      setInteractiveCatalogLoading(true);
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/vania/esanj/tests/`, {
+          method: "GET",
+          headers: { ...getAuthHeaders() },
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        if (!ignore && Array.isArray(body?.tests)) {
+          setInteractiveCatalog(body.tests);
+        }
+      } catch {
+      } finally {
+        if (!ignore) setInteractiveCatalogLoading(false);
+      }
+    };
+
+    loadInteractiveCatalog();
+    return () => {
+      ignore = true;
+    };
+  }, [readOnly, testMode]);
 
   const catalogMap = useMemo(() => {
     const m = new Map<number, ClinicalTestCatalogItem>();
@@ -145,6 +185,15 @@ export function FormsTab({
       `${item.id} ${item.title} ${item.url}`.toLowerCase().includes(q)
     );
   }, [testsCatalog, testDraft.title, testMode]);
+
+  const filteredInteractiveCatalog = useMemo(() => {
+    if (testMode !== "full_catalog") return [];
+    const q = testDraft.title.trim().toLowerCase();
+    if (!q) return interactiveCatalog || [];
+    return (interactiveCatalog || []).filter((item) =>
+      `${item.esanj_test_id} ${item.title} ${item.title_employee || ""}`.toLowerCase().includes(q)
+    );
+  }, [interactiveCatalog, testDraft.title, testMode]);
 
   const filteredForms = useMemo(() => {
     const q = formSearch.trim().toLowerCase();
@@ -225,7 +274,7 @@ export function FormsTab({
 
   const openNewTestModal = () => {
     setSelectedFiles([]);
-    setTestDraft({ title: "", url: "", result_summary: "", catalog_id: null });
+    setTestDraft({ source: "manual", title: "", url: "", result_summary: "", catalog_id: null, interactive_test_id: null });
     setTestMarkedDone(false);
     setTestModalOpen(true);
   };
@@ -234,7 +283,9 @@ export function FormsTab({
     setSelectedFiles([]);
     setTestDraft({
       id: test.id,
+      source: test.source === "interactive" ? "interactive" : "manual",
       catalog_id: test.catalog_id || null,
+      interactive_test_id: test.interactive_test_id || null,
       title: test.title || "",
       url: test.url || "",
       result_summary: test.result_text || test.result_summary || "",
@@ -247,17 +298,32 @@ export function FormsTab({
     const id = Number(value);
     const item = catalogMap.get(id);
     if (!item) return;
-    setTestDraft((prev) => ({ ...prev, catalog_id: id, title: item.title, url: item.url }));
+    setTestDraft((prev) => ({ ...prev, source: "manual", catalog_id: id, interactive_test_id: null, title: item.title, url: item.url }));
+    setTestPickerOpen(false);
+  };
+
+  const handleInteractiveCatalogChange = (test: InteractiveTestCatalogItem) => {
+    setTestDraft((prev) => ({
+      ...prev,
+      source: "interactive",
+      catalog_id: null,
+      interactive_test_id: test.esanj_test_id,
+      title: test.title,
+      url: "",
+      result_summary: "",
+    }));
+    setTestMarkedDone(false);
+    setSelectedFiles([]);
     setTestPickerOpen(false);
   };
 
   const handleTestTitleChange = (value: string) => {
-    setTestDraft((prev) => ({ ...prev, title: value, catalog_id: null, url: "" }));
+    setTestDraft((prev) => ({ ...prev, title: value, catalog_id: null, interactive_test_id: null, source: prev.source === "interactive" ? "interactive" : "manual", url: "" }));
     setTestPickerOpen(testMode === "full_catalog" && !!value.trim());
   };
 
   const clearLinkedCatalog = () => {
-    setTestDraft((prev) => ({ ...prev, catalog_id: null, url: "" }));
+    setTestDraft((prev) => ({ ...prev, source: "manual", catalog_id: null, interactive_test_id: null, url: "" }));
   };
 
   const addSelectedFiles = (incomingFiles: File[]) => {
@@ -293,9 +359,14 @@ export function FormsTab({
       toast.error("عنوان تست الزامی است.");
       return;
     }
+    const isInteractive = testDraft.source === "interactive";
+    if (isInteractive && !testDraft.interactive_test_id) {
+      toast.error("یک تست تعاملی را انتخاب کنید.");
+      return;
+    }
 
     const isEditMode = !!testDraft.id;
-    const shouldSaveResult = isEditMode || testMarkedDone;
+    const shouldSaveResult = !isInteractive && (isEditMode || testMarkedDone);
     const resultSummary = shouldSaveResult ? testDraft.result_summary : "";
 
     setTestSaving(true);
@@ -310,9 +381,11 @@ export function FormsTab({
           body: JSON.stringify({
             patient_id: patientId,
             case_id: caseId,
-            catalog_id: testMode === "full_catalog" ? testDraft.catalog_id || undefined : undefined,
+            source: isInteractive ? "interactive" : "manual",
+            catalog_id: !isInteractive && testMode === "full_catalog" ? testDraft.catalog_id || undefined : undefined,
+            interactive_test_id: isInteractive ? testDraft.interactive_test_id : undefined,
             title: testDraft.title,
-            url: testMode === "full_catalog" ? testDraft.url : "",
+            url: !isInteractive && testMode === "full_catalog" ? testDraft.url : "",
             result_text: resultSummary,
             result_summary: resultSummary,
           }),
@@ -321,7 +394,7 @@ export function FormsTab({
         const created = await res.json();
         testId = created.id;
         updatedTests = [created, ...updatedTests];
-      } else {
+      } else if (!isInteractive) {
         const res = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/`, {
           method: "PUT",
           headers: { "Content-Type": "application/json", ...getAuthHeaders() },
@@ -340,7 +413,7 @@ export function FormsTab({
         updatedTests = updatedTests.map((t) => (t.id === testId ? updated : t));
       }
 
-      if ((testDraft.id || testMarkedDone) && selectedFiles.length > 0 && testId) {
+      if (!isInteractive && (testDraft.id || testMarkedDone) && selectedFiles.length > 0 && testId) {
         setTestUploading(true);
         let latestTest = updatedTests.find((t) => t.id === testId) || null;
         for (const file of selectedFiles) {
@@ -362,7 +435,7 @@ export function FormsTab({
       }
 
       onEdit({ tests: updatedTests });
-      toast.success("تست با موفقیت ذخیره شد.");
+      toast.success(isInteractive ? "تست تعاملی با موفقیت ارجاع شد." : "تست با موفقیت ذخیره شد.");
       setTestModalOpen(false);
     } catch (e: any) {
       setTestUploading(false);
@@ -501,23 +574,24 @@ export function FormsTab({
       <section className="rounded-2xl border border-border/60 bg-background/70 p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold flex items-center gap-2">
-            <FlaskConical className="w-4 h-4 text-primary" /> {testMode === "exams_only" ? "آزمایش ها" : "تست ها و ازمایش ها"}
+            <FlaskConical className="w-4 h-4 text-primary" /> {testMode === "exams_only" ? "آزمایش‌ها" : "تست‌ها و آزمایش‌ها"}
           </h3>
           {!readOnly ? <Button size="sm" variant="outline" className="h-8 text-xs gap-1.5" onClick={openNewTestModal}>
-            <Plus className="w-3.5 h-3.5" /> {testMode === "exams_only" ? "افزودن آزمایش" : "افزودن تست یا ازمایش"}
+            <Plus className="w-3.5 h-3.5" /> {testMode === "exams_only" ? "افزودن آزمایش" : "افزودن تست یا آزمایش"}
           </Button> : null}
         </div>
 
         {(tests?.length || 0) === 0 ? (
           <div className="text-center py-8 text-muted-foreground bg-muted/10 rounded-xl border border-dashed text-xs italic">
-            هنوز تست یا ازمایشی ثبت نشده است.
+            هنوز تست یا آزمایشی ثبت نشده است.
           </div>
         ) : (
           <div className="space-y-2">
             {tests.map((test) => {
               const attachments = getTestAttachments(test);
               const resultText = test.result_text || test.result_summary || "";
-              const hasResult = !!resultText.trim() || attachments.length > 0;
+              const isInteractive = test.source === "interactive";
+              const hasResult = isInteractive ? test.interactive_status === "COMPLETED" : !!resultText.trim() || attachments.length > 0;
 
               return (
                 <div
@@ -531,12 +605,13 @@ export function FormsTab({
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-semibold">{test.title}</span>
+                      {isInteractive ? <Badge variant="secondary" className="text-[10px]">تست تعاملی</Badge> : null}
                       {test.url ? <Badge variant="outline" className="text-[10px]">لینک</Badge> : null}
                       {attachments.length > 0 ? <Badge variant="outline" className="text-[10px]">{attachments.length} فایل</Badge> : null}
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                       <Badge variant={hasResult ? "outline" : "secondary"} className="text-[10px]">
-                        {hasResult ? "تکمیل شده" : "در انتظار تکمیل"}
+                        {isInteractive ? interactiveStatusLabel(test.interactive_status) : hasResult ? "تکمیل شده" : "در انتظار تکمیل"}
                       </Badge>
                       <span>{toJalali(test.created_at || "")}</span>
                     </div>
@@ -683,28 +758,52 @@ export function FormsTab({
       <Dialog open={testModalOpen} onOpenChange={setTestModalOpen}>
         <DialogContent dir="rtl" className="flex max-h-[85vh] w-[calc(100vw-2rem)] max-w-xl flex-col overflow-hidden">
           <DialogHeader className="text-right">
-            <DialogTitle>{testDraft.id ? (testMode === "exams_only" ? "ویرایش آزمایش" : "ویرایش تست یا ازمایش") : (testMode === "exams_only" ? "افزودن آزمایش" : "افزودن تست یا ازمایش")}</DialogTitle>
+            <DialogTitle>{testDraft.source === "interactive" ? "تست تعاملی" : testDraft.id ? (testMode === "exams_only" ? "ویرایش آزمایش" : "ویرایش تست یا آزمایش") : (testMode === "exams_only" ? "افزودن آزمایش" : "افزودن تست یا آزمایش")}</DialogTitle>
             <DialogDescription>
-              {testMode === "exams_only"
-                ? "عنوان را وارد کنید."
-                : "عنوان را وارد کنید."}
+              {testDraft.source === "interactive" ? "انتخاب و ارجاع به مراجع." : "عنوان و نتیجه را ثبت کنید."}
             </DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 space-y-4 overflow-y-auto pr-1">
+            {testMode === "full_catalog" && !testDraft.id ? (
+              <div className="grid grid-cols-2 gap-2 rounded-xl border border-border/60 bg-muted/10 p-1">
+                <Button
+                  type="button"
+                  variant={testDraft.source === "manual" ? "secondary" : "ghost"}
+                  className="h-9 text-xs"
+                  onClick={() => setTestDraft((prev) => ({ ...prev, source: "manual", interactive_test_id: null }))}
+                >
+                  ثبت دستی
+                </Button>
+                <Button
+                  type="button"
+                  variant={testDraft.source === "interactive" ? "secondary" : "ghost"}
+                  className="h-9 text-xs"
+                  onClick={() => {
+                    setTestDraft({ source: "interactive", title: "", url: "", result_summary: "", catalog_id: null, interactive_test_id: null });
+                    setTestMarkedDone(false);
+                    setSelectedFiles([]);
+                  }}
+                >
+                  تست تعاملی
+                </Button>
+              </div>
+            ) : null}
+
             <div className="grid gap-1.5">
-              <Label className="text-xs">{testMode === "exams_only" ? "عنوان آزمایش" : "عنوان تست یا ازمایش"}</Label>
+              <Label className="text-xs">{testDraft.source === "interactive" ? "انتخاب تست تعاملی" : testMode === "exams_only" ? "عنوان آزمایش" : "عنوان تست یا آزمایش"}</Label>
               <div className="space-y-2">
-                <Popover open={testMode === "full_catalog" && testPickerOpen && !!testDraft.title.trim() && filteredTestsCatalog.length > 0} onOpenChange={setTestPickerOpen}>
+                <Popover open={testMode === "full_catalog" && testPickerOpen && !!testDraft.title.trim() && (filteredTestsCatalog.length > 0 || filteredInteractiveCatalog.length > 0)} onOpenChange={setTestPickerOpen}>
                   <PopoverAnchor asChild>
                     <div className="relative">
                       <Input
                         value={testDraft.title}
                         onChange={(e) => handleTestTitleChange(e.target.value)}
-                        placeholder={testMode === "exams_only" ? "نام آزمایش را وارد کنید" : "نام تست یا ازمایش را جستجو یا وارد کنید"}
+                        readOnly={!!testDraft.id && testDraft.source === "interactive"}
+                        placeholder={testDraft.source === "interactive" ? "نام تست تعاملی را جستجو کنید" : testMode === "exams_only" ? "نام آزمایش را وارد کنید" : "نام تست یا آزمایش را جستجو یا وارد کنید"}
                         onFocus={() => {
-                          if (testMode === "full_catalog") {
-                            setTestPickerOpen(!!testDraft.title.trim() && filteredTestsCatalog.length > 0);
+                          if (testMode === "full_catalog" && !testDraft.id) {
+                            setTestPickerOpen(!!testDraft.title.trim() && (filteredTestsCatalog.length > 0 || filteredInteractiveCatalog.length > 0));
                           }
                         }}
                       />
@@ -716,9 +815,19 @@ export function FormsTab({
                     onOpenAutoFocus={(event) => event.preventDefault()}
                     className="w-[var(--radix-popover-trigger-width)] rounded-xl p-2"
                   >
-                    <div className="mb-1 px-1 text-[10px] text-muted-foreground">نتایج مشابه</div>
+                  <div className="mb-1 px-1 text-[10px] text-muted-foreground">انتخاب سریع</div>
                     <div className="grid gap-1">
-                      {filteredTestsCatalog.slice(0, 6).map((item) => (
+                      {testDraft.source === "interactive" ? filteredInteractiveCatalog.slice(0, 8).map((item) => (
+                        <button
+                          key={item.esanj_test_id}
+                          type="button"
+                          onClick={() => handleInteractiveCatalogChange(item)}
+                          className="rounded-lg px-3 py-2 text-right text-xs transition hover:bg-muted"
+                        >
+                          <div className="font-medium">{item.title}</div>
+                          <div className="mt-0.5 text-[10px] text-muted-foreground">تست تعاملی</div>
+                        </button>
+                      )) : filteredTestsCatalog.slice(0, 6).map((item) => (
                         <button
                           key={item.id}
                           type="button"
@@ -732,7 +841,20 @@ export function FormsTab({
                   </PopoverContent>
                 </Popover>
 
-                {testMode === "full_catalog" && testDraft.catalog_id ? (
+                {testDraft.source === "interactive" && testDraft.interactive_test_id ? (
+                  <div className="flex items-center justify-between gap-2 rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 text-xs text-sky-950">
+                    <div className="min-w-0">
+                      <div className="font-medium">انتخاب شد</div>
+                      <div className="truncate text-[11px] opacity-80">{testDraft.title}</div>
+                    </div>
+                    {!testDraft.id ? (
+                      <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={clearLinkedCatalog}>
+                        <X className="h-3.5 w-3.5" />
+                        حذف اتصال
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : testMode === "full_catalog" && testDraft.catalog_id ? (
                   <div className="flex items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-900">
                     <div className="min-w-0">
                       <div className="font-medium">تست انتخاب شده از فهرست</div>
@@ -745,13 +867,50 @@ export function FormsTab({
                   </div>
                 ) : testMode === "full_catalog" ? (
                   <div className="text-[10px] text-muted-foreground">
-                    می‌توانید عنوان را آزادانه وارد کنید یا یکی از موارد مشابه را انتخاب کنید.
+                    {testDraft.source === "interactive"
+                      ? interactiveCatalogLoading ? "در حال بارگذاری..." : "نام تست را جستجو کنید."
+                      : "می‌توانید عنوان را آزادانه وارد کنید یا یکی از موارد مشابه را انتخاب کنید."}
+                  </div>
+                ) : null}
+
+                {testDraft.source === "interactive" && !testDraft.interactive_test_id ? (
+                  <div className="max-h-52 overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-1">
+                    {filteredInteractiveCatalog.length > 0 ? (
+                      filteredInteractiveCatalog.slice(0, 10).map((item) => (
+                        <button
+                          key={item.esanj_test_id}
+                          type="button"
+                          onClick={() => handleInteractiveCatalogChange(item)}
+                          className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-right text-xs transition hover:bg-background"
+                        >
+                          <span className="min-w-0 truncate font-medium">{item.title}</span>
+                          <Badge variant="outline" className="shrink-0 text-[10px] font-normal">تعاملی</Badge>
+                        </button>
+                      ))
+                    ) : (
+                      <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                        تستی پیدا نشد.
+                      </div>
+                    )}
                   </div>
                 ) : null}
               </div>
             </div>
 
-            {!testDraft.id ? (
+            {testDraft.source === "interactive" && testDraft.id ? (
+              <div className="space-y-3 rounded-xl border border-border/60 bg-muted/10 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium">وضعیت تست</span>
+                  <Badge variant="secondary" className="text-[10px]">{interactiveStatusLabel((tests || []).find((item) => item.id === testDraft.id)?.interactive_status)}</Badge>
+                </div>
+                <InteractiveTestResultView
+                  rawText={testDraft.result_summary}
+                  emptyText="پس از تکمیل مراجع، نتیجه اینجا نمایش داده می‌شود."
+                />
+              </div>
+            ) : null}
+
+            {!testDraft.id && testDraft.source !== "interactive" ? (
               <div className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/10 px-3 py-3">
                 <div className="space-y-1">
                   <div className="text-sm font-medium text-foreground">انجام شده</div>
@@ -761,7 +920,7 @@ export function FormsTab({
               </div>
             ) : null}
 
-            {(testDraft.id || testMarkedDone) ? (
+            {testDraft.source !== "interactive" && (testDraft.id || testMarkedDone) ? (
               <>
                 <div className="grid gap-1.5">
                   <Label className="text-xs">متن نتیجه</Label>
@@ -923,12 +1082,14 @@ export function FormsTab({
             ) : null}
           </div>
 
-          <DialogFooter className="border-t border-border/60 pt-4">
-            <Button onClick={upsertTest} disabled={readOnly || testSaving || testUploading} className="w-full gap-2 sm:w-auto">
-              {testSaving || testUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              {testUploading ? "در حال آپلود فایل..." : testMode === "exams_only" ? "ذخیره آزمایش" : "ذخیره تست"}
-            </Button>
-          </DialogFooter>
+          {!(testDraft.id && testDraft.source === "interactive") ? (
+            <DialogFooter className="border-t border-border/60 pt-4">
+              <Button onClick={upsertTest} disabled={readOnly || testSaving || testUploading} className="w-full gap-2 sm:w-auto">
+                {testSaving || testUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                {testUploading ? "در حال آپلود فایل..." : testDraft.source === "interactive" ? "ارجاع تست تعاملی" : testMode === "exams_only" ? "ذخیره آزمایش" : "ذخیره تست"}
+              </Button>
+            </DialogFooter>
+          ) : null}
         </DialogContent>
       </Dialog>
     </div>
