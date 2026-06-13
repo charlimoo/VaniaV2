@@ -15,7 +15,7 @@ export function RoleGuard({ children, allowedRoles }: RoleGuardProps) {
   const { user, loading } = useUser();
   const router = useRouter();
   const normalizedAllowedRoles = allowedRoles.map((r) => normalizeRoleSlug(r) || r);
-  const normalizedUserRole = normalizeRoleSlug(user?.role_slug);
+  const normalizedUserRole = normalizeRoleSlug(user?.role_slug) || normalizeRoleSlug(user?.role);
 
   useEffect(() => {
     if (!loading) {

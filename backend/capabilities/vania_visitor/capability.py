@@ -95,6 +95,7 @@ class VaniaVisitorCapability(BaseCapability):
 - Case-scoped actions use the selected case.
 - Test results can contain written notes, attached PDF/image files, or structured results from an interactive test.
 - When you need to inspect the actual contents of a saved test result, use `get_my_test_result_details`.
+- Direct Esanj tests taken from the tests page are account-owned and may exist even when there are zero cases. For any user request about "my tests", check case tests if a case exists, and always check direct attempts with `list_my_interactive_tests` before saying no tests are available. Use `get_my_interactive_test_result` to read a saved direct result.
 - When you want one specific attachment inside a test, such as "the PDF", "the image", or a filename, use `get_my_test_attachment_details` with that attachment's id.
 - If you want to inspect, reopen, retry, or check a test attachment again, call `get_my_test_result_details` again for that test.
 - Do not say you lack a file/PDF-reading tool for test attachments when `get_my_test_result_details` is available. If an attachment is not loadable, say that specific attachment could not be loaded from storage.
@@ -117,6 +118,7 @@ Before deciding what to do, ground yourself in the current workspace state.
 
 3. Read before acting when the latest saved state matters.
 - Before answering about tests, files, tasks, medications, or case summary content, check the relevant case state first if there is any ambiguity.
+- If the user asks about tests/results and `get_my_cases` returns no active case or no cases, do not stop there. Call `list_my_interactive_tests` before answering. If the user asks about Esanj tests they filled themselves and no matching case test is present, check direct interactive attempts with `list_my_interactive_tests`.
 - If the user points to a specific saved test or file, inspect that item with the correct tool before describing it.
 
 4. Do not say you cannot do something until after preflight.

@@ -21,7 +21,7 @@ from users.models import CustomUser
 from agents.storage import get_storage, get_session_safe
 from vania_core.case_service import CaseService
 from vania_core.medication_service import MedicationService
-from vania_core.models import Notification, TreatmentConnection
+from vania_core.models import EsanjTestAttempt, Notification, TreatmentConnection
 from vania_core.patient_service import PatientDataService
 from vania_core.profession_policy import get_profession_policy, is_tool_family_allowed
 from vania_core.profile_snapshots import get_expert_profile_payload, get_visitor_base_profile_payload
@@ -44,6 +44,8 @@ TOOL_FAMILY_BY_NAME = {
     "get_current_medications": "medications",
     "get_my_test_result_details": "tests",
     "get_my_test_attachment_details": "tests",
+    "list_my_interactive_tests": "tests",
+    "get_my_interactive_test_result": "tests",
     "update_my_test_result": "tests",
     "manage_case_share": "case_management",
     "list_case_share_options": "case_management",
@@ -51,6 +53,11 @@ TOOL_FAMILY_BY_NAME = {
     "search_case_files": "files",
     "read_case_file": "files",
     "get_case_file_details": "files",
+}
+
+DIRECT_ACCOUNT_TEST_TOOL_NAMES = {
+    "list_my_interactive_tests",
+    "get_my_interactive_test_result",
 }
 
 
@@ -244,6 +251,24 @@ async def _notify_doctor(patient: CustomUser, title: str, message: str, doctor_i
                 payload={"url": "/dashboard/patients"},
             )
     await send()
+
+
+def _compact_interactive_attempt(attempt: EsanjTestAttempt) -> dict:
+    return {
+        "id": str(attempt.id),
+        "title": attempt.test_title,
+        "esanj_test_id": attempt.esanj_test_id,
+        "status": attempt.status,
+        "result_available": bool(attempt.result_json or attempt.grading_json),
+        "is_case_scoped": bool(attempt.clinical_test_id),
+        "clinical_test_id": attempt.clinical_test_id or "",
+        "case_id": attempt.case_id or "",
+        "doctor_id": attempt.doctor_id,
+        "started_at": attempt.started_at.isoformat() if attempt.started_at else None,
+        "submitted_at": attempt.submitted_at.isoformat() if attempt.submitted_at else None,
+        "completed_at": attempt.completed_at.isoformat() if attempt.completed_at else None,
+        "error_message": attempt.error_message or "",
+    }
 
 
 @tool
@@ -494,6 +519,57 @@ async def get_my_test_attachment_details(run_context: RunContext, test_id: str, 
 
 
 @tool
+async def list_my_interactive_tests(run_context: RunContext, limit: int = 10) -> AsyncGenerator[Any, None]:
+    """
+    List Esanj interactive test attempts owned by the current visitor account.
+
+    This includes direct tests taken from the tests page, even when they are not attached to a doctor case.
+    Use `get_my_interactive_test_result` with the returned attempt id to read the saved result.
+    """
+    patient = await _get_active_patient(run_context)
+    safe_limit = max(1, min(int(limit or 10), 25))
+
+    def load_attempts():
+        return list(
+            EsanjTestAttempt.objects.filter(user=patient)
+            .order_by("-started_at")[:safe_limit]
+        )
+
+    attempts = await sync_to_async(load_attempts)()
+    payload = {
+        "count": len(attempts),
+        "attempts": [_compact_interactive_attempt(attempt) for attempt in attempts],
+    }
+    yield json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+@tool
+async def get_my_interactive_test_result(run_context: RunContext, attempt_id: str) -> ToolResult | str:
+    """
+    Read one Esanj interactive test attempt owned by the current visitor account.
+
+    Use this for direct tests from the tests page or when a case-scoped test result references an
+    interactive attempt id.
+    """
+    patient = await _get_active_patient(run_context)
+    attempt = await sync_to_async(
+        lambda: EsanjTestAttempt.objects.filter(id=attempt_id, user=patient).first()
+    )()
+    if not attempt:
+        return "❌ Interactive test attempt not found."
+    payload = {
+        **_compact_interactive_attempt(attempt),
+        "age": attempt.age,
+        "sex": attempt.sex,
+        "answers": attempt.answers or {},
+        "result_json": attempt.result_json or {},
+        "grading_json": attempt.grading_json or {},
+        "questionnaire": attempt.questionnaire or {},
+    }
+    return ToolResult(content=json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+@tool
 async def update_my_test_result(
     run_context: RunContext,
     test_id: str,
@@ -709,6 +785,8 @@ class VaniaVisitorToolFactory(BaseCapability):
             get_current_medications,
             get_my_test_result_details,
             get_my_test_attachment_details,
+            list_my_interactive_tests,
+            get_my_interactive_test_result,
             update_my_test_result,
             list_case_share_options,
             manage_case_share,
@@ -726,5 +804,6 @@ class VaniaVisitorToolFactory(BaseCapability):
         return [
             item
             for item in tools
-            if is_tool_family_allowed(policy, TOOL_FAMILY_BY_NAME.get(_resolve_tool_name(item), "profiles"))
+            if _resolve_tool_name(item) in DIRECT_ACCOUNT_TEST_TOOL_NAMES
+            or is_tool_family_allowed(policy, TOOL_FAMILY_BY_NAME.get(_resolve_tool_name(item), "profiles"))
         ]

@@ -6,18 +6,30 @@ from unittest.mock import patch
 from asgiref.sync import async_to_sync
 from django.core.cache import cache
 from django.test import TestCase
+from django.urls import resolve
 from rest_framework.test import APIClient
 from agno.run import RunContext
 
+from agents.factory import _resolve_active_capabilities
 from agents.context import resource_context, selected_case_context
-from capabilities.vania_expert.tools import get_test_result_details, manage_clinical_tests
-from capabilities.vania_visitor.tools import get_my_test_result_details, update_my_test_result
+from capabilities.vania_expert.capability import VaniaExpertCapability
+from capabilities.vania_expert.tools import get_test_result_details, manage_clinical_tests, update_forms_tests_analysis
+from capabilities.vania_visitor.capability import VaniaVisitorCapability
+from capabilities.vania_visitor.tools import (
+    get_my_interactive_test_result,
+    get_my_test_result_details,
+    list_my_interactive_tests,
+    update_my_test_result,
+    VaniaVisitorToolFactory,
+)
 from billing.models import BillingConfig, Invoice
+from services.models_canvas import CanvasInstance, CanvasType
 from users.models import CustomUser, ExpertProfession, UserRole
-from vania_core.esanj_client import EsanjConfigurationError
-from vania_core.esanj_views import sync_esanj_test_bank
+from vania_core.esanj_client import EsanjAPIError, EsanjConfigurationError
+from vania_core.esanj_views import ensure_esanj_employee, sync_esanj_test_bank
 from vania_core.case_service import CaseService
-from vania_core.models import EsanjTestAccessRule, EsanjTestAttempt, TreatmentConnection
+from vania_core.models import EsanjTestAccessRule, EsanjTestAttempt, EsanjUserProfile, TreatmentConnection
+from vania_core.services import ProfileService
 from vania_core.tests_service import ClinicalTestsService
 
 
@@ -85,6 +97,12 @@ class EsanjIntegrationTests(TestCase):
                 },
             ],
         }
+
+    def test_submit_attempt_url_is_registered(self):
+        match = resolve("/api/vania/esanj/attempts/714bba4d-7d32-4649-ac3d-d5c42e78743a/submit/")
+
+        self.assertEqual(match.url_name, "esanj-attempt-submit")
+        self.assertEqual(str(match.kwargs["attempt_id"]), "714bba4d-7d32-4649-ac3d-d5c42e78743a")
 
     def test_catalog_applies_role_and_profession_access(self):
         visitor_rule = self._rule(11, "آزمون عمومی", allow_visitors=True, allow_experts=False)
@@ -177,7 +195,7 @@ class EsanjIntegrationTests(TestCase):
 
             start = self.client.post(
                 "/api/vania/esanj/attempts/",
-                {"test_id": 11, "age": 31, "sex": "female"},
+                {"test_id": 11, "age": 31, "sex": "female", "delivery_mode": "json"},
                 format="json",
             )
             self.assertEqual(start.status_code, 201)
@@ -199,7 +217,92 @@ class EsanjIntegrationTests(TestCase):
             self.assertEqual(submit.status_code, 200)
             self.assertEqual(submit.data["status"], EsanjTestAttempt.Status.COMPLETED)
             self.assertEqual(submit.data["result"]["json"]["summary"], "نتیجه آماده است")
+            esanj.questionnaire_html.assert_called_once_with(
+                test_id=11,
+                sex="female",
+                age=31,
+                uuid=attempt_id,
+                employee_id=7001,
+            )
             esanj.submit_interpretation.assert_called_once()
+
+    def test_json_delivery_checks_esanj_inventory_before_creating_attempt(self):
+        self._rule(15, "تست بدون موجودی")
+        self.client.force_authenticate(self.visitor)
+
+        with (
+            patch("vania_core.esanj_views.EsanjClient") as client_class,
+            patch("vania_core.esanj_views.ensure_esanj_employee", return_value=SimpleNamespace(employee_id=7001)),
+        ):
+            esanj = client_class.return_value
+            esanj.questionnaire_html.side_effect = EsanjAPIError("You have no inventory", 403, {"message": "You have no inventory"})
+
+            response = self.client.post(
+                "/api/vania/esanj/attempts/",
+                {"test_id": 15, "age": 31, "sex": "female", "delivery_mode": "json"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.data["upstream_status"], 403)
+        self.assertEqual(EsanjTestAttempt.objects.count(), 0)
+        esanj.questionnaire.assert_not_called()
+
+    def test_json_delivery_is_default_for_new_attempts(self):
+        rule = self._rule(16, "تست پیش‌فرض داخلی")
+        self.client.force_authenticate(self.visitor)
+
+        with (
+            patch("vania_core.esanj_views.EsanjClient") as client_class,
+            patch("vania_core.esanj_views.ensure_esanj_employee", return_value=SimpleNamespace(employee_id=7001)),
+        ):
+            esanj = client_class.return_value
+            esanj.questionnaire.return_value = self._questionnaire()
+
+            response = self.client.post(
+                "/api/vania/esanj/attempts/",
+                {"test_id": rule.esanj_test_id, "age": 31, "sex": "female"},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["questionnaire"]["delivery_mode"], "json")
+        esanj.questionnaire_html.assert_called_once()
+        esanj.questionnaire.assert_called_once_with(rule.esanj_test_id)
+
+    def test_html_delivery_reads_hosted_result_when_requested(self):
+        rule = self._rule(19, "تست html")
+        self.client.force_authenticate(self.visitor)
+
+        with (
+            patch("vania_core.esanj_views.EsanjClient") as client_class,
+            patch("vania_core.esanj_views.ensure_esanj_employee", return_value=SimpleNamespace(employee_id=7001)),
+        ):
+            esanj = client_class.return_value
+            esanj.questionnaire_html.return_value = "<form>Hosted Esanj test</form>"
+            esanj.get_interpretation.return_value = {"summary": "نتیجه html آماده است"}
+            esanj.get_grading.return_value = {"score": 3}
+
+            start = self.client.post(
+                "/api/vania/esanj/attempts/",
+                {"test_id": rule.esanj_test_id, "age": 31, "sex": "female", "delivery_mode": "html"},
+                format="json",
+            )
+            self.assertEqual(start.status_code, 201)
+            self.assertEqual(start.data["questionnaire"]["delivery_mode"], "html")
+            self.assertIn("Hosted Esanj test", start.data["questionnaire"]["html"])
+
+            submit = self.client.post(
+                f"/api/vania/esanj/attempts/{start.data['id']}/submit/",
+                {},
+                format="json",
+            )
+            self.assertEqual(submit.status_code, 200)
+            self.assertEqual(submit.data["status"], EsanjTestAttempt.Status.COMPLETED)
+            self.assertEqual(submit.data["result"]["json"]["summary"], "نتیجه html آماده است")
+            esanj.questionnaire_html.assert_called_once()
+            esanj.get_interpretation.assert_called_once_with(start.data["id"])
+            esanj.submit_interpretation.assert_not_called()
 
     def test_starting_paid_interactive_test_creates_invoice_before_attempt(self):
         rule = self._rule(81, "تست پولی", base_price=1000)
@@ -208,7 +311,7 @@ class EsanjIntegrationTests(TestCase):
         with patch("vania_core.esanj_views.EsanjClient") as client_class:
             response = self.client.post(
                 "/api/vania/esanj/attempts/",
-                {"test_id": rule.esanj_test_id, "age": 31, "sex": "female"},
+                {"test_id": rule.esanj_test_id, "age": 31, "sex": "female", "delivery_mode": "json"},
                 format="json",
             )
 
@@ -292,13 +395,39 @@ class EsanjIntegrationTests(TestCase):
             esanj.questionnaire.return_value = self._questionnaire()
             response = self.client.post(
                 "/api/vania/esanj/attempts/",
-                {"test_id": rule.esanj_test_id, "age": 31, "sex": "female"},
+                {"test_id": rule.esanj_test_id, "age": 31, "sex": "female", "delivery_mode": "json"},
                 format="json",
             )
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["esanj_test_id"], rule.esanj_test_id)
         esanj.questionnaire.assert_called_once_with(rule.esanj_test_id)
+
+    def test_ensure_esanj_employee_links_existing_employee_by_phone(self):
+        existing_employee = {
+            "id": 125163,
+            "username": "charlie",
+            "name": "Ali",
+            "phone_number": self.visitor.phone_number,
+            "sex": "male",
+            "birth_year": 1377,
+        }
+
+        def fail_create(**kwargs):
+            raise AssertionError("Existing Esanj employee should be reused before creating a new one.")
+
+        client = SimpleNamespace(
+            find_employee=lambda username=None, employee_id=None: None,
+            list_employees=lambda: [existing_employee],
+            create_employee=fail_create,
+        )
+
+        profile = ensure_esanj_employee(self.visitor, client, age=28, sex="male")
+
+        self.assertEqual(profile.employee_id, existing_employee["id"])
+        self.assertEqual(profile.employee_username, existing_employee["username"])
+        self.assertEqual(profile.upstream_payload, existing_employee)
+        self.assertEqual(EsanjUserProfile.objects.get(user=self.visitor).employee_id, existing_employee["id"])
 
     def test_attempts_are_private_to_the_owner(self):
         rule = self._rule(11, "تست نمونه")
@@ -339,6 +468,42 @@ class EsanjIntegrationTests(TestCase):
         attempt.refresh_from_db()
         self.assertEqual(attempt.status, EsanjTestAttempt.Status.IN_PROGRESS)
         self.assertEqual(attempt.error_message, "")
+
+    def test_submit_recovers_result_when_esanj_attempt_is_already_done(self):
+        rule = self._rule(11, "already done remote test")
+        attempt = EsanjTestAttempt.objects.create(
+            user=self.visitor,
+            access_rule=rule,
+            esanj_test_id=rule.esanj_test_id,
+            test_title=rule.title,
+            status=EsanjTestAttempt.Status.FAILED,
+            age=24,
+            sex=EsanjTestAttempt.Sex.FEMALE,
+            employee_id=7001,
+            questionnaire=self._questionnaire(),
+            answers={"1": "1", "2": "0"},
+            error_message="remote 404",
+        )
+
+        self.client.force_authenticate(self.visitor)
+        with patch("vania_core.esanj_views.EsanjClient") as client_class:
+            esanj = client_class.return_value
+            esanj.submit_interpretation.side_effect = EsanjAPIError("not found", 404, {"message": "not found"})
+            esanj.status_do.return_value = [
+                {"uuid": str(attempt.id), "test_id": rule.esanj_test_id, "employee_id": 7001, "is_done": 1}
+            ]
+            esanj.get_interpretation.return_value = {"summary": "recovered result"}
+            esanj.get_grading.return_value = {"score": 2}
+
+            response = self.client.post(f"/api/vania/esanj/attempts/{attempt.id}/submit/", {}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], EsanjTestAttempt.Status.COMPLETED)
+        self.assertEqual(response.data["result"]["json"]["summary"], "recovered result")
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.status, EsanjTestAttempt.Status.COMPLETED)
+        self.assertEqual(attempt.error_message, "")
+        esanj.get_interpretation.assert_called_once_with(str(attempt.id))
 
     def test_submit_rejects_answer_values_outside_questionnaire_options(self):
         rule = self._rule(11, "تست نمونه")
@@ -401,6 +566,7 @@ class EsanjIntegrationTests(TestCase):
                     "case_id": case["id"],
                     "age": 31,
                     "sex": "female",
+                    "delivery_mode": "json",
                 },
                 format="json",
             )
@@ -432,6 +598,89 @@ class EsanjIntegrationTests(TestCase):
             case_id=case["id"],
         )
         self.assertEqual(result_bundle["interactive_result"]["json"]["summary"], "نتیجه ارجاع آماده است")
+
+    def test_expert_assigned_interactive_test_html_flow_syncs_result_to_clinical_history(self):
+        rule = self._rule(12, "تست تعاملی html", allow_visitors=False, allow_experts=True)
+        TreatmentConnection.objects.create(
+            doctor=self.expert,
+            patient=self.visitor,
+            status=TreatmentConnection.Status.ACTIVE,
+        )
+        case = CaseService.create_case(self.visitor, self.expert, title="پرونده تست html")
+
+        self.client.force_authenticate(self.expert)
+        assigned = self.client.post(
+            "/api/vania/tests/",
+            {
+                "patient_id": self.visitor.id,
+                "case_id": case["id"],
+                "source": "interactive",
+                "interactive_test_id": rule.esanj_test_id,
+            },
+            format="json",
+        )
+        self.assertEqual(assigned.status_code, 201)
+
+        self.client.force_authenticate(self.visitor)
+        with (
+            patch("vania_core.esanj_views.EsanjClient") as client_class,
+            patch("vania_core.esanj_views.ensure_esanj_employee", return_value=SimpleNamespace(employee_id=7001)),
+        ):
+            esanj = client_class.return_value
+            esanj.questionnaire_html.return_value = "<form>Hosted assigned Esanj test</form>"
+            esanj.get_interpretation.return_value = {"summary": "نتیجه html ارجاع آماده است"}
+            esanj.get_grading.return_value = {"score": 4}
+
+            start = self.client.post(
+                "/api/vania/esanj/attempts/",
+                {
+                    "clinical_test_id": assigned.data["id"],
+                    "doctor_id": self.expert.id,
+                    "case_id": case["id"],
+                    "age": 31,
+                    "sex": "female",
+                    "delivery_mode": "html",
+                },
+                format="json",
+            )
+            self.assertEqual(start.status_code, 201)
+            self.assertEqual(start.data["questionnaire"]["delivery_mode"], "html")
+            self.assertIn("Hosted assigned Esanj test", start.data["questionnaire"]["html"])
+
+            submit = self.client.post(
+                f"/api/vania/esanj/attempts/{start.data['id']}/submit/",
+                {},
+                format="json",
+            )
+
+        self.assertEqual(submit.status_code, 200)
+        self.assertEqual(submit.data["status"], EsanjTestAttempt.Status.COMPLETED)
+        esanj.questionnaire_html.assert_called_once_with(
+            test_id=rule.esanj_test_id,
+            sex="female",
+            age=31,
+            uuid=start.data["id"],
+            employee_id=7001,
+        )
+        esanj.get_interpretation.assert_called_once_with(start.data["id"])
+        esanj.submit_interpretation.assert_not_called()
+
+        saved_test = ClinicalTestsService.get_test(
+            self.visitor,
+            assigned.data["id"],
+            doctor_id=self.expert.id,
+            case_id=case["id"],
+        )
+        self.assertEqual(saved_test["interactive_status"], EsanjTestAttempt.Status.COMPLETED)
+        self.assertIn("نتیجه html ارجاع آماده است", saved_test["result_text"])
+
+        result_bundle = ClinicalTestsService.read_test_result_bundle(
+            self.visitor,
+            assigned.data["id"],
+            doctor_id=self.expert.id,
+            case_id=case["id"],
+        )
+        self.assertEqual(result_bundle["interactive_result"]["json"]["summary"], "نتیجه html ارجاع آماده است")
 
     def test_agent_test_tool_schema_allows_primitive_assignment_data(self):
         data_schema = manage_clinical_tests.parameters["properties"]["data"]
@@ -479,6 +728,82 @@ class EsanjIntegrationTests(TestCase):
         self.assertEqual(len(tests), 1)
         self.assertEqual(tests[0]["source"], "interactive")
         self.assertEqual(tests[0]["interactive_test_id"], 21)
+
+    def test_update_forms_tests_analysis_uses_explicit_case_id(self):
+        TreatmentConnection.objects.create(
+            doctor=self.expert,
+            patient=self.visitor,
+            status=TreatmentConnection.Status.ACTIVE,
+        )
+        first_case = CaseService.create_case(self.visitor, self.expert, title="پرونده اول")
+        target_case = CaseService.create_case(self.visitor, self.expert, title="پرونده هدف")
+        run_context = RunContext(run_id="analysis-run", session_id="analysis-session", user_id=str(self.expert.id))
+
+        async def fake_refresh(*args, **kwargs):
+            return "canvas refreshed"
+
+        async def collect():
+            generator = await update_forms_tests_analysis.entrypoint(
+                run_context,
+                analysis_text="تحلیل ذخیره شده",
+                case_id=target_case["id"],
+            )
+            return [item async for item in generator]
+
+        resource_token = resource_context.set(str(self.visitor.id))
+        try:
+            with patch("capabilities.vania_expert.tools._emit_canvas_refresh", new=fake_refresh):
+                output = async_to_sync(collect)()
+        finally:
+            resource_context.reset(resource_token)
+
+        self.assertIn("ذخیره شد", output[-1])
+        self.assertEqual(
+            ProfileService.get_forms_tests_analysis(self.visitor, doctor_id=self.expert.id, case_id=target_case["id"]),
+            "تحلیل ذخیره شده",
+        )
+        self.assertEqual(
+            ProfileService.get_forms_tests_analysis(self.visitor, doctor_id=self.expert.id, case_id=first_case["id"]),
+            "",
+        )
+
+    def test_update_forms_tests_analysis_persists_canvas_refresh_state(self):
+        TreatmentConnection.objects.create(
+            doctor=self.expert,
+            patient=self.visitor,
+            status=TreatmentConnection.Status.ACTIVE,
+        )
+        case = CaseService.create_case(self.visitor, self.expert, title="پرونده کانواس")
+        canvas_type = CanvasType.objects.create(
+            name="Patient Manager",
+            slug="patient-manager-test",
+            component_key="VANIA_PATIENT_MANAGER",
+            default_state={"selected_case": {"id": case["id"], "forms_tests_analysis": ""}},
+        )
+        canvas = CanvasInstance.objects.create(
+            session_id="analysis-session",
+            canvas_def=canvas_type,
+            current_state={"selected_case_id": case["id"], "selected_case": {"id": case["id"], "forms_tests_analysis": ""}},
+        )
+        run_context = RunContext(run_id="analysis-run", session_id="analysis-session", user_id=str(self.expert.id))
+
+        async def collect():
+            generator = await update_forms_tests_analysis.entrypoint(
+                run_context,
+                analysis_text="تحلیل ماندگار کانواس",
+                case_id=case["id"],
+            )
+            return [item async for item in generator]
+
+        resource_token = resource_context.set(str(self.visitor.id))
+        try:
+            output = async_to_sync(collect)()
+        finally:
+            resource_context.reset(resource_token)
+
+        canvas.refresh_from_db()
+        self.assertIn("ذخیره شد", output[-1])
+        self.assertEqual(canvas.current_state["selected_case"]["forms_tests_analysis"], "تحلیل ماندگار کانواس")
 
     def test_agent_reads_interactive_test_result_details(self):
         rule = self._rule(31, "تست نتیجه ابزار", allow_visitors=False, allow_experts=True)
@@ -528,6 +853,65 @@ class EsanjIntegrationTests(TestCase):
         payload = json.loads(result.content)
         self.assertEqual(payload["source"], "interactive")
         self.assertEqual(payload["interactive_result"]["json"]["summary"], "نتیجه قابل خواندن توسط ابزار")
+
+    def test_expert_and_visitor_canvases_hydrate_interactive_test_state(self):
+        rule = self._rule(32, "تست نتیجه کانواس", allow_visitors=False, allow_experts=True)
+        TreatmentConnection.objects.create(
+            doctor=self.expert,
+            patient=self.visitor,
+            status=TreatmentConnection.Status.ACTIVE,
+        )
+        case = CaseService.create_case(self.visitor, self.expert, title="پرونده کانواس")
+        assigned = ClinicalTestsService.add_test(
+            patient=self.visitor,
+            created_by=self.expert,
+            title=rule.title,
+            doctor_id=self.expert.id,
+            case_id=case["id"],
+            source="interactive",
+            interactive_test_id=rule.esanj_test_id,
+        )
+        attempt = EsanjTestAttempt.objects.create(
+            user=self.visitor,
+            access_rule=rule,
+            clinical_test_id=assigned["id"],
+            assigned_by=self.expert,
+            doctor_id=self.expert.id,
+            case_id=case["id"],
+            esanj_test_id=rule.esanj_test_id,
+            test_title=rule.title,
+            status=EsanjTestAttempt.Status.COMPLETED,
+            age=30,
+            sex=EsanjTestAttempt.Sex.FEMALE,
+            questionnaire={"delivery_mode": "html", "html": "<form></form>", "questions": []},
+            result_json={"summary": "نتیجه کانواس آماده است"},
+            grading_json={"score": 5},
+        )
+        ClinicalTestsService.update_interactive_assignment_from_attempt(self.visitor, attempt, creator=self.visitor)
+
+        case_token = selected_case_context.set(case["id"])
+        try:
+            expert_state = VaniaExpertCapability().get_initial_canvas_state(
+                self.expert,
+                "expert-canvas-session",
+                str(self.visitor.id),
+                "VANIA_PATIENT_MANAGER",
+            )
+            visitor_state = VaniaVisitorCapability().get_initial_canvas_state(
+                self.visitor,
+                "visitor-canvas-session",
+                "",
+                "VANIA_PATIENT_JOURNEY",
+            )
+        finally:
+            selected_case_context.reset(case_token)
+
+        expert_tests = expert_state["selected_case"]["tests"]
+        visitor_tests = visitor_state["selected_case"]["tests"]
+        self.assertEqual(expert_tests[0]["interactive_status"], EsanjTestAttempt.Status.COMPLETED)
+        self.assertEqual(visitor_tests[0]["interactive_status"], EsanjTestAttempt.Status.COMPLETED)
+        self.assertIn("نتیجه کانواس آماده است", expert_tests[0]["result_text"])
+        self.assertIn("نتیجه کانواس آماده است", visitor_tests[0]["result_text"])
 
     def test_full_assignment_taking_history_and_agent_read_flow_for_multiple_tests(self):
         self._rule(41, "تست تعاملی اول", allow_visitors=False, allow_experts=True)
@@ -593,6 +977,7 @@ class EsanjIntegrationTests(TestCase):
                     "case_id": case["id"],
                     "age": 29,
                     "sex": "female",
+                    "delivery_mode": "json",
                 },
                 format="json",
             )
@@ -606,6 +991,7 @@ class EsanjIntegrationTests(TestCase):
                     "case_id": case["id"],
                     "age": 29,
                     "sex": "female",
+                    "delivery_mode": "json",
                 },
                 format="json",
             )
@@ -638,6 +1024,7 @@ class EsanjIntegrationTests(TestCase):
                     "case_id": case["id"],
                     "age": 29,
                     "sex": "female",
+                    "delivery_mode": "json",
                 },
                 format="json",
             )
@@ -741,3 +1128,87 @@ class EsanjIntegrationTests(TestCase):
         self.assertEqual(payload["source"], "interactive")
         self.assertEqual(payload["interactive_result"]["json"]["summary"], "نتیجه قابل خواندن توسط مراجع")
         self.assertIn("تست تعاملی", update_output[0])
+    def test_visitor_agent_lists_and_reads_standalone_esanj_attempts(self):
+        rule = self._rule(61, "visitor direct test", allow_visitors=True, allow_experts=False)
+        attempt = EsanjTestAttempt.objects.create(
+            user=self.visitor,
+            access_rule=rule,
+            esanj_test_id=rule.esanj_test_id,
+            test_title=rule.title,
+            status=EsanjTestAttempt.Status.COMPLETED,
+            age=28,
+            sex=EsanjTestAttempt.Sex.FEMALE,
+            questionnaire=self._questionnaire(),
+            answers={"1": "1", "2": "0"},
+            result_json={"summary": "direct result summary"},
+            grading_json={"score": 42},
+        )
+        run_context = RunContext(
+            run_id="visitor-direct-esanj",
+            session_id="visitor-direct-esanj-session",
+            user_id=str(self.visitor.id),
+        )
+
+        async def collect_list():
+            generator = await list_my_interactive_tests.entrypoint(run_context, 10)
+            return [item async for item in generator]
+
+        listed_output = async_to_sync(collect_list)()
+        listed_payload = json.loads(listed_output[0])
+        self.assertEqual(listed_payload["count"], 1)
+        self.assertEqual(listed_payload["attempts"][0]["id"], str(attempt.id))
+        self.assertFalse(listed_payload["attempts"][0]["is_case_scoped"])
+        self.assertTrue(listed_payload["attempts"][0]["result_available"])
+
+        result = async_to_sync(get_my_interactive_test_result.entrypoint)(run_context, str(attempt.id))
+        result_payload = json.loads(result.content)
+        self.assertEqual(result_payload["result_json"]["summary"], "direct result summary")
+        self.assertEqual(result_payload["grading_json"]["score"], 42)
+
+    def test_visitor_without_cases_still_gets_direct_interactive_test_tools(self):
+        tool_names = {
+            getattr(tool, "name", getattr(tool, "__name__", ""))
+            for tool in VaniaVisitorToolFactory().get_tools(self.other_visitor, "no-case-session")
+        }
+
+        self.assertIn("list_my_interactive_tests", tool_names)
+        self.assertIn("get_my_interactive_test_result", tool_names)
+        self.assertNotIn("get_my_test_result_details", tool_names)
+
+    def test_ravanyar_has_visitor_test_capability(self):
+        from definitions.agents import AGENTS
+
+        expected_slugs = {"HAM-moraje", "HAM-motalee", "HAM-shoghli", "HAM-tahsili", "ravanyar"}
+        agents_by_slug = {agent.slug: agent for agent in AGENTS}
+        self.assertTrue(expected_slugs.issubset(agents_by_slug))
+        for slug in expected_slugs:
+            agent = agents_by_slug[slug]
+            self.assertIn("vania_visitor", agent.capabilities)
+            self.assertIn("VANIA_PATIENT_JOURNEY", agent.default_open_canvases)
+
+    def test_ravanyar_runtime_adds_visitor_capability_for_patient_when_db_is_stale(self):
+        stale_service = SimpleNamespace(slug="ravanyar", capabilities=[])
+
+        self.assertIn("vania_visitor", _resolve_active_capabilities(stale_service, self.visitor))
+
+    def test_expert_case_agents_have_expert_capability(self):
+        from definitions.agents import AGENTS
+
+        agents_by_slug = {agent.slug: agent for agent in AGENTS}
+        expected_slugs = {
+            agent.slug
+            for agent in AGENTS
+            if agent.audience == "EXPERT" and agent.requires_visitor_selector
+        }
+        expected_slugs.update({"ravanyar-motekhases", "supervisor-mashaghel"})
+        self.assertTrue(expected_slugs)
+
+        for slug in expected_slugs:
+            agent = agents_by_slug[slug]
+            self.assertIn("vania_expert", agent.capabilities)
+            self.assertIn("VANIA_PATIENT_MANAGER", agent.default_open_canvases)
+
+    def test_expert_runtime_adds_case_capability_when_db_is_stale(self):
+        stale_service = SimpleNamespace(slug="ravanyar-motekhases", capabilities=[])
+
+        self.assertIn("vania_expert", _resolve_active_capabilities(stale_service, self.expert))

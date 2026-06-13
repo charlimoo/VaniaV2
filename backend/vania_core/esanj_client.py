@@ -124,7 +124,7 @@ class EsanjClient:
             payload = response.text
 
         if response.status_code == 403:
-            message = "حساب Esanj به این آزمون دسترسی ندارد یا اعتبار کافی برای شروع آزمون موجود نیست."
+            message = "حساب Esanj به این عملیات دسترسی ندارد، آزمون برای این کاربر فعال نیست یا مجوز/اعتبار لازم برای شروع آزمون موجود نیست."
         elif response.status_code == 404:
             message = "آزمون یا نتیجه در سرویس Esanj پیدا نشد."
 
@@ -146,6 +146,21 @@ class EsanjClient:
         results = payload.get("results", []) if isinstance(payload, dict) else []
         return results if isinstance(results, list) else []
 
+    def organization_information(self) -> dict[str, Any]:
+        payload = self._request("GET", "/organization/information")
+        info = payload.get("information", {}) if isinstance(payload, dict) else {}
+        return info if isinstance(info, dict) else {}
+
+    def list_employees(self) -> list[dict[str, Any]]:
+        try:
+            payload = self._request("GET", "/employees")
+        except EsanjAPIError as exc:
+            if exc.status_code == 404:
+                return []
+            raise
+        employees = payload.get("employees", []) if isinstance(payload, dict) else []
+        return employees if isinstance(employees, list) else []
+
     def find_employee(self, username: str | None = None, employee_id: int | None = None) -> dict[str, Any] | None:
         params = {k: v for k, v in {"username": username, "employee_id": employee_id}.items() if v}
         try:
@@ -159,16 +174,74 @@ class EsanjClient:
             return employees[0]
         return None
 
-    def create_employee(self, *, username: str, name: str = "", phone_number: str = "") -> dict[str, Any] | None:
+    def create_employee(
+        self,
+        *,
+        username: str,
+        name: str = "",
+        phone_number: str = "",
+        sex: str = "",
+        birth_year: int | None = None,
+    ) -> dict[str, Any] | None:
         params = {k: v for k, v in {
             "username": username,
             "name": name,
             "phone_number": phone_number,
+            "sex": sex,
+            "birth_year": birth_year,
             "is_active": "1",
         }.items() if v}
         payload = self._request("POST", "/employee/create", params=params)
         employee = payload.get("employee") if isinstance(payload, dict) else None
         return employee if isinstance(employee, dict) else None
+
+    def update_employee(
+        self,
+        employee_id: int,
+        *,
+        username: str,
+        name: str = "",
+        phone_number: str = "",
+        sex: str = "",
+        birth_year: int | None = None,
+        is_active: str = "1",
+    ) -> dict[str, Any] | None:
+        params = {k: v for k, v in {
+            "username": username,
+            "name": name,
+            "phone_number": phone_number,
+            "sex": sex,
+            "birth_year": birth_year,
+            "is_active": is_active,
+        }.items() if v}
+        payload = self._request("PATCH", f"/employee/{employee_id}/update", params=params)
+        employee = payload.get("employee") if isinstance(payload, dict) else None
+        return employee if isinstance(employee, dict) else None
+
+    def delete_employee(self, employee_id: int) -> bool:
+        self._request("DELETE", f"/employee/{employee_id}/delete")
+        return True
+
+    def questionnaire_html(
+        self,
+        *,
+        test_id: int,
+        sex: str,
+        age: int,
+        uuid: str,
+        employee_id: int | None = None,
+    ) -> str:
+        params = {
+            "test_id": test_id,
+            "sex": sex,
+            "age": age,
+            "uuid": uuid,
+            "employee_id": employee_id,
+        }
+        payload = self._request("GET", "/questionnaire/html", params={k: v for k, v in params.items() if v is not None})
+        if not isinstance(payload, dict):
+            return ""
+        return str(payload.get("response") or payload.get("raw") or "")
 
     def submit_interpretation(
         self,

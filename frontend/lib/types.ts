@@ -66,6 +66,7 @@ export interface UserData {
   date_joined: string;
   is_staff?: boolean;
   is_superuser?: boolean;
+  role?: string; // Legacy auth responses may still return this instead of role_slug.
   role_slug?: string;  // e.g., 'expert' | 'visitor' (legacy aliases may still appear)
   role_label?: string; // e.g., 'متخصص' | 'مراجعه‌کننده'
   national_code?: string | null;

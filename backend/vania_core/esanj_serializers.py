@@ -85,10 +85,19 @@ class EsanjQuestionSerializer(serializers.Serializer):
 
 
 class EsanjStartAttemptSerializer(serializers.Serializer):
+    class DeliveryMode:
+        HTML = "html"
+        JSON = "json"
+
     test_id = serializers.IntegerField(min_value=1, required=False)
     clinical_test_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
     doctor_id = serializers.IntegerField(min_value=1, required=False)
     case_id = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    delivery_mode = serializers.ChoiceField(
+        choices=(DeliveryMode.HTML, DeliveryMode.JSON),
+        default=DeliveryMode.JSON,
+        required=False,
+    )
     age = serializers.IntegerField(min_value=1, max_value=150)
     sex = serializers.ChoiceField(choices=EsanjTestAttempt.Sex.choices)
 

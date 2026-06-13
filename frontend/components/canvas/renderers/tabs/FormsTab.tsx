@@ -813,11 +813,11 @@ export function FormsTab({
                     align="start"
                     sideOffset={6}
                     onOpenAutoFocus={(event) => event.preventDefault()}
-                    className="w-[var(--radix-popover-trigger-width)] rounded-xl p-2"
+                    className="max-h-72 w-[var(--radix-popover-trigger-width)] overflow-y-auto rounded-xl p-2"
                   >
                   <div className="mb-1 px-1 text-[10px] text-muted-foreground">انتخاب سریع</div>
                     <div className="grid gap-1">
-                      {testDraft.source === "interactive" ? filteredInteractiveCatalog.slice(0, 8).map((item) => (
+                      {testDraft.source === "interactive" ? filteredInteractiveCatalog.map((item) => (
                         <button
                           key={item.esanj_test_id}
                           type="button"
@@ -827,7 +827,7 @@ export function FormsTab({
                           <div className="font-medium">{item.title}</div>
                           <div className="mt-0.5 text-[10px] text-muted-foreground">تست تعاملی</div>
                         </button>
-                      )) : filteredTestsCatalog.slice(0, 6).map((item) => (
+                      )) : filteredTestsCatalog.map((item) => (
                         <button
                           key={item.id}
                           type="button"
@@ -876,7 +876,11 @@ export function FormsTab({
                 {testDraft.source === "interactive" && !testDraft.interactive_test_id ? (
                   <div className="max-h-52 overflow-y-auto rounded-xl border border-border/60 bg-muted/10 p-1">
                     {filteredInteractiveCatalog.length > 0 ? (
-                      filteredInteractiveCatalog.slice(0, 10).map((item) => (
+                      <>
+                        <div className="px-3 py-2 text-[10px] text-muted-foreground">
+                          {filteredInteractiveCatalog.length.toLocaleString("fa-IR")} تست قابل انتخاب
+                        </div>
+                        {filteredInteractiveCatalog.map((item) => (
                         <button
                           key={item.esanj_test_id}
                           type="button"
@@ -886,7 +890,8 @@ export function FormsTab({
                           <span className="min-w-0 truncate font-medium">{item.title}</span>
                           <Badge variant="outline" className="shrink-0 text-[10px] font-normal">تعاملی</Badge>
                         </button>
-                      ))
+                        ))}
+                      </>
                     ) : (
                       <div className="px-3 py-6 text-center text-xs text-muted-foreground">
                         تستی پیدا نشد.

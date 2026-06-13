@@ -325,9 +325,6 @@ class DefinitionSync:
     @staticmethod
     def sync_faqs():
         logger.info(f"🔄 [Sync] FAQs: {len(FAQS)} items")
-        # Optional: Clear old FAQs if you want strict syncing
-        FAQ.objects.all().delete() 
-        
         for item in FAQS:
             FAQ.objects.update_or_create(
                 question=item.question,

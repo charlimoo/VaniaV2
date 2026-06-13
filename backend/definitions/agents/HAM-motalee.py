@@ -193,8 +193,8 @@ AGENT = AgentDef(
     enable_reasoning=False,
     reasoning_effort="none",
     static_tools=["duckduckgo"],
-    capabilities=[],
-    default_open_canvases=[],
+    capabilities=["vania_visitor"],
+    default_open_canvases=["VANIA_PATIENT_JOURNEY"],
     extra_config={
         "input_requirements": {
             "requires_context": True,

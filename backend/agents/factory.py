@@ -19,6 +19,7 @@ from services.tool_factory import ToolFactory
 from services.rag_service import get_sanitized_table_name, get_session_knowledge, session_knowledge_exists
 from services.models_canvas import CanvasType, CanvasInstance
 from services.access_service import access_service
+from users.roles import is_expert, is_visitor
 from core.ai_provider import get_agno_openai_kwargs
 # --- Capability System ---
 from capabilities.registry import CapabilityRegistry
@@ -47,6 +48,46 @@ NATIVE_REASONING_MODELS = {
 }
 
 NONE_EFFORT_MODELS = {"gpt-5.1", "gpt-5.2", "gpt5.1", "gpt5.2", "gpt-5", "gpt5"}
+
+VISITOR_SELF_CONTEXT_AGENT_SLUGS = {
+    "HAM-moraje",
+    "HAM-motalee",
+    "HAM-shoghli",
+    "HAM-tahsili",
+    "ravanyar",
+}
+
+EXPERT_CASE_CONTEXT_AGENT_SLUGS = {
+    "ravanyar-motekhases",
+    "supervisor-mashaghel",
+}
+
+
+def _resolve_active_capabilities(service: AgentService, user) -> list[str]:
+    active_caps = list(service.capabilities or [])
+    if (
+        service.slug in VISITOR_SELF_CONTEXT_AGENT_SLUGS
+        and is_visitor(user)
+        and "vania_visitor" not in active_caps
+    ):
+        active_caps.append("vania_visitor")
+        logger.warning(
+            "Agent '%s' is missing vania_visitor in DB; enabling visitor self-context capability at runtime for user %s.",
+            service.slug,
+            getattr(user, "id", "unknown"),
+        )
+    if (
+        service.slug in EXPERT_CASE_CONTEXT_AGENT_SLUGS
+        and is_expert(user)
+        and "vania_expert" not in active_caps
+    ):
+        active_caps.append("vania_expert")
+        logger.warning(
+            "Agent '%s' is missing vania_expert in DB; enabling expert case-context capability at runtime for user %s.",
+            service.slug,
+            getattr(user, "id", "unknown"),
+        )
+    return active_caps
 
 
 def _build_session_selection_context(session_data: Optional[dict]) -> list[str]:
@@ -125,7 +166,7 @@ def create_agent_for_service(user, service_slug: str, session_id: str, request: 
             is_swapped_model = True
             logger.info(f"🎭 [Factory] Demo Mode active for User {user.id}. Swapped model to: {target_model_id}")
 
-    active_caps = service.capabilities or []
+    active_caps = _resolve_active_capabilities(service, user)
     
     # Retrieve the Scoped Context ID (e.g. Patient ID) set by Middleware
     resource_id = resource_context.get()

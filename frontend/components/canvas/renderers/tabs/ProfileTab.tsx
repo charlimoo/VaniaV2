@@ -398,13 +398,16 @@ export function ProfileTab({
       const prompt = [
         "[SYSTEM: GENERATE_FORMS_TESTS_ANALYSIS]",
         `Patient: ${patientProfile.name} (${patientProfile.id})`,
+        `Case ID: ${caseId || ""}`,
         "از تمام اطلاعات مراجع، فرم های تکمیل شده، خلاصه نتایج تست ها، و فایل های پیوست تست ها استفاده کن.",
         "برای هر تستی که attachment_count بزرگتر از صفر دارد، قبل از تولید تحلیل با ابزار get_test_result_details(test_id=...) محتوای فایل های آن تست را بررسی کن.",
         "اگر لازم شد فقط یک فایل مشخص را بخوانی، از get_test_attachment_details(test_id=..., attachment_id=...) استفاده کن. شناسه های test_id و attachment_id دقیقا در Tests JSON آمده اند.",
         "فقط بر اساس داده های موجود، متن های ثبت شده، و فایل هایی که ابزارها واقعا در اختیار تو قرار می دهند تحلیل بنویس؛ اگر فایلی قابل خواندن نبود، بر اساس آن حدس نزن.",
         "لطفا با توجه به فرم های تکمیل شده، خلاصه نتایج تست ها، و محتوای فایل های خوانده شده، یک تحلیل بالینی یکپارچه تولید کن.",
         "خروجی باید فارسی و حرفه ای باشد و شامل: الگوهای اصلی، فرضیه های بالینی محتاطانه، ریسک ها/حمایت ها، و پیشنهاد مسیر درمانی کوتاه باشد.",
-        "پس از تولید تحلیل، حتما با ابزار update_forms_tests_analysis آن را ذخیره کن.",
+        caseId
+          ? `پس از تولید تحلیل، حتما با ابزار update_forms_tests_analysis و مقدار case_id="${caseId}" آن را ذخیره کن.`
+          : "پس از تولید تحلیل، حتما با ابزار update_forms_tests_analysis آن را ذخیره کن.",
         "",
         `Patient Info JSON:\n${JSON.stringify(patientInfo, null, 2)}`,
         "",

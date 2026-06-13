@@ -44,6 +44,7 @@ type InteractiveAttempt = {
   sex: "male" | "female";
   answers: Record<string, string>;
   questionnaire?: {
+    delivery_mode?: "html" | "json";
     questions?: InteractiveQuestion[];
   };
   progress?: {
@@ -292,6 +293,7 @@ export function PatientTestsTab({
           case_id: selectedCaseId,
           age: parsedAge,
           sex,
+          delivery_mode: "json",
         }),
       });
       if (!res.ok) {
@@ -354,6 +356,7 @@ export function PatientTestsTab({
       }
       const completed = await res.json() as InteractiveAttempt;
       setActiveAttempt(completed);
+      setQuestionIndex(0);
       await refreshTests();
       toast.success("تست تعاملی با موفقیت تکمیل شد.");
     } catch (e: any) {

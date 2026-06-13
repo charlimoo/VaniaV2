@@ -19,6 +19,7 @@ from capabilities.test_attachment_media import (
 )
 from capabilities.base import BaseCapability
 from canvas.events import CanvasUpdateEvent
+from canvas.manager import canvas_manager
 from services.models_canvas import CanvasInstance
 from users.models import ContextDefinition, CustomUser, UserContextEntry
 from users.services import user_context_manager
@@ -179,8 +180,8 @@ async def _get_active_doctor(run_context: RunContext) -> CustomUser:
     return await CustomUser.objects.select_related("expert_profession", "role").aget(pk=run_context.user_id)
 
 
-async def _get_active_case(patient: CustomUser, doctor: CustomUser) -> Dict[str, Any]:
-    requested_case_id = selected_case_context.get()
+async def _get_active_case(patient: CustomUser, doctor: CustomUser, requested_case_id: Optional[str] = None) -> Dict[str, Any]:
+    requested_case_id = requested_case_id or selected_case_context.get()
     return await sync_to_async(CaseService.get_or_create_selected_case_for_expert)(patient, doctor, requested_case_id)
 
 
@@ -524,6 +525,16 @@ async def _emit_canvas_refresh(run_context: RunContext, patient: CustomUser, doc
     })
     if extra_delta:
         payload.update(extra_delta)
+    if canvas_id:
+        try:
+            await sync_to_async(canvas_manager.update_canvas_state)(
+                canvas_id=canvas_id,
+                patch_data=payload,
+                operation="merge",
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist expert canvas refresh for %s: %s", canvas_id, exc)
+
     return CanvasUpdateEvent(value={
         "canvas_id": canvas_id,
         "component_key": "VANIA_PATIENT_MANAGER",
@@ -1727,7 +1738,7 @@ async def get_case_file_details(run_context: RunContext, file_id: str) -> ToolRe
 
 
 @tool
-async def update_forms_tests_analysis(run_context: RunContext, analysis_text: str) -> AsyncGenerator[Any, None]:
+async def update_forms_tests_analysis(run_context: RunContext, analysis_text: str, case_id: Optional[str] = None) -> AsyncGenerator[Any, None]:
     patient = await _get_active_patient()
     doctor = await _get_active_doctor(run_context)
     blocked = _tool_family_error(doctor, "analysis")
@@ -1737,7 +1748,8 @@ async def update_forms_tests_analysis(run_context: RunContext, analysis_text: st
     if not patient:
         yield "Error: No visitor selected."
         return
-    active_case = await _get_active_case(patient, doctor)
+    requested_case_id = str(case_id).strip() if case_id else None
+    active_case = await _get_active_case(patient, doctor, requested_case_id)
     editable_error = await _ensure_case_editable(patient, doctor, active_case["id"])
     if editable_error:
         yield editable_error

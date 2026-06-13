@@ -13,6 +13,8 @@ import {
   RefreshCwIcon,
   Square,
   FileCheck,
+  ClipboardList,
+  Paperclip,
   Lock,
   Sparkles,
   Zap,
@@ -66,15 +68,117 @@ interface ThreadProps {
   requiresVisitorSelector?: boolean;
 }
 
+const FORMS_TESTS_ANALYSIS_MARKER = "[SYSTEM: GENERATE_FORMS_TESTS_ANALYSIS]";
+
+type FormsTestsAnalysisPromptDetails = {
+  patientName: string;
+  formsCount: number;
+  testsCount: number;
+  attachmentsCount: number;
+};
+
+const extractJsonSection = (text: string, startLabel: string, endLabels: string[]) => {
+  const startMarker = `${startLabel}:\n`;
+  const startIndex = text.indexOf(startMarker);
+  if (startIndex === -1) return null;
+
+  const valueStart = startIndex + startMarker.length;
+  let valueEnd = text.length;
+  for (const endLabel of endLabels) {
+    const endIndex = text.indexOf(`\n\n${endLabel}:`, valueStart);
+    if (endIndex !== -1 && endIndex < valueEnd) {
+      valueEnd = endIndex;
+    }
+  }
+
+  return text.slice(valueStart, valueEnd).trim();
+};
+
+const getFormsTestsAnalysisPromptDetails = (text: string): FormsTestsAnalysisPromptDetails => {
+  const patientMatch = text.match(/^Patient:\s*(.+?)(?:\s*\([^)]+\))?\s*$/m);
+  const patientName = patientMatch?.[1]?.trim() || "مراجع";
+  let formsCount = 0;
+  let testsCount = 0;
+  let attachmentsCount = 0;
+
+  try {
+    const formsJson = extractJsonSection(text, "Forms JSON", ["Tests JSON (summaries and attachment handles)"]);
+    const forms = formsJson ? JSON.parse(formsJson) : [];
+    formsCount = Array.isArray(forms) ? forms.length : 0;
+  } catch {}
+
+  try {
+    const testsJson = extractJsonSection(text, "Tests JSON (summaries and attachment handles)", []);
+    const tests = testsJson ? JSON.parse(testsJson) : [];
+    if (Array.isArray(tests)) {
+      testsCount = tests.length;
+      attachmentsCount = tests.reduce((sum, test) => {
+        const declaredCount = Number(test?.attachment_count);
+        if (Number.isFinite(declaredCount)) return sum + declaredCount;
+        return sum + (Array.isArray(test?.attachments) ? test.attachments.length : 0);
+      }, 0);
+    }
+  } catch {}
+
+  return { patientName, formsCount, testsCount, attachmentsCount };
+};
+
+const FormsTestsAnalysisRequestCard: FC<{ text: string }> = ({ text }) => {
+  const details = getFormsTestsAnalysisPromptDetails(text);
+
+  return (
+    <div
+      className="w-full min-w-[260px] max-w-lg rounded-2xl border border-cyan-200/80 bg-background/90 p-3 text-foreground shadow-sm dark:border-cyan-900/70 dark:bg-background/60"
+      dir="rtl"
+    >
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-700 dark:text-cyan-300">
+          <Sparkles className="h-4 w-4" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold leading-6">درخواست تولید تحلیل بالینی</div>
+          <div className="truncate text-xs leading-5 text-muted-foreground">{details.patientName}</div>
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+        <div className="rounded-xl border border-border/70 bg-muted/40 px-2 py-2">
+          <ClipboardList className="mx-auto mb-1 h-3.5 w-3.5 text-muted-foreground" />
+          <div className="text-sm font-semibold">{details.formsCount.toLocaleString("fa-IR")}</div>
+          <div className="text-[11px] text-muted-foreground">فرم</div>
+        </div>
+        <div className="rounded-xl border border-border/70 bg-muted/40 px-2 py-2">
+          <FileCheck className="mx-auto mb-1 h-3.5 w-3.5 text-muted-foreground" />
+          <div className="text-sm font-semibold">{details.testsCount.toLocaleString("fa-IR")}</div>
+          <div className="text-[11px] text-muted-foreground">تست</div>
+        </div>
+        <div className="rounded-xl border border-border/70 bg-muted/40 px-2 py-2">
+          <Paperclip className="mx-auto mb-1 h-3.5 w-3.5 text-muted-foreground" />
+          <div className="text-sm font-semibold">{details.attachmentsCount.toLocaleString("fa-IR")}</div>
+          <div className="text-[11px] text-muted-foreground">پیوست</div>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-xl bg-cyan-500/10 px-3 py-2 text-xs leading-6 text-cyan-900 dark:text-cyan-200">
+        فرم‌ها، نتایج تست‌ها و فایل‌های مرتبط برای تحلیل یکپارچه به دستیار ارسال شد.
+      </div>
+    </div>
+  );
+};
+
 const CustomUserText: FC<any> = (props) => {
   const rawText = props.part?.text || props.text || "";
   const text = rawText.trim();
 
   if (!text) return null;
 
+  if (text.startsWith(FORMS_TESTS_ANALYSIS_MARKER)) {
+    return <FormsTestsAnalysisRequestCard text={text} />;
+  }
+
   let isSystemAction = false;
 
-  if (text.startsWith("[System Action]") || text.startsWith("[System:")) {
+  if (text.startsWith("[System Action]") || text.toLowerCase().startsWith("[system:")) {
     isSystemAction = true;
   } else if (text.startsWith("{") && text.endsWith("}")) {
     try {

@@ -23,7 +23,13 @@ def build_base_profile_key() -> str:
 def build_case_scoped_key(base_key: str, doctor_id: int, case_id: str) -> str:
     normalized_case_id = str(case_id or "").strip()
     digest = hashlib.sha1(normalized_case_id.encode("utf-8")).hexdigest()[:12]
-    return f"{base_key}__d{doctor_id}__c{digest}"
+    suffix = f"__d{doctor_id}__c{digest}"
+    if len(base_key) + len(suffix) <= 50:
+        return f"{base_key}{suffix}"
+    base_digest = hashlib.sha1(base_key.encode("utf-8")).hexdigest()[:6]
+    max_base_length = 50 - len(suffix) - len(base_digest) - 1
+    compact_base = f"{base_key[:max_base_length]}_{base_digest}"
+    return f"{compact_base}{suffix}"
 
 
 class CaseService:

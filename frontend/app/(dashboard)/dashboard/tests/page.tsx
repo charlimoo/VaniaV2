@@ -31,6 +31,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { InteractiveTestResultView } from "@/components/canvas/renderers/shared/InteractiveTestResultView";
 import { ApiError, fetcher } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -65,6 +66,7 @@ type EsanjAttempt = {
   sex: "male" | "female";
   answers: Record<string, string>;
   questionnaire?: {
+    delivery_mode?: "html" | "json";
     questions?: EsanjQuestion[];
   };
   progress: {
@@ -109,48 +111,6 @@ function statusLabel(status: EsanjAttempt["status"]) {
   if (status === "FAILED") return "ناموفق";
   if (status === "SUBMITTED") return "ثبت شده";
   return "در حال انجام";
-}
-
-function ResultBlock({ data }: { data: any }) {
-  if (data == null || data === "") {
-    return <span className="text-muted-foreground">موردی ثبت نشده است.</span>;
-  }
-
-  if (typeof data === "string" || typeof data === "number" || typeof data === "boolean") {
-    return <span>{String(data)}</span>;
-  }
-
-  if (Array.isArray(data)) {
-    return (
-      <div className="space-y-2">
-        {data.map((item, index) => (
-          <div key={index} className="rounded-md border bg-muted/20 p-3">
-            <ResultBlock data={item} />
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  if (typeof data === "object") {
-    const entries = Object.entries(data).filter(([, value]) => value != null && value !== "");
-    if (!entries.length) return <span className="text-muted-foreground">موردی ثبت نشده است.</span>;
-
-    return (
-      <div className="space-y-2">
-        {entries.map(([key, value]) => (
-          <div key={key} className="grid gap-1 rounded-md border bg-background p-3 sm:grid-cols-[180px_1fr]">
-            <div className="text-xs font-medium text-muted-foreground">{key}</div>
-            <div className="min-w-0 text-sm leading-7">
-              <ResultBlock data={value} />
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  }
-
-  return null;
 }
 
 export default function EsanjTestsPage() {
@@ -204,9 +164,11 @@ export default function EsanjTestsPage() {
     [filteredTests]
   );
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (options?: { clearError?: boolean }) => {
     setLoading(true);
-    setError(null);
+    if (options?.clearError !== false) {
+      setError(null);
+    }
     try {
       const [catalog, history] = await Promise.all([
         fetcher<{ tests: EsanjTest[] }>("/api/vania/esanj/tests/"),
@@ -242,6 +204,7 @@ export default function EsanjTestsPage() {
           test_id: selectedTest.esanj_test_id,
           age: parsedAge,
           sex,
+          delivery_mode: "json",
         }),
       });
       setActiveAttempt(attempt);
@@ -284,6 +247,9 @@ export default function EsanjTestsPage() {
       });
       setActiveAttempt(updated);
       setAttempts((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      if (questionIndex < questions.length - 1) {
+        setQuestionIndex((value) => Math.min(questions.length - 1, value + 1));
+      }
     } catch (err: any) {
       toast.error(err?.message || "ذخیره پاسخ انجام نشد");
     } finally {
@@ -306,11 +272,13 @@ export default function EsanjTestsPage() {
         body: JSON.stringify({ answers: activeAttempt.answers || {} }),
       });
       setActiveAttempt(completed);
+      setQuestionIndex(0);
       setAttempts((prev) => [completed, ...prev.filter((item) => item.id !== completed.id)]);
       toast.success("نتیجه آزمون آماده شد");
     } catch (err: any) {
       setError(err?.message || "ثبت آزمون ناموفق بود.");
-      await loadData();
+      toast.error(err?.message || "ثبت آزمون ناموفق بود.");
+      await loadData({ clearError: false });
     } finally {
       setSubmitting(false);
     }
@@ -475,16 +443,7 @@ export default function EsanjTestsPage() {
                     <AlertDescription>{activeAttempt.error_message || "خطایی از سمت سرویس آزمون دریافت شد."}</AlertDescription>
                   </Alert>
                 )}
-                <div className="space-y-3">
-                  <h3 className="text-base font-semibold">نتیجه آزمون</h3>
-                  <ResultBlock data={activeAttempt.result?.json || activeAttempt.result?.grading || {}} />
-                </div>
-                {activeAttempt.result?.grading && Object.keys(activeAttempt.result.grading).length > 0 && (
-                  <div className="space-y-3">
-                    <h3 className="text-base font-semibold">نمره‌گذاری</h3>
-                    <ResultBlock data={activeAttempt.result.grading} />
-                  </div>
-                )}
+                <InteractiveTestResultView result={activeAttempt.result} />
               </div>
             ) : currentQuestion ? (
               <div className="space-y-5">

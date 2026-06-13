@@ -89,7 +89,7 @@ panel.vaniaapp.app
     if (isStaffOrAdminUser(user)) return true;
 
     // If roles defined, check if user has the matching role
-    const normalizedUserRole = normalizeRoleSlug(user?.role_slug)
+    const normalizedUserRole = normalizeRoleSlug(user?.role_slug) || normalizeRoleSlug(user?.role)
     const normalizedAllowedRoles = allowedRoles.map((role) => normalizeRoleSlug(role) || role)
     if (normalizedUserRole && normalizedAllowedRoles.includes(normalizedUserRole)) {
       return true;

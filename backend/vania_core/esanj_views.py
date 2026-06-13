@@ -1,4 +1,5 @@
 import re
+import uuid
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.contrib.contenttypes.models import ContentType
@@ -249,18 +250,46 @@ def _safe_phone_for_esanj(user) -> str:
     return digits if 10 <= len(digits) <= 11 else ""
 
 
-def ensure_esanj_employee(user, client: EsanjClient) -> EsanjUserProfile:
+def _normalize_esanj_phone(value: str | None) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    if digits.startswith("98") and len(digits) == 12:
+        digits = "0" + digits[2:]
+    return digits
+
+
+def _jalali_birth_year_from_age(age: int | None) -> int | None:
+    if not age:
+        return None
+    current_jalali_year = timezone.localdate().year - 621
+    return current_jalali_year - int(age)
+
+
+def _find_employee_by_phone(client: EsanjClient, phone_number: str) -> dict | None:
+    if not phone_number:
+        return None
+    for employee in client.list_employees():
+        if _normalize_esanj_phone(employee.get("phone_number")) == phone_number:
+            return employee
+    return None
+
+
+def ensure_esanj_employee(user, client: EsanjClient, *, age: int | None = None, sex: str = "") -> EsanjUserProfile:
     profile, _ = EsanjUserProfile.objects.get_or_create(user=user)
     if profile.employee_id:
         return profile
 
     username = profile.employee_username or f"vania-{user.id}"
+    phone_number = _safe_phone_for_esanj(user)
     employee = client.find_employee(username=username)
+    if not employee:
+        employee = _find_employee_by_phone(client, phone_number)
     if not employee:
         employee = client.create_employee(
             username=username,
             name=getattr(user, "full_name", "") or getattr(user, "phone_number", "") or username,
-            phone_number=_safe_phone_for_esanj(user),
+            phone_number=phone_number,
+            sex=sex,
+            birth_year=_jalali_birth_year_from_age(age),
         )
     if employee:
         profile.employee_id = employee.get("id") or profile.employee_id
@@ -313,6 +342,21 @@ def _answers_payload(attempt: EsanjTestAttempt, answers: dict[str, str]) -> dict
         except (TypeError, ValueError):
             payload[f"q{row}"] = value
     return payload
+
+
+def _is_html_attempt(attempt: EsanjTestAttempt) -> bool:
+    questionnaire = attempt.questionnaire if isinstance(attempt.questionnaire, dict) else {}
+    return questionnaire.get("delivery_mode") == EsanjStartAttemptSerializer.DeliveryMode.HTML
+
+
+def _remote_esanj_attempt_is_done(client: EsanjClient, attempt: EsanjTestAttempt) -> bool:
+    if not attempt.employee_id:
+        return False
+    for item in client.status_do(test_id=attempt.esanj_test_id, employee_id=attempt.employee_id):
+        if str(item.get("uuid") or "") != str(attempt.id):
+            continue
+        return str(item.get("is_done")) in {"1", "true", "True"}
+    return False
 
 
 class EsanjTestCatalogView(APIView):
@@ -411,18 +455,45 @@ class EsanjAttemptListCreateView(APIView):
             return _payment_required_response(rule, invoice, pricing)
 
         client = EsanjClient()
+        attempt_id = uuid.uuid4()
         try:
-            questionnaire = client.questionnaire(rule.esanj_test_id)
-            employee_id = None
-            try:
-                profile = ensure_esanj_employee(request.user, client)
-                employee_id = profile.employee_id
-            except (EsanjConfigurationError, EsanjAPIError):
-                employee_id = None
+            profile = ensure_esanj_employee(request.user, client, age=data["age"], sex=data["sex"])
+            employee_id = profile.employee_id
+            if data["delivery_mode"] == EsanjStartAttemptSerializer.DeliveryMode.HTML:
+                html = client.questionnaire_html(
+                    test_id=rule.esanj_test_id,
+                    sex=data["sex"],
+                    age=data["age"],
+                    uuid=str(attempt_id),
+                    employee_id=employee_id,
+                )
+                questionnaire = {
+                    "delivery_mode": EsanjStartAttemptSerializer.DeliveryMode.HTML,
+                    "html": html,
+                    "questions": [],
+                }
+            else:
+                # Reserve/check the Esanj inventory at start for the internal UI too.
+                # Without this, users can answer the whole JSON questionnaire and only
+                # discover missing Esanj inventory when submitting interpretation.
+                client.questionnaire_html(
+                    test_id=rule.esanj_test_id,
+                    sex=data["sex"],
+                    age=data["age"],
+                    uuid=str(attempt_id),
+                    employee_id=employee_id,
+                )
+                questionnaire = client.questionnaire(rule.esanj_test_id)
+                if isinstance(questionnaire, dict):
+                    questionnaire = {
+                        **questionnaire,
+                        "delivery_mode": EsanjStartAttemptSerializer.DeliveryMode.JSON,
+                    }
         except (EsanjConfigurationError, EsanjAPIError) as exc:
             return _esanj_error_response(exc)
 
         attempt = EsanjTestAttempt.objects.create(
+            id=attempt_id,
             user=request.user,
             access_rule=rule,
             esanj_test_id=rule.esanj_test_id,
@@ -482,19 +553,27 @@ class EsanjAttemptSubmitView(APIView):
         serializer = EsanjSubmitAttemptSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         answers = {**(attempt.answers or {}), **serializer.validated_data.get("answers", {})}
-        try:
-            payload = _answers_payload(attempt, answers)
-        except ValueError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         client = EsanjClient()
         try:
-            result = client.submit_interpretation(
-                test_id=attempt.esanj_test_id,
-                uuid=str(attempt.id),
-                answers_payload=payload,
-                employee_id=attempt.employee_id,
-            )
+            if _is_html_attempt(attempt):
+                result = client.get_interpretation(str(attempt.id))
+            else:
+                try:
+                    payload = _answers_payload(attempt, answers)
+                except ValueError as exc:
+                    return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+                try:
+                    result = client.submit_interpretation(
+                        test_id=attempt.esanj_test_id,
+                        uuid=str(attempt.id),
+                        answers_payload=payload,
+                        employee_id=attempt.employee_id,
+                    )
+                except EsanjAPIError as exc:
+                    if exc.status_code != 404 or not _remote_esanj_attempt_is_done(client, attempt):
+                        raise
+                    result = client.get_interpretation(str(attempt.id))
             try:
                 grading = client.get_grading(str(attempt.id))
             except EsanjAPIError:
