@@ -101,7 +101,7 @@ services:
       - 'redis_data:/data'
     restart: always
   minio:
-    image: 'quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z-cpuv1'
+    image: 'minio/minio:latest'
     container_name: vania_minio
     command: 'server /data --console-address ":9001"'
     environment:
@@ -115,7 +115,7 @@ services:
       - 'minio_data:/data'
     restart: always
   createbuckets:
-    image: 'quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z-cpuv1'
+    image: 'minio/minio:latest'
     restart: "no"
     depends_on:
       - minio
