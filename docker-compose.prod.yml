@@ -21,7 +21,7 @@ services:
     restart: always
     command: 'gunicorn core.asgi:application --preload --timeout 120 -w ${WEB_CONCURRENCY:-2} -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000'
     ports:
-      - '8101:8000'
+      - '${BACKEND_EXTERNAL_PORT:-8001}:8000'
     depends_on:
       db:
         condition: service_healthy
@@ -40,13 +40,12 @@ services:
         - *frontend-image
     image: *frontend-image
     # image: 'charlievespera/vaniaapp-frontend:latest'
-    container_name: vania_frontend
     environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} 
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
     env_file:
       - .env
     ports:
-      - '3100:3000'
+      - '${FRONTEND_EXTERNAL_PORT:-3000}:3000'
     restart: always
     depends_on:
       - app
@@ -78,7 +77,6 @@ services:
       - db
   db:
     image: 'postgres:15-alpine'
-    container_name: vania_postgres
     environment:
       - 'POSTGRES_USER=${POSTGRES_USER}'
       - 'POSTGRES_PASSWORD=${POSTGRES_PASSWORD}'
@@ -95,22 +93,20 @@ services:
     restart: always
   cache:
     image: 'redis:7-alpine'
-    container_name: vania_redis
     command: 'redis-server --appendonly yes'
     volumes:
       - 'redis_data:/data'
     restart: always
   minio:
     image: 'minio/minio:latest'
-    container_name: vania_minio
     command: 'server /data --console-address ":9001"'
     environment:
       - 'MINIO_ROOT_USER=${MINIO_ROOT_USER}'
       - 'MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}'
       - 'MINIO_SERVER_URL=https://${AWS_S3_CUSTOM_MAIN_DOMAIN}'
     ports:
-      - '9100:9000'
-      - '9101:9001'
+      - '${MINIO_EXTERNAL_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_EXTERNAL_PORT:-9001}:9001'
     volumes:
       - 'minio_data:/data'
     restart: always
@@ -125,7 +121,6 @@ services:
     entrypoint: "/bin/sh -c \" until /usr/bin/mc alias set myminio http://minio:9000 \\${MINIO_ROOT_USER} \\${MINIO_ROOT_PASSWORD}; do\n  echo 'Waiting for MinIO...';\n  sleep 2;\ndone; /usr/bin/mc mb myminio/vania-media || true; /usr/bin/mc anonymous set public myminio/vania-media; exit 0; \"\n"
   qdrant:
     image: qdrant/qdrant
-    container_name: vania_qdrant
     volumes:
       - 'qdrant_data:/qdrant/storage'
     restart: always
