@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: vania_local_postgres
+    environment:
+      - POSTGRES_USER=vania_user
+      - POSTGRES_PASSWORD=vania_password
+      - POSTGRES_DB=vania_db
+    ports:
+      - "15435:5432"
+    volumes:
+      - local_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vania_user -d vania_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  cache:
+    image: redis:7-alpine
+    container_name: vania_local_redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - local_redis_data:/data
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z-cpuv1
+    container_name: vania_local_minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    ports:
+      - "19000:9000"
+      - "19001:9001"
+    volumes:
+      - local_minio_data:/data
+    restart: always
+
+  createbuckets:
+    image: quay.io/minio/minio:RELEASE.2023-11-01T01-57-10Z-cpuv1
+    restart: "no"
+    depends_on:
+      - minio
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    entrypoint: "/bin/sh -c \" until /usr/bin/mc alias set myminio http://minio:9000 \\${MINIO_ROOT_USER} \\${MINIO_ROOT_PASSWORD}; do echo 'Waiting for MinIO...'; sleep 2; done; /usr/bin/mc mb myminio/vania-media || true; /usr/bin/mc anonymous set public myminio/vania-media; exit 0; \""
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: vania_local_qdrant
+    ports:
+      - "16333:6333"
+    volumes:
+      - local_qdrant_data:/qdrant/storage
+
+volumes:
+  local_postgres_data:
+  local_redis_data:
+  local_minio_data:
+  local_qdrant_data:

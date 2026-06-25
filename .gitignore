@@ -50,7 +50,7 @@ local_settings.py
 # ----------------------------------------
 # Editor / IDE
 # ----------------------------------------
-.vscode/
+
 .idea/
 *.swp
 
@@ -139,10 +139,14 @@ craft/
 
 
 commands.txt
-docker-compose.local-infra.yml
 docker-compose.prod.nocoolify.yml
 
 
 .next/
 .next
 /.next
+
+# VitePress
+docs/.vitepress/dist/
+docs/.vitepress/.temp/
+docs/.vitepress/cache/

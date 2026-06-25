@@ -1,0 +1,101 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Infrastructure (Docker)",
+      "type": "shell",
+      "command": "docker compose -f docker-compose.local-infra.yml up -d",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "close": false
+      }
+    },
+    {
+      "label": "Start Backend (Uvicorn)",
+      "type": "shell",
+      "command": "venv\\Scripts\\activate && uvicorn core.asgi:application --host 0.0.0.0 --port 8000 --reload",
+      "options": {
+        "cwd": "${workspaceFolder}/backend",
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/k"]
+        }
+      },
+      "presentation": {
+        "group": "run-all",
+        "reveal": "always",
+        "panel": "dedicated",
+        "close": false
+      }
+    },
+    {
+      "label": "Start Celery Worker",
+      "type": "shell",
+      "command": "venv\\Scripts\\activate && celery -A core worker -l info --pool=solo",
+      "options": {
+        "cwd": "${workspaceFolder}/backend",
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/k"]
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "close": false
+      }
+    },
+    {
+      "label": "Start Frontend",
+      "type": "shell",
+      "command": "pnpm dev",
+      "options": {
+        "cwd": "${workspaceFolder}/frontend",
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/k"]
+        }
+      },
+      "presentation": {
+        "group": "run-all",
+        "reveal": "always",
+        "panel": "dedicated",
+        "close": false
+      }
+    },
+    {
+      "label": "Start Docs (VitePress)",
+      "type": "shell",
+      "command": "pnpm dev",
+      "options": {
+        "cwd": "${workspaceFolder}/docs",
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/k"]
+        }
+      },
+      "presentation": {
+        "group": "run-all",
+        "reveal": "always",
+        "panel": "dedicated",
+        "close": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Full Stack App",
+      "dependsOn": [
+        "Start Infrastructure (Docker)",
+        "Start Backend (Uvicorn)",
+        "Start Celery Worker",
+        "Start Frontend"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}
