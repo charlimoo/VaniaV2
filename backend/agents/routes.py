@@ -5,11 +5,12 @@ import tempfile
 import uuid 
 import json 
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.responses import StreamingResponse, JSONResponse
 from asgiref.sync import sync_to_async
+from django.db import connection
 from openai import OpenAI
 from agno.media import File as AgnoFile
 
@@ -104,6 +105,95 @@ def _get_session_display_name(session_data: Optional[dict], fallback: str = "New
         or fallback
     )
 
+
+def _get_agent_sessions_table_name() -> Optional[str]:
+    """
+    Resolve Agno's session table without assuming the schema name.
+
+    Production stores it under ai.agent_sessions, while local/dev setups may use
+    a plain agent_sessions table or SQLite through Agno's adapter.
+    """
+    if connection.vendor != "postgresql":
+        return None
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT COALESCE(
+                to_regclass('ai.agent_sessions')::text,
+                to_regclass('agent_sessions')::text
+            )
+            """
+        )
+        row = cursor.fetchone()
+
+    table_name = row[0] if row else None
+    if table_name not in {"ai.agent_sessions", "agent_sessions", "public.agent_sessions"}:
+        return None
+    return table_name
+
+
+def _list_session_metadata_from_db(
+    *,
+    user_id: str,
+    limit: int,
+    page: int,
+    agent_id: Optional[str] = None,
+) -> Optional[list[dict[str, Any]]]:
+    """
+    Fast path for session lists.
+
+    The Agno storage adapter returns full session objects, including the `runs`
+    JSONB column. Some older users have hundreds of sessions and gigabytes of
+    compressed run data, so metadata lists must avoid selecting that column.
+    """
+    table_name = _get_agent_sessions_table_name()
+    if not table_name:
+        return None
+
+    offset = (page - 1) * limit
+    params: list[Any] = [str(user_id), SessionType.AGENT.value]
+    agent_filter = ""
+    if agent_id:
+        agent_filter = "AND (agent_id = %s OR session_data->>'agent_id' = %s)"
+        params.extend([agent_id, agent_id])
+
+    params.extend([limit, offset])
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT
+                session_id,
+                agent_id,
+                session_data,
+                created_at
+            FROM {table_name}
+            WHERE user_id = %s
+              AND session_type = %s
+              {agent_filter}
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+            """,
+            params,
+        )
+        rows = cursor.fetchall()
+
+    results = []
+    for session_id, row_agent_id, session_data, created_at in rows:
+        session_data = safe_serialize(session_data) or {}
+        if not isinstance(session_data, dict):
+            session_data = {}
+        resolved_agent_id = session_data.get("agent_id") or row_agent_id
+        results.append({
+            "session_id": session_id,
+            "session_name": _get_session_display_name(session_data, session_id),
+            "agent_id": resolved_agent_id,
+            "created_at": created_at,
+        })
+
+    return results
+
 # ==========================================
 # SESSION MANAGEMENT ROUTES
 # ==========================================
@@ -112,6 +202,7 @@ def _get_session_display_name(session_data: Optional[dict], fallback: str = "New
 async def list_sessions(
     limit: int = Query(20, ge=1, le=100), 
     page: int = Query(1, ge=1), 
+    agent_id: Optional[str] = Query(None),
     user: CustomUser = Depends(get_current_user)
 ):
     """
@@ -121,6 +212,15 @@ async def list_sessions(
     logger.info(f"📋 [ListSessions] [ReqID:{request_id}] Request received for User {user.id}")
 
     try:
+        fast_results = await sync_to_async(_list_session_metadata_from_db)(
+            user_id=str(user.id),
+            limit=limit,
+            page=page,
+            agent_id=agent_id,
+        )
+        if fast_results is not None:
+            return JSONResponse(content=fast_results)
+
         storage = get_storage()
         
         # Ensure table exists
@@ -138,6 +238,17 @@ async def list_sessions(
         
         # Sort & Paginate
         sessions.sort(key=lambda x: getattr(x, 'created_at', 0) or 0, reverse=True)
+
+        if agent_id:
+            filtered_sessions = []
+            for s in sessions:
+                s_dict = safe_serialize(s)
+                session_data = s_dict.get('session_data') or {}
+                row_agent_id = s_dict.get('agent_id')
+                resolved_agent_id = session_data.get('agent_id') if isinstance(session_data, dict) else None
+                if row_agent_id == agent_id or resolved_agent_id == agent_id:
+                    filtered_sessions.append(s)
+            sessions = filtered_sessions
         
         start = (page - 1) * limit
         end = start + limit
