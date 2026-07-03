@@ -63,6 +63,23 @@ export default function RootLayout({
             `,
           }}
         />
+        <Script
+          id="goftino-hide-launcher"
+          strategy="afterInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function(){
+                function hideGoftinoLauncher(){
+                  if (window.Goftino && typeof window.Goftino.setWidget === "function") {
+                    window.Goftino.setWidget({ hasIcon: false });
+                  }
+                }
+                window.addEventListener("goftino_ready", hideGoftinoLauncher);
+                hideGoftinoLauncher();
+              })();
+            `,
+          }}
+        />
       </body>
     </html>
   );

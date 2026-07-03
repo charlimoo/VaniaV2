@@ -11,6 +11,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { cn } from "@/lib/utils"
 import { DynamicBreadcrumb } from "@/components/dynamic-breadcrumb";
 import {NotificationBell} from "@/components/notifications/notification-bell"
+import { SupportChatButton } from "@/components/support-chat-button"
 import { API_BASE_URL, getAuthHeaders } from "@/lib/api"
 
 type PageTutorial = {
@@ -137,6 +138,7 @@ export function GlobalHeader({ title, variant, children, className }: GlobalHead
                  Direct purchase flow replaces the shopping cart.
               */}
               <NotificationBell />
+              <SupportChatButton />
               <ThemeToggle />
 
           </div>
