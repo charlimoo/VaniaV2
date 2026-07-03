@@ -106,6 +106,17 @@ def _get_session_display_name(session_data: Optional[dict], fallback: str = "New
     )
 
 
+def _coerce_session_data(session_data: Any) -> dict:
+    serialized = safe_serialize(session_data) or {}
+    if isinstance(serialized, str):
+        try:
+            parsed = json.loads(serialized)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return serialized if isinstance(serialized, dict) else {}
+
+
 def _get_agent_sessions_table_name() -> Optional[str]:
     """
     Resolve Agno's session table without assuming the schema name.
@@ -181,9 +192,7 @@ def _list_session_metadata_from_db(
 
     results = []
     for session_id, row_agent_id, session_data, created_at in rows:
-        session_data = safe_serialize(session_data) or {}
-        if not isinstance(session_data, dict):
-            session_data = {}
+        session_data = _coerce_session_data(session_data)
         resolved_agent_id = session_data.get("agent_id") or row_agent_id
         results.append({
             "session_id": session_id,
