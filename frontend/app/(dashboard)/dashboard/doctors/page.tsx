@@ -31,6 +31,8 @@ interface ConnectedDoctor {
   name: string;
   avatar: string | null;
   role_label: string;
+  role_slug?: string | null;
+  is_expert_verified?: boolean;
   specialty?: string;
   expert_profession_slug?: string | null;
   expert_profession_label?: string | null;
@@ -63,7 +65,7 @@ export default function MyDoctorsPage() {
     const fetchMyDoctors = async () => {
       try {
         // We use the Inbox API because it returns active connections with message status
-        const res = await fetch(`${API_BASE_URL}/api/vania/messages/inbox/`, {
+        const res = await fetch(`${API_BASE_URL}/api/vania/messages/inbox/?counterpart_role=expert`, {
           headers: getAuthHeaders()
         });
         

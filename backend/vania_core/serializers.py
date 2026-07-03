@@ -239,6 +239,8 @@ class ConversationSerializer(serializers.Serializer):
     email = serializers.EmailField(allow_null=True, required=False)
     avatar = serializers.CharField(allow_null=True)
     role_label = serializers.CharField() 
+    role_slug = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    is_expert_verified = serializers.BooleanField(required=False)
     specialty = serializers.CharField(required=False, allow_blank=True)
     expert_profession_slug = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     expert_profession_label = serializers.CharField(required=False, allow_blank=True, allow_null=True)
