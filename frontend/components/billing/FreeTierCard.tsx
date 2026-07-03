@@ -37,8 +37,6 @@ export function FreeTierCard({ wallet }: FreeTierCardProps) {
                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider font-bold">اعتبار خریداری شده فعلی</span>
                      <div className="text-4xl font-black text-foreground mt-1">{totalBalance.toLocaleString()}</div>
                 </div>
-                
-
             </div>
         </div>
     );
