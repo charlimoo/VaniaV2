@@ -66,7 +66,7 @@ from .serializers import (
 
 # --- User Imports ---
 from users.models import CustomUser, UserContextEntry
-from users.roles import has_visitor_features, is_expert
+from users.roles import CANONICAL_EXPERT_SLUG, has_visitor_features, is_expert, normalize_role_slug
 from capabilities.vania_visitor.forms import FORM_BASE_PROFILE
 from .case_service import CaseService
 from services.models_canvas import CanvasInstance
@@ -578,11 +578,32 @@ class ConversationListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     def get(self, request):
         user = request.user
-        connections = TreatmentConnection.objects.filter(Q(doctor=user) | Q(patient=user), status=TreatmentConnection.Status.ACTIVE).select_related('doctor', 'patient', 'doctor__doctor_profile')
+        counterpart_role = normalize_role_slug(request.query_params.get("counterpart_role"))
+        connections = TreatmentConnection.objects.filter(
+            Q(doctor=user) | Q(patient=user),
+            status=TreatmentConnection.Status.ACTIVE
+        ).select_related(
+            'doctor',
+            'doctor__role',
+            'doctor__expert_profession',
+            'patient',
+            'patient__role',
+            'patient__expert_profession',
+            'doctor__doctor_profile',
+        )
         results = []
         for conn in connections:
             other = conn.patient if conn.doctor == user else conn.doctor
-            role_label = "مراجعه‌کننده" if conn.doctor == user else "متخصص"
+            other_role_slug = normalize_role_slug(getattr(getattr(other, "role", None), "slug", None))
+            other_is_verified_expert = bool(
+                other_role_slug == CANONICAL_EXPERT_SLUG
+                and getattr(other, "is_expert_verified", False)
+            )
+
+            if counterpart_role == CANONICAL_EXPERT_SLUG and not other_is_verified_expert:
+                continue
+
+            role_label = "متخصص" if other_is_verified_expert else "مراجعه‌کننده"
 
             try:
                 profile = other.doctor_profile
@@ -608,6 +629,8 @@ class ConversationListView(APIView):
                 "email": other.email,
                 "avatar": avatar,
                 "role_label": role_label,
+                "role_slug": other_role_slug,
+                "is_expert_verified": bool(getattr(other, "is_expert_verified", False)),
                 "specialty": specialty,
                 "expert_profession_slug": getattr(expert_profession, "slug", None),
                 "expert_profession_label": getattr(expert_profession, "name", None),

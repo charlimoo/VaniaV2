@@ -324,7 +324,15 @@ const buildSessionState = ({
 export const threadManager = {
   listThreads: async (token: string, agentId?: string, page = 1, limit = 50): Promise<any[]> => {
     try {
-      const res = await fetch(`${API_BASE_URL}/agent/sessions?limit=${limit}&page=${page}`, {
+      const params = new URLSearchParams({
+        limit: String(limit),
+        page: String(page),
+      });
+      if (agentId) {
+        params.set("agent_id", agentId);
+      }
+
+      const res = await fetch(`${API_BASE_URL}/agent/sessions?${params.toString()}`, {
         headers: getAuthHeaders(),
       });
 
