@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, CreditCard, FlaskConical, Loader2, Link2, PlayCircle, Upload } from "lucide-react";
+import {
+  CheckCircle2,
+  CreditCard,
+  FlaskConical,
+  Loader2,
+  Link2,
+  PlayCircle,
+  Upload,
+} from "lucide-react";
 import { toast } from "sonner";
 import { ClinicalTestAttachment, ClinicalTestEntry } from "@/lib/types/vania";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +39,10 @@ type InteractiveAnswer = {
 type InteractiveQuestion = {
   row: number;
   title: string;
-  answers: InteractiveAnswer[];
+  answers?:
+    | InteractiveAnswer[]
+    | Record<string, InteractiveAnswer | string | number>
+    | null;
 };
 
 type InteractiveAttempt = {
@@ -82,34 +93,107 @@ interface Props {
 const toJalali = (isoDateString?: string) => {
   if (!isoDateString) return "-";
   try {
-    if (isoDateString.startsWith("13") || isoDateString.startsWith("14")) return isoDateString;
+    if (isoDateString.startsWith("13") || isoDateString.startsWith("14"))
+      return isoDateString;
     return new Date(isoDateString).toLocaleDateString("fa-IR");
   } catch {
     return isoDateString;
   }
 };
 
-const getTestAttachments = (test: ClinicalTestEntry): ClinicalTestAttachment[] => {
+const getTestAttachments = (
+  test: ClinicalTestEntry,
+): ClinicalTestAttachment[] => {
   if (Array.isArray(test.attachments) && test.attachments.length > 0) {
     return test.attachments;
   }
   if (test.file_name) {
-    return [{
-      id: "legacy-file",
-      file_name: test.file_name,
-      file_path: test.file_path,
-      file_uploaded_at: test.file_uploaded_at,
-      content_type: test.file_name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "application/octet-stream",
-    }];
+    return [
+      {
+        id: "legacy-file",
+        file_name: test.file_name,
+        file_path: test.file_path,
+        file_uploaded_at: test.file_uploaded_at,
+        content_type: test.file_name.toLowerCase().endsWith(".pdf")
+          ? "application/pdf"
+          : "application/octet-stream",
+      },
+    ];
   }
   return [];
 };
 
-const interactiveStatusLabel = (status?: ClinicalTestEntry["interactive_status"] | InteractiveAttempt["status"]) => {
+const interactiveStatusLabel = (
+  status?:
+    | ClinicalTestEntry["interactive_status"]
+    | InteractiveAttempt["status"],
+) => {
   if (status === "COMPLETED") return "تکمیل شده";
   if (status === "IN_PROGRESS" || status === "SUBMITTED") return "در حال انجام";
   if (status === "FAILED") return "نیازمند تلاش دوباره";
   return "در انتظار انجام";
+};
+
+const normalizeInteractiveAnswers = (
+  question?: InteractiveQuestion | null,
+): InteractiveAnswer[] => {
+  const rawAnswers = question?.answers;
+  const answerItems = Array.isArray(rawAnswers)
+    ? rawAnswers
+    : rawAnswers && typeof rawAnswers === "object"
+      ? Object.entries(rawAnswers).map(([key, value], index) => {
+          if (value && typeof value === "object") {
+            return {
+              ...(value as InteractiveAnswer),
+              row: Number((value as InteractiveAnswer).row ?? index + 1),
+            };
+          }
+          return { row: index + 1, title: String(value ?? key), value: key };
+        })
+      : [];
+
+  return answerItems
+    .map((answer, index) => ({
+      row: Number(answer?.row ?? index + 1),
+      title: String(answer?.title ?? answer?.value ?? index + 1),
+      value: String(answer?.value ?? answer?.row ?? index + 1),
+    }))
+    .filter((answer) => answer.title.trim() && answer.value.trim());
+};
+
+const hasDuplicateInteractiveAnswerValues = (answers: InteractiveAnswer[]) => {
+  const values = new Set<string>();
+  return answers.some((answer) => {
+    if (values.has(answer.value)) return true;
+    values.add(answer.value);
+    return false;
+  });
+};
+
+const getInteractiveAnswerSubmitValue = (
+  answer: InteractiveAnswer,
+  answers: InteractiveAnswer[],
+) =>
+  String(
+    hasDuplicateInteractiveAnswerValues(answers) ? answer.row : answer.value,
+  );
+
+const normalizeInteractiveQuestions = (
+  value?: InteractiveQuestion[] | null,
+): InteractiveQuestion[] => {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((question) => question && typeof question === "object")
+    .map((question, index) => {
+      const answers = normalizeInteractiveAnswers(question);
+      return {
+        ...question,
+        row: Number(question.row ?? index + 1),
+        title: String(question.title ?? `سوال ${index + 1}`),
+        answers,
+      };
+    })
+    .filter((question) => normalizeInteractiveAnswers(question).length > 0);
 };
 
 const isInteractiveComplete = (test: ClinicalTestEntry) =>
@@ -118,7 +202,9 @@ const isInteractiveComplete = (test: ClinicalTestEntry) =>
 const testHasResult = (test: ClinicalTestEntry) => {
   const attachments = getTestAttachments(test);
   const resultText = test.result_text || test.result_summary || "";
-  return test.source === "interactive" ? isInteractiveComplete(test) : !!resultText.trim() || attachments.length > 0;
+  return test.source === "interactive"
+    ? isInteractiveComplete(test)
+    : !!resultText.trim() || attachments.length > 0;
 };
 
 const formatNumber = (value?: string | number | null) => {
@@ -145,13 +231,19 @@ export function PatientTestsTab({
   const [interactiveOpen, setInteractiveOpen] = useState(false);
   const [interactiveLoading, setInteractiveLoading] = useState(false);
   const [interactiveSubmitting, setInteractiveSubmitting] = useState(false);
-  const [activeInteractiveTest, setActiveInteractiveTest] = useState<ClinicalTestEntry | null>(null);
-  const [activeAttempt, setActiveAttempt] = useState<InteractiveAttempt | null>(null);
+  const [activeInteractiveTest, setActiveInteractiveTest] =
+    useState<ClinicalTestEntry | null>(null);
+  const [activeAttempt, setActiveAttempt] = useState<InteractiveAttempt | null>(
+    null,
+  );
   const [age, setAge] = useState("");
   const [sex, setSex] = useState<"female" | "male">("female");
   const [questionIndex, setQuestionIndex] = useState(0);
-  const [savingAnswerValue, setSavingAnswerValue] = useState<string | null>(null);
-  const [paymentRequest, setPaymentRequest] = useState<TestPaymentRequest | null>(null);
+  const [savingAnswerValue, setSavingAnswerValue] = useState<string | null>(
+    null,
+  );
+  const [paymentRequest, setPaymentRequest] =
+    useState<TestPaymentRequest | null>(null);
   const onEditRef = useRef(onEdit);
   const testsRef = useRef(tests);
 
@@ -163,16 +255,23 @@ export function PatientTestsTab({
     testsRef.current = tests;
   }, [tests]);
 
-  const refreshTests = useCallback(async (ignoreRef?: { current: boolean }) => {
+  const refreshTests = useCallback(
+    async (ignoreRef?: { current: boolean }) => {
       setIsLoading(true);
       try {
         const res = await fetch(`${API_BASE_URL}/api/vania/tests/`, {
           method: "GET",
           headers: {
             ...getAuthHeaders(),
-            ...(selectedDoctorId ? { "X-Target-Expert-ID": String(selectedDoctorId) } : {}),
-            ...(selectedDoctorId ? { "X-Target-Doctor-ID": String(selectedDoctorId) } : {}),
-            ...(selectedCaseId ? { "X-Target-Case-ID": String(selectedCaseId) } : {}),
+            ...(selectedDoctorId
+              ? { "X-Target-Expert-ID": String(selectedDoctorId) }
+              : {}),
+            ...(selectedDoctorId
+              ? { "X-Target-Doctor-ID": String(selectedDoctorId) }
+              : {}),
+            ...(selectedCaseId
+              ? { "X-Target-Case-ID": String(selectedCaseId) }
+              : {}),
           },
         });
         if (!res.ok) return;
@@ -188,7 +287,9 @@ export function PatientTestsTab({
       } finally {
         if (!ignoreRef?.current) setIsLoading(false);
       }
-  }, [selectedDoctorId, selectedCaseId]);
+    },
+    [selectedDoctorId, selectedCaseId],
+  );
 
   useEffect(() => {
     const ignoreRef = { current: false };
@@ -200,27 +301,42 @@ export function PatientTestsTab({
   }, [refreshTests]);
 
   const activeQuestions = useMemo(
-    () => activeAttempt?.questionnaire?.questions || [],
-    [activeAttempt]
+    () =>
+      normalizeInteractiveQuestions(activeAttempt?.questionnaire?.questions),
+    [activeAttempt?.questionnaire?.questions],
   );
 
   const activeQuestion = activeQuestions[questionIndex] || null;
-  const answeredCount = activeAttempt ? Object.keys(activeAttempt.answers || {}).length : 0;
-  const progressPercent = activeQuestions.length > 0 ? Math.round((answeredCount / activeQuestions.length) * 100) : 0;
+  const activeAnswers = useMemo(
+    () => normalizeInteractiveAnswers(activeQuestion),
+    [activeQuestion],
+  );
+  const answeredCount = activeAttempt
+    ? Object.keys(activeAttempt.answers || {}).length
+    : 0;
+  const progressPercent =
+    activeQuestions.length > 0
+      ? Math.round((answeredCount / activeQuestions.length) * 100)
+      : 0;
 
   const sortedTests = useMemo(() => {
     return [...(tests || [])].sort((a, b) => {
       const aDone = testHasResult(a);
       const bDone = testHasResult(b);
       if (aDone !== bDone) return aDone ? 1 : -1;
-      return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      return (
+        new Date(b.created_at || 0).getTime() -
+        new Date(a.created_at || 0).getTime()
+      );
     });
   }, [tests]);
 
   const testCounts = useMemo(() => {
     const total = tests?.length || 0;
     const done = (tests || []).filter(testHasResult).length;
-    const interactive = (tests || []).filter((test) => test.source === "interactive").length;
+    const interactive = (tests || []).filter(
+      (test) => test.source === "interactive",
+    ).length;
     return { total, done, pending: total - done, interactive };
   }, [tests]);
 
@@ -248,9 +364,13 @@ export function PatientTestsTab({
 
     setInteractiveLoading(true);
     try {
-      const attempt = await fetchInteractiveAttempt(test.interactive_attempt_id);
+      const attempt = await fetchInteractiveAttempt(
+        test.interactive_attempt_id,
+      );
       setActiveAttempt(attempt);
-      const firstUnanswered = (attempt.questionnaire?.questions || []).findIndex((question) => !attempt.answers?.[String(question.row)]);
+      const firstUnanswered = normalizeInteractiveQuestions(
+        attempt.questionnaire?.questions,
+      ).findIndex((question) => !attempt.answers?.[String(question.row)]);
       setQuestionIndex(firstUnanswered >= 0 ? firstUnanswered : 0);
     } catch (e: any) {
       toast.error(e.message || "بارگذاری تست تعاملی ناموفق بود.");
@@ -260,12 +380,15 @@ export function PatientTestsTab({
   };
 
   const fetchInteractiveAttempt = async (attemptId: string) => {
-    const res = await fetch(`${API_BASE_URL}/api/vania/esanj/attempts/${attemptId}/`, {
-      method: "GET",
-      headers: { ...getAuthHeaders() },
-    });
+    const res = await fetch(
+      `${API_BASE_URL}/api/vania/esanj/attempts/${attemptId}/`,
+      {
+        method: "GET",
+        headers: { ...getAuthHeaders() },
+      },
+    );
     if (!res.ok) throw new Error("بارگذاری تست تعاملی ناموفق بود.");
-    return await res.json() as InteractiveAttempt;
+    return (await res.json()) as InteractiveAttempt;
   };
 
   const startInteractiveAttempt = async () => {
@@ -283,8 +406,15 @@ export function PatientTestsTab({
         headers: {
           "Content-Type": "application/json",
           ...getAuthHeaders(),
-          ...(selectedDoctorId ? { "X-Target-Expert-ID": String(selectedDoctorId), "X-Target-Doctor-ID": String(selectedDoctorId) } : {}),
-          ...(selectedCaseId ? { "X-Target-Case-ID": String(selectedCaseId) } : {}),
+          ...(selectedDoctorId
+            ? {
+                "X-Target-Expert-ID": String(selectedDoctorId),
+                "X-Target-Doctor-ID": String(selectedDoctorId),
+              }
+            : {}),
+          ...(selectedCaseId
+            ? { "X-Target-Case-ID": String(selectedCaseId) }
+            : {}),
         },
         body: JSON.stringify({
           test_id: activeInteractiveTest.interactive_test_id,
@@ -305,7 +435,7 @@ export function PatientTestsTab({
         }
         throw new Error(body?.error || "شروع تست تعاملی ناموفق بود.");
       }
-      const attempt = await res.json() as InteractiveAttempt;
+      const attempt = (await res.json()) as InteractiveAttempt;
       setActiveAttempt(attempt);
       setPaymentRequest(null);
       setQuestionIndex(0);
@@ -317,19 +447,28 @@ export function PatientTestsTab({
     }
   };
 
-  const saveInteractiveAnswer = async (question: InteractiveQuestion, value: string) => {
+  const saveInteractiveAnswer = async (
+    question: InteractiveQuestion,
+    value: string,
+  ) => {
     if (!activeAttempt) return;
-    const nextAnswers = { ...(activeAttempt.answers || {}), [String(question.row)]: value };
+    const nextAnswers = {
+      ...(activeAttempt.answers || {}),
+      [String(question.row)]: value,
+    };
     setActiveAttempt({ ...activeAttempt, answers: nextAnswers });
     setSavingAnswerValue(`${question.row}-${value}`);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/vania/esanj/attempts/${activeAttempt.id}/`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ answers: { [String(question.row)]: value } }),
-      });
+      const res = await fetch(
+        `${API_BASE_URL}/api/vania/esanj/attempts/${activeAttempt.id}/`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ answers: { [String(question.row)]: value } }),
+        },
+      );
       if (!res.ok) throw new Error("ذخیره پاسخ ناموفق بود.");
-      const updated = await res.json() as InteractiveAttempt;
+      const updated = (await res.json()) as InteractiveAttempt;
       setActiveAttempt(updated);
       if (questionIndex < activeQuestions.length - 1) {
         setQuestionIndex((prev) => prev + 1);
@@ -345,16 +484,19 @@ export function PatientTestsTab({
     if (!activeAttempt) return;
     setInteractiveSubmitting(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/vania/esanj/attempts/${activeAttempt.id}/submit/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...getAuthHeaders() },
-        body: JSON.stringify({ answers: activeAttempt.answers || {} }),
-      });
+      const res = await fetch(
+        `${API_BASE_URL}/api/vania/esanj/attempts/${activeAttempt.id}/submit/`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...getAuthHeaders() },
+          body: JSON.stringify({ answers: activeAttempt.answers || {} }),
+        },
+      );
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error || "ثبت نهایی تست ناموفق بود.");
       }
-      const completed = await res.json() as InteractiveAttempt;
+      const completed = (await res.json()) as InteractiveAttempt;
       setActiveAttempt(completed);
       setQuestionIndex(0);
       await refreshTests();
@@ -376,25 +518,39 @@ export function PatientTestsTab({
     setIsUploading(true);
     try {
       let nextTests = [...(tests || [])];
-      if (resultSummary.trim() !== (activeTest.result_text || activeTest.result_summary || "").trim()) {
-        const updateRes = await fetch(`${API_BASE_URL}/api/vania/tests/${activeTest.id}/`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-            ...getAuthHeaders(),
-            ...(selectedDoctorId ? { "X-Target-Expert-ID": String(selectedDoctorId) } : {}),
-            ...(selectedDoctorId ? { "X-Target-Doctor-ID": String(selectedDoctorId) } : {}),
-            ...(selectedCaseId ? { "X-Target-Case-ID": String(selectedCaseId) } : {}),
+      if (
+        resultSummary.trim() !==
+        (activeTest.result_text || activeTest.result_summary || "").trim()
+      ) {
+        const updateRes = await fetch(
+          `${API_BASE_URL}/api/vania/tests/${activeTest.id}/`,
+          {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              ...getAuthHeaders(),
+              ...(selectedDoctorId
+                ? { "X-Target-Expert-ID": String(selectedDoctorId) }
+                : {}),
+              ...(selectedDoctorId
+                ? { "X-Target-Doctor-ID": String(selectedDoctorId) }
+                : {}),
+              ...(selectedCaseId
+                ? { "X-Target-Case-ID": String(selectedCaseId) }
+                : {}),
+            },
+            body: JSON.stringify({
+              result_text: resultSummary,
+              result_summary: resultSummary,
+              case_id: selectedCaseId,
+            }),
           },
-          body: JSON.stringify({
-            result_text: resultSummary,
-            result_summary: resultSummary,
-            case_id: selectedCaseId,
-          }),
-        });
+        );
         if (!updateRes.ok) throw new Error("ذخیره متن نتیجه ناموفق بود.");
         const updated = await updateRes.json();
-        nextTests = nextTests.map((t) => (t.id === activeTest.id ? updated : t));
+        nextTests = nextTests.map((t) =>
+          t.id === activeTest.id ? updated : t,
+        );
       }
 
       if (selectedFiles.length === 0) {
@@ -410,16 +566,25 @@ export function PatientTestsTab({
         fd.append("file", file);
         if (selectedCaseId) fd.append("case_id", selectedCaseId);
 
-        const res = await fetch(`${API_BASE_URL}/api/vania/tests/${activeTest.id}/file/`, {
-          method: "POST",
-          headers: {
-            ...getAuthHeaders(),
-            ...(selectedDoctorId ? { "X-Target-Expert-ID": String(selectedDoctorId) } : {}),
-            ...(selectedDoctorId ? { "X-Target-Doctor-ID": String(selectedDoctorId) } : {}),
-            ...(selectedCaseId ? { "X-Target-Case-ID": String(selectedCaseId) } : {}),
+        const res = await fetch(
+          `${API_BASE_URL}/api/vania/tests/${activeTest.id}/file/`,
+          {
+            method: "POST",
+            headers: {
+              ...getAuthHeaders(),
+              ...(selectedDoctorId
+                ? { "X-Target-Expert-ID": String(selectedDoctorId) }
+                : {}),
+              ...(selectedDoctorId
+                ? { "X-Target-Doctor-ID": String(selectedDoctorId) }
+                : {}),
+              ...(selectedCaseId
+                ? { "X-Target-Case-ID": String(selectedCaseId) }
+                : {}),
+            },
+            body: fd,
           },
-          body: fd,
-        });
+        );
 
         if (!res.ok) {
           let errorText = `آپلود فایل «${file.name}» ناموفق بود.`;
@@ -431,7 +596,9 @@ export function PatientTestsTab({
         }
 
         latestTest = await res.json();
-        nextTests = nextTests.map((t) => (t.id === activeTest.id ? latestTest! : t));
+        nextTests = nextTests.map((t) =>
+          t.id === activeTest.id ? latestTest! : t,
+        );
       }
 
       onEdit({ tests: nextTests });
@@ -444,19 +611,32 @@ export function PatientTestsTab({
     }
   };
 
-  const downloadTestFile = async (testId: string, attachmentId?: string, fallbackName?: string | null) => {
+  const downloadTestFile = async (
+    testId: string,
+    attachmentId?: string,
+    fallbackName?: string | null,
+  ) => {
     try {
       const query = new URLSearchParams();
       if (attachmentId) query.set("attachment_id", attachmentId);
-      const res = await fetch(`${API_BASE_URL}/api/vania/tests/${testId}/file/download/${query.toString() ? `?${query.toString()}` : ""}`, {
-        method: "GET",
-        headers: {
-          ...getAuthHeaders(),
-          ...(selectedDoctorId ? { "X-Target-Expert-ID": String(selectedDoctorId) } : {}),
-          ...(selectedDoctorId ? { "X-Target-Doctor-ID": String(selectedDoctorId) } : {}),
-          ...(selectedCaseId ? { "X-Target-Case-ID": String(selectedCaseId) } : {}),
+      const res = await fetch(
+        `${API_BASE_URL}/api/vania/tests/${testId}/file/download/${query.toString() ? `?${query.toString()}` : ""}`,
+        {
+          method: "GET",
+          headers: {
+            ...getAuthHeaders(),
+            ...(selectedDoctorId
+              ? { "X-Target-Expert-ID": String(selectedDoctorId) }
+              : {}),
+            ...(selectedDoctorId
+              ? { "X-Target-Doctor-ID": String(selectedDoctorId) }
+              : {}),
+            ...(selectedCaseId
+              ? { "X-Target-Case-ID": String(selectedCaseId) }
+              : {}),
+          },
         },
-      });
+      );
       if (!res.ok) throw new Error("دانلود فایل ناموفق بود.");
 
       const blob = await res.blob();
@@ -487,23 +667,37 @@ export function PatientTestsTab({
     return (
       <div className="rounded-xl border border-dashed bg-muted/5 px-4 py-10 text-center">
         <FlaskConical className="mx-auto mb-3 h-5 w-5 text-muted-foreground" />
-        <div className="text-sm font-medium text-foreground">تستی ثبت نشده است</div>
+        <div className="text-sm font-medium text-foreground">
+          تستی ثبت نشده است
+        </div>
         <div className="mt-1 text-xs text-muted-foreground">{emptyText}</div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 pb-10 animate-in fade-in slide-in-from-right-2 duration-300 font-sans">
+    <div className="animate-in space-y-6 pb-10 font-sans duration-300 fade-in slide-in-from-right-2">
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
-        <h3 className="text-sm font-bold flex items-center gap-2 text-foreground">
-          <FlaskConical className="w-4 h-4 text-primary" />
+        <h3 className="flex items-center gap-2 text-sm font-bold text-foreground">
+          <FlaskConical className="h-4 w-4 text-primary" />
           {title}
         </h3>
         <div className="flex flex-wrap items-center gap-1.5">
-          {testCounts.pending > 0 ? <Badge variant="secondary" className="text-[10px] font-normal">{testCounts.pending} در انتظار</Badge> : null}
-          {testCounts.done > 0 ? <Badge variant="outline" className="text-[10px] font-normal">{testCounts.done} تکمیل</Badge> : null}
-          {testCounts.interactive > 0 ? <Badge variant="outline" className="text-[10px] font-normal">{testCounts.interactive} تعاملی</Badge> : null}
+          {testCounts.pending > 0 ? (
+            <Badge variant="secondary" className="text-[10px] font-normal">
+              {testCounts.pending} در انتظار
+            </Badge>
+          ) : null}
+          {testCounts.done > 0 ? (
+            <Badge variant="outline" className="text-[10px] font-normal">
+              {testCounts.done} تکمیل
+            </Badge>
+          ) : null}
+          {testCounts.interactive > 0 ? (
+            <Badge variant="outline" className="text-[10px] font-normal">
+              {testCounts.interactive} تعاملی
+            </Badge>
+          ) : null}
         </div>
       </div>
 
@@ -525,21 +719,46 @@ export function PatientTestsTab({
               key={test.id}
               type="button"
               onClick={() => openUpload(test)}
-              className="flex w-full items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 text-right shadow-sm transition hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+              className="flex w-full items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3 text-right shadow-sm transition hover:border-primary/40 hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:outline-none"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="truncate text-sm font-semibold">{test.title}</span>
-                  {isInteractive ? <Badge variant="secondary" className="text-[10px]">تست تعاملی</Badge> : null}
-                  {test.url ? <Badge variant="outline" className="text-[10px]">لینک</Badge> : null}
-                  {attachments.length > 0 ? <Badge variant="outline" className="text-[10px]">{attachments.length} فایل</Badge> : null}
+                  <span className="truncate text-sm font-semibold">
+                    {test.title}
+                  </span>
+                  {isInteractive ? (
+                    <Badge variant="secondary" className="text-[10px]">
+                      تست تعاملی
+                    </Badge>
+                  ) : null}
+                  {test.url ? (
+                    <Badge variant="outline" className="text-[10px]">
+                      لینک
+                    </Badge>
+                  ) : null}
+                  {attachments.length > 0 ? (
+                    <Badge variant="outline" className="text-[10px]">
+                      {attachments.length} فایل
+                    </Badge>
+                  ) : null}
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                  <Badge variant={hasResult ? "outline" : "secondary"} className="text-[10px]">
-                    {isInteractive ? interactiveStatusLabel(test.interactive_status) : hasResult ? "تکمیل شده" : "در انتظار تکمیل"}
+                  <Badge
+                    variant={hasResult ? "outline" : "secondary"}
+                    className="text-[10px]"
+                  >
+                    {isInteractive
+                      ? interactiveStatusLabel(test.interactive_status)
+                      : hasResult
+                        ? "تکمیل شده"
+                        : "در انتظار تکمیل"}
                   </Badge>
                   <span>{toJalali(test.created_at)}</span>
-                  {test.url ? <span className="inline-flex items-center gap-1"><Link2 className="w-3 h-3" /> لینک</span> : null}
+                  {test.url ? (
+                    <span className="inline-flex items-center gap-1">
+                      <Link2 className="h-3 w-3" /> لینک
+                    </span>
+                  ) : null}
                 </div>
               </div>
               <div className="shrink-0">
@@ -553,7 +772,11 @@ export function PatientTestsTab({
                     openUpload(test);
                   }}
                 >
-                  {isInteractive ? <PlayCircle className="w-3.5 h-3.5 ml-1" /> : <Upload className="w-3.5 h-3.5 ml-1" />}
+                  {isInteractive ? (
+                    <PlayCircle className="ml-1 h-3.5 w-3.5" />
+                  ) : (
+                    <Upload className="ml-1 h-3.5 w-3.5" />
+                  )}
                   {actionLabel}
                 </Button>
               </div>
@@ -582,13 +805,25 @@ export function PatientTestsTab({
             </div>
             <div className="grid gap-1.5">
               <Label className="text-xs">فایل‌های نتیجه (PDF یا تصویر)</Label>
-              <Input type="file" multiple accept="application/pdf,image/*" onChange={(e) => setSelectedFiles(Array.from(e.target.files || []))} />
+              <Input
+                type="file"
+                multiple
+                accept="application/pdf,image/*"
+                onChange={(e) =>
+                  setSelectedFiles(Array.from(e.target.files || []))
+                }
+              />
               {selectedFiles.length > 0 && (
                 <div className="rounded-lg border border-border/60 bg-muted/10 p-2">
-                  <div className="mb-2 text-[10px] text-muted-foreground">{selectedFiles.length} فایل انتخاب شده</div>
+                  <div className="mb-2 text-[10px] text-muted-foreground">
+                    {selectedFiles.length} فایل انتخاب شده
+                  </div>
                   <div className="grid gap-1">
                     {selectedFiles.map((file) => (
-                      <div key={`${file.name}-${file.size}`} className="truncate text-[10px] text-foreground/80">
+                      <div
+                        key={`${file.name}-${file.size}`}
+                        className="truncate text-[10px] text-foreground/80"
+                      >
                         {file.name}
                       </div>
                     ))}
@@ -599,24 +834,38 @@ export function PatientTestsTab({
           </div>
 
           <DialogFooter>
-            <Button onClick={uploadFile} disabled={isUploading} className="w-full gap-2 sm:w-auto">
-              {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+            <Button
+              onClick={uploadFile}
+              disabled={isUploading}
+              className="w-full gap-2 sm:w-auto"
+            >
+              {isUploading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="h-4 w-4" />
+              )}
               {isUploading ? "در حال آپلود..." : "ثبت فایل"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={interactiveOpen} onOpenChange={(open) => {
-        setInteractiveOpen(open);
-        if (!open) setPaymentRequest(null);
-      }}>
-        <DialogContent dir="rtl" className="flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-2xl flex-col overflow-hidden">
+      <Dialog
+        open={interactiveOpen}
+        onOpenChange={(open) => {
+          setInteractiveOpen(open);
+          if (!open) setPaymentRequest(null);
+        }}
+      >
+        <DialogContent
+          dir="rtl"
+          className="flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-2xl flex-col overflow-hidden"
+        >
           <DialogHeader className="text-right">
-            <DialogTitle>{activeInteractiveTest?.title || "تست تعاملی"}</DialogTitle>
-            <DialogDescription>
-              پاسخ‌ها خودکار ذخیره می‌شوند.
-            </DialogDescription>
+            <DialogTitle>
+              {activeInteractiveTest?.title || "تست تعاملی"}
+            </DialogTitle>
+            <DialogDescription>پاسخ‌ها خودکار ذخیره می‌شوند.</DialogDescription>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto pr-1">
@@ -635,9 +884,13 @@ export function PatientTestsTab({
                     <div className="flex items-start gap-2">
                       <CreditCard className="mt-1 h-4 w-4 shrink-0 text-primary" />
                       <div className="min-w-0 space-y-1">
-                        <div className="text-sm font-semibold">پرداخت برای شروع تست</div>
+                        <div className="text-sm font-semibold">
+                          پرداخت برای شروع تست
+                        </div>
                         <p className="text-xs leading-6 text-muted-foreground">
-                          مبلغ قابل پرداخت: {formatNumber(paymentRequest.pricing?.total_amount)} تومان
+                          مبلغ قابل پرداخت:{" "}
+                          {formatNumber(paymentRequest.pricing?.total_amount)}{" "}
+                          تومان
                         </p>
                       </div>
                     </div>
@@ -645,15 +898,28 @@ export function PatientTestsTab({
                 ) : null}
                 <div className="grid gap-1.5">
                   <Label className="text-xs">سن</Label>
-                  <Input value={age} onChange={(event) => setAge(event.target.value)} inputMode="numeric" placeholder="مثلا ۳۰" />
+                  <Input
+                    value={age}
+                    onChange={(event) => setAge(event.target.value)}
+                    inputMode="numeric"
+                    placeholder="مثلا ۳۰"
+                  />
                 </div>
                 <div className="grid gap-2">
                   <Label className="text-xs">جنسیت</Label>
                   <div className="grid grid-cols-2 gap-2">
-                    <Button type="button" variant={sex === "female" ? "secondary" : "outline"} onClick={() => setSex("female")}>
+                    <Button
+                      type="button"
+                      variant={sex === "female" ? "secondary" : "outline"}
+                      onClick={() => setSex("female")}
+                    >
                       زن
                     </Button>
-                    <Button type="button" variant={sex === "male" ? "secondary" : "outline"} onClick={() => setSex("male")}>
+                    <Button
+                      type="button"
+                      variant={sex === "male" ? "secondary" : "outline"}
+                      onClick={() => setSex("male")}
+                    >
                       مرد
                     </Button>
                   </div>
@@ -665,34 +931,55 @@ export function PatientTestsTab({
               <div className="space-y-5">
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
-                    <span>سوال {questionIndex + 1} از {activeQuestions.length}</span>
+                    <span>
+                      سوال {questionIndex + 1} از {activeQuestions.length}
+                    </span>
                     <span>{answeredCount} پاسخ</span>
                   </div>
                   <Progress value={progressPercent} className="h-1.5" />
                 </div>
 
                 <div className="rounded-xl border bg-card p-4 shadow-sm">
-                  <h4 className="text-sm font-semibold leading-7">{activeQuestion.title}</h4>
+                  <h4 className="text-sm leading-7 font-semibold">
+                    {activeQuestion.title}
+                  </h4>
                 </div>
 
-                <div className="grid gap-2">
-                  {activeQuestion.answers.map((answer) => {
-                    const selected = activeAttempt.answers?.[String(activeQuestion.row)] === String(answer.value);
-                    return (
-                      <Button
-                        key={`${activeQuestion.row}-${answer.value}`}
-                        type="button"
-                        variant={selected ? "secondary" : "outline"}
-                        disabled={!!savingAnswerValue}
-                        className="h-auto min-h-11 justify-start whitespace-normal px-3 py-2 text-right text-xs leading-6"
-                        onClick={() => saveInteractiveAnswer(activeQuestion, String(answer.value))}
-                      >
-                        {savingAnswerValue === `${activeQuestion.row}-${answer.value}` ? <Loader2 className="ml-2 h-3.5 w-3.5 animate-spin" /> : null}
-                        {answer.title}
-                      </Button>
-                    );
-                  })}
-                </div>
+                {activeAnswers.length > 0 ? (
+                  <div className="grid gap-2">
+                    {activeAnswers.map((answer) => {
+                      const answerValue = getInteractiveAnswerSubmitValue(
+                        answer,
+                        activeAnswers,
+                      );
+                      const selected =
+                        activeAttempt.answers?.[String(activeQuestion.row)] ===
+                        answerValue;
+                      return (
+                        <Button
+                          key={`${activeQuestion.row}-${answer.row}-${answer.value}`}
+                          type="button"
+                          variant={selected ? "secondary" : "outline"}
+                          disabled={!!savingAnswerValue}
+                          className="h-auto min-h-11 justify-start px-3 py-2 text-right text-xs leading-6 whitespace-normal"
+                          onClick={() =>
+                            saveInteractiveAnswer(activeQuestion, answerValue)
+                          }
+                        >
+                          {savingAnswerValue ===
+                          `${activeQuestion.row}-${answerValue}` ? (
+                            <Loader2 className="ml-2 h-3.5 w-3.5 animate-spin" />
+                          ) : null}
+                          {answer.title}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-right text-xs leading-6 text-destructive">
+                    گزینه‌های این سوال از سرویس آزمون دریافت نشد.
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between gap-2">
                   <Button
@@ -700,7 +987,9 @@ export function PatientTestsTab({
                     variant="ghost"
                     size="sm"
                     disabled={questionIndex <= 0}
-                    onClick={() => setQuestionIndex((prev) => Math.max(0, prev - 1))}
+                    onClick={() =>
+                      setQuestionIndex((prev) => Math.max(0, prev - 1))
+                    }
                   >
                     قبلی
                   </Button>
@@ -709,7 +998,11 @@ export function PatientTestsTab({
                     variant="ghost"
                     size="sm"
                     disabled={questionIndex >= activeQuestions.length - 1}
-                    onClick={() => setQuestionIndex((prev) => Math.min(activeQuestions.length - 1, prev + 1))}
+                    onClick={() =>
+                      setQuestionIndex((prev) =>
+                        Math.min(activeQuestions.length - 1, prev + 1),
+                      )
+                    }
                   >
                     بعدی
                   </Button>
@@ -732,21 +1025,41 @@ export function PatientTestsTab({
                 رفتن به پرداخت
               </Button>
             ) : !activeAttempt ? (
-              <Button onClick={startInteractiveAttempt} disabled={interactiveLoading} className="w-full gap-2 sm:w-auto">
-                {interactiveLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlayCircle className="h-4 w-4" />}
+              <Button
+                onClick={startInteractiveAttempt}
+                disabled={interactiveLoading}
+                className="w-full gap-2 sm:w-auto"
+              >
+                {interactiveLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PlayCircle className="h-4 w-4" />
+                )}
                 شروع تست
               </Button>
             ) : activeAttempt.status !== "COMPLETED" ? (
               <Button
                 onClick={submitInteractiveAttempt}
-                disabled={interactiveSubmitting || answeredCount < activeQuestions.length}
+                disabled={
+                  interactiveSubmitting ||
+                  answeredCount < activeQuestions.length
+                }
                 className="w-full gap-2 sm:w-auto"
               >
-                {interactiveSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                {interactiveSubmitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
                 پایان تست
               </Button>
             ) : (
-              <Button type="button" variant="outline" onClick={() => setInteractiveOpen(false)} className="w-full sm:w-auto">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setInteractiveOpen(false)}
+                className="w-full sm:w-auto"
+              >
                 بستن
               </Button>
             )}

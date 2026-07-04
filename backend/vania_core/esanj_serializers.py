@@ -125,11 +125,14 @@ class EsanjAttemptSerializer(serializers.ModelSerializer):
     progress = serializers.SerializerMethodField()
     questions_count = serializers.SerializerMethodField()
     result = serializers.SerializerMethodField()
+    invoice_id = serializers.SerializerMethodField()
+    purchased_at = serializers.SerializerMethodField()
 
     class Meta:
         model = EsanjTestAttempt
         fields = (
             "id",
+            "invoice_id",
             "clinical_test_id",
             "doctor_id",
             "case_id",
@@ -144,6 +147,7 @@ class EsanjAttemptSerializer(serializers.ModelSerializer):
             "progress",
             "result",
             "error_message",
+            "purchased_at",
             "started_at",
             "updated_at",
             "submitted_at",
@@ -166,3 +170,11 @@ class EsanjAttemptSerializer(serializers.ModelSerializer):
             "json": obj.result_json or {},
             "grading": obj.grading_json or {},
         }
+
+    def get_invoice_id(self, obj):
+        return str(obj.invoice_id) if obj.invoice_id else None
+
+    def get_purchased_at(self, obj):
+        if not obj.invoice_id:
+            return obj.started_at
+        return obj.invoice.payment_date or obj.invoice.created_at

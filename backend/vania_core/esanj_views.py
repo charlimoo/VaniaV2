@@ -20,11 +20,16 @@ from .esanj_serializers import (
     user_can_access_esanj_rule,
 )
 from .models import EsanjTestAccessRule, EsanjTestAttempt, EsanjUserProfile
-from .tests_service import ClinicalTestsService
 from billing.models import BillingConfig, Invoice
 
 
 VAT_RATE = Decimal("10.00")
+
+
+def _clinical_tests_service():
+    from .tests_service import ClinicalTestsService
+
+    return ClinicalTestsService
 
 
 def _money(value: Decimal) -> Decimal:
@@ -141,6 +146,7 @@ def _invoice_for_interactive_test(user, rule: EsanjTestAccessRule):
         content_type=content_type,
         object_id=rule.id,
         status=Invoice.Status.PAID,
+        esanj_test_attempt__isnull=True,
     ).order_by("-payment_date", "-created_at").first()
     if paid_invoice:
         return paid_invoice, {
@@ -228,6 +234,7 @@ def _user_has_paid_interactive_test(user, rule: EsanjTestAccessRule) -> bool:
         content_type=content_type,
         object_id=rule.id,
         status=Invoice.Status.PAID,
+        esanj_test_attempt__isnull=True,
     ).exists()
 
 
@@ -324,19 +331,49 @@ def _question_answer_values(questionnaire: dict) -> dict[int, set[str]]:
             continue
         answers = question.get("answers", []) if isinstance(question, dict) else []
         if isinstance(answers, list):
-            allowed[row] = {str(answer.get("value")) for answer in answers if isinstance(answer, dict)}
+            allowed[row] = {
+                str(candidate)
+                for answer in answers
+                if isinstance(answer, dict)
+                for candidate in (answer.get("value"), answer.get("row"))
+                if candidate is not None
+            }
     return allowed
+
+
+def _question_answer_value_by_row(questionnaire: dict) -> dict[int, dict[str, str]]:
+    questions = questionnaire.get("questions", []) if isinstance(questionnaire, dict) else []
+    values_by_row: dict[int, dict[str, str]] = {}
+    if not isinstance(questions, list):
+        return values_by_row
+    for question in questions:
+        try:
+            row = int(question.get("row"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        answers = question.get("answers", []) if isinstance(question, dict) else []
+        if isinstance(answers, list):
+            values_by_row[row] = {
+                str(answer.get("row")): str(answer.get("value"))
+                for answer in answers
+                if isinstance(answer, dict)
+                and answer.get("row") is not None
+                and answer.get("value") is not None
+            }
+    return values_by_row
 
 
 def _answers_payload(attempt: EsanjTestAttempt, answers: dict[str, str]) -> dict:
     payload = {"sex": attempt.sex, "age": attempt.age}
     allowed_values = _question_answer_values(attempt.questionnaire)
+    value_by_answer_row = _question_answer_value_by_row(attempt.questionnaire)
     for row in _question_rows(attempt.questionnaire):
         value = answers.get(str(row))
         if value is None:
             raise ValueError("همه سوال‌ها باید پاسخ داده شوند.")
         if allowed_values.get(row) and str(value) not in allowed_values[row]:
             raise ValueError("یکی از پاسخ‌ها با گزینه‌های آزمون سازگار نیست.")
+        value = value_by_answer_row.get(row, {}).get(str(value), value)
         try:
             payload[f"q{row}"] = int(value)
         except (TypeError, ValueError):
@@ -380,6 +417,7 @@ class EsanjTestCatalogView(APIView):
                 user=request.user,
                 content_type=content_type,
                 status=Invoice.Status.PAID,
+                esanj_test_attempt__isnull=True,
             ).values_list("object_id", flat=True)
         )
         serializer = EsanjTestRuleSerializer(
@@ -407,7 +445,7 @@ class EsanjAttemptListCreateView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        attempts = EsanjTestAttempt.objects.filter(user=request.user).order_by("-started_at")
+        attempts = EsanjTestAttempt.objects.select_related("invoice").filter(user=request.user).order_by("-started_at")
         serializer = EsanjAttemptSerializer(attempts, many=True)
         return Response({"attempts": serializer.data})
 
@@ -426,7 +464,8 @@ class EsanjAttemptListCreateView(APIView):
                 doctor_id = int(doctor_id) if doctor_id else None
             except (TypeError, ValueError):
                 doctor_id = None
-            assignment = ClinicalTestsService.get_test(
+            clinical_tests_service = _clinical_tests_service()
+            assignment = clinical_tests_service.get_test(
                 request.user,
                 clinical_test_id,
                 doctor_id=doctor_id,
@@ -495,6 +534,7 @@ class EsanjAttemptListCreateView(APIView):
         attempt = EsanjTestAttempt.objects.create(
             id=attempt_id,
             user=request.user,
+            invoice=invoice if invoice and invoice.status == Invoice.Status.PAID else None,
             access_rule=rule,
             esanj_test_id=rule.esanj_test_id,
             test_title=rule.title,
@@ -508,7 +548,7 @@ class EsanjAttemptListCreateView(APIView):
             case_id=case_id or "",
         )
         if clinical_test_id:
-            ClinicalTestsService.update_interactive_assignment_from_attempt(request.user, attempt, creator=request.user)
+            _clinical_tests_service().update_interactive_assignment_from_attempt(request.user, attempt, creator=request.user)
         return Response(EsanjAttemptSerializer(attempt).data, status=status.HTTP_201_CREATED)
 
 
@@ -516,7 +556,7 @@ class EsanjAttemptDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get_attempt(self, request, attempt_id):
-        return EsanjTestAttempt.objects.filter(id=attempt_id, user=request.user).first()
+        return EsanjTestAttempt.objects.select_related("invoice").filter(id=attempt_id, user=request.user).first()
 
     def get(self, request, attempt_id):
         attempt = self.get_attempt(request, attempt_id)
@@ -608,7 +648,8 @@ class EsanjAttemptSubmitView(APIView):
                 "updated_at",
             ]
         )
-        ClinicalTestsService.update_interactive_assignment_from_attempt(request.user, attempt, creator=request.user)
+        if attempt.clinical_test_id:
+            _clinical_tests_service().update_interactive_assignment_from_attempt(request.user, attempt, creator=request.user)
         return Response(EsanjAttemptSerializer(attempt).data)
 
 
