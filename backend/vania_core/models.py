@@ -574,6 +574,14 @@ class EsanjTestAttempt(models.Model):
         on_delete=models.CASCADE,
         related_name="esanj_test_attempts",
     )
+    invoice = models.OneToOneField(
+        "billing.Invoice",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="esanj_test_attempt",
+        help_text="Paid invoice consumed by this interactive test attempt.",
+    )
     access_rule = models.ForeignKey(
         EsanjTestAccessRule,
         on_delete=models.SET_NULL,
@@ -613,6 +621,7 @@ class EsanjTestAttempt(models.Model):
             models.Index(fields=["user", "-started_at"]),
             models.Index(fields=["user", "status"]),
             models.Index(fields=["user", "clinical_test_id"]),
+            models.Index(fields=["user", "invoice"]),
             models.Index(fields=["esanj_test_id", "status"]),
         ]
         verbose_name = "Esanj Test Attempt"

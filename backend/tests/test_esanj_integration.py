@@ -333,9 +333,10 @@ class EsanjIntegrationTests(TestCase):
         self.assertEqual(invoice.tax_amount, Decimal("110.00"))
         self.assertEqual(invoice.total_amount, Decimal("1210.00"))
 
-    def test_catalog_marks_paid_interactive_tests_as_purchased(self):
+    def test_catalog_marks_unused_paid_interactive_tests_as_purchased(self):
         paid_rule = self._rule(84, "تست خریداری شده", base_price=1000)
         unpaid_rule = self._rule(85, "تست خریداری نشده", base_price=1000)
+        used_rule = self._rule(86, "تست مصرف شده", base_price=1000)
         Invoice.objects.create(
             user=self.visitor,
             status=Invoice.Status.PAID,
@@ -345,14 +346,37 @@ class EsanjIntegrationTests(TestCase):
             total_amount=Decimal("1210.00"),
             content_object=paid_rule,
         )
+        used_invoice = Invoice.objects.create(
+            user=self.visitor,
+            status=Invoice.Status.PAID,
+            subtotal_amount=Decimal("1100.00"),
+            tax_rate=Decimal("10.00"),
+            tax_amount=Decimal("110.00"),
+            total_amount=Decimal("1210.00"),
+            content_object=used_rule,
+        )
+        EsanjTestAttempt.objects.create(
+            user=self.visitor,
+            invoice=used_invoice,
+            access_rule=used_rule,
+            esanj_test_id=used_rule.esanj_test_id,
+            test_title=used_rule.title,
+            age=24,
+            sex=EsanjTestAttempt.Sex.FEMALE,
+            questionnaire=self._questionnaire(),
+        )
         self.client.force_authenticate(self.visitor)
 
         response = self.client.get("/api/vania/esanj/tests/")
 
         self.assertEqual(response.status_code, 200)
         by_test_id = {item["esanj_test_id"]: item for item in response.data["tests"]}
+        self.assertIn(paid_rule.esanj_test_id, by_test_id)
+        self.assertIn(unpaid_rule.esanj_test_id, by_test_id)
+        self.assertIn(used_rule.esanj_test_id, by_test_id)
         self.assertTrue(by_test_id[paid_rule.esanj_test_id]["is_purchased"])
         self.assertFalse(by_test_id[unpaid_rule.esanj_test_id]["is_purchased"])
+        self.assertFalse(by_test_id[used_rule.esanj_test_id]["is_purchased"])
 
     def test_interactive_test_markup_uses_billing_config(self):
         config = BillingConfig.load()
@@ -401,7 +425,49 @@ class EsanjIntegrationTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["esanj_test_id"], rule.esanj_test_id)
+        self.assertEqual(response.data["invoice_id"], str(invoice.id))
+        self.assertIsNotNone(response.data["purchased_at"])
         esanj.questionnaire.assert_called_once_with(rule.esanj_test_id)
+
+    def test_paid_interactive_test_invoice_is_single_use(self):
+        rule = self._rule(87, "تست یک بار مصرف", base_price=1000)
+        self.client.force_authenticate(self.visitor)
+
+        payment = self.client.post(
+            "/api/vania/esanj/attempts/",
+            {"test_id": rule.esanj_test_id, "age": 31, "sex": "female"},
+            format="json",
+        )
+        self.assertEqual(payment.status_code, 402)
+        invoice = Invoice.objects.get(id=payment.data["invoice_id"])
+        invoice.status = Invoice.Status.PAID
+        invoice.save(update_fields=["status"])
+
+        with (
+            patch("vania_core.esanj_views.EsanjClient") as client_class,
+            patch("vania_core.esanj_views.ensure_esanj_employee", return_value=SimpleNamespace(employee_id=7001)),
+        ):
+            esanj = client_class.return_value
+            esanj.questionnaire.return_value = self._questionnaire()
+            first_start = self.client.post(
+                "/api/vania/esanj/attempts/",
+                {"test_id": rule.esanj_test_id, "age": 31, "sex": "female"},
+                format="json",
+            )
+
+        self.assertEqual(first_start.status_code, 201)
+        self.assertEqual(EsanjTestAttempt.objects.get(id=first_start.data["id"]).invoice_id, invoice.id)
+        esanj.questionnaire.assert_called_once_with(rule.esanj_test_id)
+
+        second_start = self.client.post(
+            "/api/vania/esanj/attempts/",
+            {"test_id": rule.esanj_test_id, "age": 31, "sex": "female"},
+            format="json",
+        )
+
+        self.assertEqual(second_start.status_code, 402)
+        self.assertNotEqual(second_start.data["invoice_id"], str(invoice.id))
+        self.assertEqual(EsanjTestAttempt.objects.filter(access_rule=rule).count(), 1)
 
     def test_ensure_esanj_employee_links_existing_employee_by_phone(self):
         existing_employee = {
@@ -523,6 +589,55 @@ class EsanjIntegrationTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("سازگار نیست", response.data["error"])
+
+    def test_submit_maps_answer_row_to_upstream_value(self):
+        rule = self._rule(11, "تست نمونه")
+        questionnaire = {
+            "test": {"id": 11, "title": "تست نمونه"},
+            "questions": [
+                {
+                    "row": 1,
+                    "title": "سوال اول",
+                    "answers": [
+                        {"row": 1, "title": "A", "value": "10"},
+                        {"row": 2, "title": "B", "value": "20"},
+                        {"row": 3, "title": "C", "value": "1"},
+                    ],
+                },
+                {
+                    "row": 2,
+                    "title": "سوال دوم",
+                    "answers": [
+                        {"row": 1, "title": "A", "value": "0"},
+                        {"row": 2, "title": "B", "value": "1"},
+                    ],
+                },
+            ],
+        }
+        attempt = EsanjTestAttempt.objects.create(
+            user=self.visitor,
+            access_rule=rule,
+            esanj_test_id=rule.esanj_test_id,
+            test_title=rule.title,
+            age=24,
+            sex=EsanjTestAttempt.Sex.FEMALE,
+            questionnaire=questionnaire,
+            answers={"1": "2", "2": "1"},
+        )
+
+        self.client.force_authenticate(self.visitor)
+        with patch("vania_core.esanj_views.EsanjClient") as client_class:
+            esanj = client_class.return_value
+            esanj.submit_interpretation.side_effect = lambda test_id, uuid, answers_payload, employee_id=None: {
+                "answers_payload": answers_payload
+            }
+            esanj.get_grading.return_value = {"score": 1}
+
+            response = self.client.post(f"/api/vania/esanj/attempts/{attempt.id}/submit/", {}, format="json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["result"]["json"]["answers_payload"]["q1"], 20)
+        self.assertEqual(response.data["result"]["json"]["answers_payload"]["q2"], 1)
 
     def test_expert_assigned_interactive_test_syncs_result_to_clinical_history(self):
         self._rule(11, "تست تعاملی نمونه", allow_visitors=False, allow_experts=True)

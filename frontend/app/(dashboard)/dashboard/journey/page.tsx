@@ -1,13 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Loader2, AlertCircle, Route } from "lucide-react";
+import { AlertCircle, CheckCircle2, Loader2, Route, Search } from "lucide-react";
 import { RoleGuard } from "@/components/role-guard";
 import PatientJourneyCanvas from "@/components/canvas/renderers/PatientJourneyCanvas";
-import { API_BASE_URL, getAuthHeaders } from "@/lib/api";
+import { InteractiveTestResultView } from "@/components/canvas/renderers/shared/InteractiveTestResultView";
+import { API_BASE_URL, fetcher, getAuthHeaders } from "@/lib/api";
 import { useUser } from "@/hooks/use-user";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PatientJourneyState } from "@/lib/types/vania";
+
 
 type JourneyState = PatientJourneyState;
 
@@ -17,6 +23,21 @@ type CanvasStateResponse = {
     component_key: string;
     current_state: JourneyState;
   }>;
+};
+
+type EsanjAttempt = {
+  id: string;
+  invoice_id?: string | null;
+  esanj_test_id: number;
+  test_title: string;
+  status: "IN_PROGRESS" | "SUBMITTED" | "COMPLETED" | "FAILED";
+  result?: {
+    json?: Record<string, any>;
+    grading?: Record<string, any>;
+  } | null;
+  purchased_at?: string | null;
+  started_at: string;
+  completed_at?: string | null;
 };
 
 const VISITOR_AGENT_SLUG = "vania-visitor-companion";
@@ -51,6 +72,19 @@ function normalizeDashboardJourneyState(state: JourneyState, preserveSelection =
   };
 }
 
+function formatNumber(value: number | string | null | undefined) {
+  if (value == null || value === "") return "";
+  return new Intl.NumberFormat("fa-IR").format(Number(value));
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
 export default function VisitorJourneyPage() {
   const { user } = useUser();
   const sessionId = useMemo(() => (user?.id ? `visitor-dashboard-${user.id}` : null), [user?.id]);
@@ -59,9 +93,27 @@ export default function VisitorJourneyPage() {
 
   const [canvasId, setCanvasId] = useState<string | null>(null);
   const [data, setData] = useState<JourneyState | null>(null);
+  const [completedAttempts, setCompletedAttempts] = useState<EsanjAttempt[]>([]);
+  const [selectedAttempt, setSelectedAttempt] = useState<EsanjAttempt | null>(null);
+  const [testQuery, setTestQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [testsLoading, setTestsLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testsError, setTestsError] = useState<string | null>(null);
+
+  const filteredCompletedAttempts = useMemo(() => {
+    const normalized = testQuery.trim().toLowerCase();
+    if (!normalized) return completedAttempts;
+    return completedAttempts.filter((attempt) => {
+      return (
+        attempt.test_title.toLowerCase().includes(normalized) ||
+        String(attempt.esanj_test_id).includes(normalized) ||
+        formatDate(attempt.purchased_at || attempt.started_at).includes(testQuery.trim()) ||
+        formatDate(attempt.completed_at).includes(testQuery.trim())
+      );
+    });
+  }, [completedAttempts, testQuery]);
 
   const loadCanvas = useCallback(async () => {
     if (!sessionId || !user?.id) return;
@@ -108,6 +160,31 @@ export default function VisitorJourneyPage() {
   useEffect(() => {
     loadCanvas();
   }, [loadCanvas]);
+
+  const loadCompletedTests = useCallback(async () => {
+    setTestsLoading(true);
+    setTestsError(null);
+    try {
+      const body = await fetcher<{ attempts: EsanjAttempt[] }>("/api/vania/esanj/attempts/");
+      const completed = (body.attempts || []).filter((attempt) => attempt.status === "COMPLETED");
+      setCompletedAttempts(completed);
+      setSelectedAttempt((current) => {
+        if (current) {
+          const refreshed = completed.find((attempt) => attempt.id === current.id);
+          if (refreshed) return refreshed;
+        }
+        return completed[0] || null;
+      });
+    } catch (e: any) {
+      setTestsError(e?.message || "دریافت تست‌های انجام‌شده ناموفق بود.");
+    } finally {
+      setTestsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCompletedTests();
+  }, [loadCompletedTests]);
 
   const handleEdit = useCallback(async (delta: Partial<JourneyState>) => {
     if (!canvasId || !data) return;
@@ -204,28 +281,147 @@ export default function VisitorJourneyPage() {
           )}
         </div>
 
-        <div className="min-h-[70vh] overflow-hidden rounded-2xl border bg-background shadow-sm">
-          {loading && (
-            <div className="flex h-[70vh] items-center justify-center text-muted-foreground gap-2">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              در حال بارگذاری داشبورد...
-            </div>
-          )}
+        <Tabs defaultValue="journey" className="space-y-3">
+          <TabsList className="h-auto w-full justify-start gap-1 rounded-xl bg-muted/60 p-1 sm:w-auto" dir="rtl">
+            <TabsTrigger value="journey" className="rounded-lg px-4 py-2">
+              مسیر من
+            </TabsTrigger>
+            <TabsTrigger value="completed-tests" className="rounded-lg px-4 py-2">
+              تست‌های انجام شده
+            </TabsTrigger>
+          </TabsList>
 
-          {!loading && error && (
-            <div className="p-4">
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertTitle>خطا</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            </div>
-          )}
+          <TabsContent value="journey" className="mt-0">
+            <div className="min-h-[70vh] overflow-hidden rounded-2xl border bg-background shadow-sm">
+              {loading && (
+                <div className="flex h-[70vh] items-center justify-center text-muted-foreground gap-2">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  در حال بارگذاری داشبورد...
+                </div>
+              )}
 
-          {!loading && !error && data && (
-            <PatientJourneyCanvas data={data} onEdit={handleEdit} isLocked={false} />
-          )}
-        </div>
+              {!loading && error && (
+                <div className="p-4">
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>خطا</AlertTitle>
+                    <AlertDescription>{error}</AlertDescription>
+                  </Alert>
+                </div>
+              )}
+
+              {!loading && !error && data && (
+                <PatientJourneyCanvas data={data} onEdit={handleEdit} isLocked={false} />
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="completed-tests" className="mt-0">
+            <div className="min-h-[70vh] rounded-2xl border bg-background p-4 shadow-sm">
+              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="space-y-1">
+                  <h2 className="flex items-center gap-2 text-base font-semibold">
+                    <CheckCircle2 className="h-4 w-4 text-primary" />
+                    تست‌های انجام شده
+                  </h2>
+                  <p className="text-xs leading-6 text-muted-foreground" dir="rtl">
+                    نتیجه آزمون‌های تکمیل‌شده همراه با تاریخ خرید و انجام.
+                  </p>
+                </div>
+                <div className="relative w-full lg:max-w-sm">
+                  <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={testQuery}
+                    onChange={(event) => setTestQuery(event.target.value)}
+                    placeholder="جستجوی نام آزمون، شناسه یا تاریخ"
+                    className="pr-9"
+                    dir="rtl"
+                  />
+                </div>
+              </div>
+
+              {testsLoading && (
+                <div className="flex h-64 items-center justify-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                  در حال دریافت تست‌ها...
+                </div>
+              )}
+
+              {!testsLoading && testsError && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>خطا</AlertTitle>
+                  <AlertDescription>{testsError}</AlertDescription>
+                </Alert>
+              )}
+
+              {!testsLoading && !testsError && !completedAttempts.length && (
+                <div className="rounded-lg border border-dashed bg-muted/10 px-4 py-12 text-center text-sm text-muted-foreground">
+                  هنوز تست تکمیل‌شده‌ای برای نمایش وجود ندارد.
+                </div>
+              )}
+
+              {!testsLoading && !testsError && completedAttempts.length > 0 && (
+                <div className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
+                  <div className="max-h-[62vh] space-y-2 overflow-y-auto pr-1">
+                    {!filteredCompletedAttempts.length ? (
+                      <div className="rounded-lg border bg-muted/10 px-4 py-8 text-center text-sm text-muted-foreground">
+                        نتیجه‌ای مطابق جستجو پیدا نشد.
+                      </div>
+                    ) : (
+                      filteredCompletedAttempts.map((attempt) => (
+                        <button
+                          key={attempt.id}
+                          type="button"
+                          onClick={() => setSelectedAttempt(attempt)}
+                          className={`w-full rounded-lg border p-3 text-right transition-colors hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                            selectedAttempt?.id === attempt.id ? "border-primary bg-primary/5" : "bg-muted/10"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2" dir="rtl">
+                            <span className="line-clamp-2 text-sm font-medium leading-6">{attempt.test_title}</span>
+                            <Badge variant="outline" className="shrink-0">
+                              #{formatNumber(attempt.esanj_test_id)}
+                            </Badge>
+                          </div>
+                          <div className="mt-2 space-y-1 text-xs leading-6 text-muted-foreground">
+                            <div>تاریخ خرید: {formatDate(attempt.purchased_at || attempt.started_at)}</div>
+                            <div>تاریخ انجام: {formatDate(attempt.completed_at)}</div>
+                          </div>
+                        </button>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="min-h-[320px] rounded-lg border bg-muted/10 p-4">
+                    {selectedAttempt ? (
+                      <div className="space-y-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between" dir="rtl">
+                          <div className="min-w-0">
+                            <h3 className="text-base font-semibold leading-7">{selectedAttempt.test_title}</h3>
+                            <p className="mt-1 text-xs leading-6 text-muted-foreground">
+                              تاریخ خرید: {formatDate(selectedAttempt.purchased_at || selectedAttempt.started_at)}
+                              {" · "}
+                              تاریخ انجام: {formatDate(selectedAttempt.completed_at)}
+                            </p>
+                          </div>
+                          <Button variant="outline" size="sm" onClick={loadCompletedTests}>
+                            بروزرسانی
+                          </Button>
+                        </div>
+                        <InteractiveTestResultView result={selectedAttempt.result} />
+                      </div>
+                    ) : (
+                      <div className="flex h-full min-h-[280px] items-center justify-center text-sm text-muted-foreground">
+                        یک نتیجه را انتخاب کنید.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </TabsContent>
+        </Tabs>
       </div>
     </RoleGuard>
   );

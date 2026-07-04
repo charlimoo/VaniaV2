@@ -256,7 +256,7 @@ export function InteractiveTestResultView({
   const fullPayload = fullPayloadForDisplay(resultPayload, gradingPayload);
 
   return (
-    <div className={`space-y-4 rounded-xl border bg-background p-4 ${className}`}>
+    <div className={`space-y-4 rounded-xl border bg-background p-4 ${className}`} dir="rtl">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <CheckCircle2 className="h-4 w-4 text-emerald-600" />
@@ -291,11 +291,11 @@ export function InteractiveTestResultView({
         <div className="space-y-3">
           {dedupedSections.map((section, index) => (
             <section key={section.key} className="rounded-lg border bg-muted/10 p-3">
-              <h4 className="mb-2 flex items-center gap-1.5 text-sm font-semibold">
+              <h4 className="mb-2 flex items-center gap-1.5 text-sm font-semibold" dir="rtl">
                 {index === 0 ? <Sparkles className="h-4 w-4 text-primary" /> : null}
                 {section.title}
               </h4>
-              <div className="whitespace-pre-line text-sm leading-8 text-foreground">
+              <div className="whitespace-pre-line text-sm leading-8 text-foreground" dir="rtl">
                 {section.text}
               </div>
             </section>
