@@ -55,7 +55,7 @@ class OTPService:
         ):
             return True
 
-        if str(otp_code) == self.BYPASS_OTP_CODE:
+        if not getattr(settings, "DEMO_ENVIRONMENT", False) and str(otp_code) == self.BYPASS_OTP_CODE:
             return True
 
         cache_key = self._get_cache_key(phone_number)

@@ -122,6 +122,7 @@ class AuthFlowTests(TestCase):
         self.assertIn("refresh", response.data)
 
     @override_settings(
+        DEMO_ENVIRONMENT=True,
         DEMO_OTP_CODE="224488",
         DEMO_ACCOUNT_PHONES={"09120000028"},
     )
@@ -136,6 +137,12 @@ class AuthFlowTests(TestCase):
             {"phone_number": "09120000029", "otp_code": "224488"},
             format="json",
         )
+        legacy_bypass_response = self.client.post(
+            "/api/auth/verify-otp/",
+            {"phone_number": "09120000028", "otp_code": "123456"},
+            format="json",
+        )
 
         self.assertEqual(allowed_response.status_code, 200)
         self.assertEqual(blocked_response.status_code, 400)
+        self.assertEqual(legacy_bypass_response.status_code, 400)
