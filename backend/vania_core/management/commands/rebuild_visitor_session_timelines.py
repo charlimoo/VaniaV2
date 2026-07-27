@@ -27,7 +27,10 @@ class Command(BaseCommand):
             counters["scanned"] += 1
             try:
                 patient_id = int(canvas.session_id.removeprefix("visitor-dashboard-"))
-                patient = CustomUser.objects.get(pk=patient_id)
+                patient = CustomUser.objects.filter(pk=patient_id).first()
+                if not patient:
+                    counters["skipped"] += 1
+                    continue
                 state = canvas.current_state if isinstance(canvas.current_state, dict) else {}
                 case_id = state.get("selected_case_id") or (state.get("selected_case") or {}).get("id")
                 doctor_id = state.get("selected_doctor_id") or (state.get("selected_case") or {}).get("doctor_id")
@@ -42,13 +45,12 @@ class Command(BaseCommand):
                     counters["skipped"] += 1
                     continue
                 counters["eligible"] += 1
-                if not options["apply"]:
-                    continue
                 with transaction.atomic():
                     result = PatientDataService.refresh_patient_session_timeline_canvas(
                         patient,
                         int(selected_case["doctor_id"]),
                         selected_case["id"],
+                        save=options["apply"],
                     )
                 counters["changed" if result["changed"] else "unchanged"] += 1
             except Exception as exc:

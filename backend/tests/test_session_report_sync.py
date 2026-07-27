@@ -204,3 +204,20 @@ class SessionReportSyncTests(TestCase):
         self.assertEqual(canvas.current_state["selected_case"]["tasks"], ["keep"])
         self.assertEqual(canvas.current_state["unrelated"], {"keep": True})
         canvas.save.assert_called_once_with(update_fields=["current_state", "last_modified_at"])
+
+    @patch.object(SessionService, "get_patient_history")
+    @patch("services.models_canvas.CanvasInstance.objects.filter")
+    def test_timeline_refresh_dry_run_does_not_save(self, filter_mock, history_mock):
+        canvas = SimpleNamespace(current_state={"timeline": [{"id": "stale"}]}, save=Mock())
+        filter_mock.return_value.first.return_value = canvas
+        history_mock.return_value = [{"id": "fresh"}]
+
+        result = PatientDataService.refresh_patient_session_timeline_canvas(
+            self.visitor,
+            self.expert.id,
+            self.case_id,
+            save=False,
+        )
+
+        self.assertTrue(result["changed"])
+        canvas.save.assert_not_called()

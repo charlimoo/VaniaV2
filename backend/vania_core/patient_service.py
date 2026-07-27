@@ -124,7 +124,13 @@ class PatientDataService:
         return True
 
     @staticmethod
-    def refresh_patient_session_timeline_canvas(patient, doctor_id: int, case_id: str) -> dict:
+    def refresh_patient_session_timeline_canvas(
+        patient,
+        doctor_id: int,
+        case_id: str,
+        *,
+        save: bool = True,
+    ) -> dict:
         from services.models_canvas import CanvasInstance
 
         canvas = CanvasInstance.objects.filter(
@@ -152,7 +158,7 @@ class PatientDataService:
         active_goals = PatientDataService._extract_active_goals_from_history(history)
         changed = current_ids != next_ids
 
-        if changed:
+        if changed and save:
             current_state["timeline"] = history
             current_state["active_goals"] = active_goals
             selected_case["timeline"] = history
