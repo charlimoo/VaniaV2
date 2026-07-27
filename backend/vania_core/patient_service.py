@@ -102,6 +102,28 @@ class PatientDataService:
         }
 
     @staticmethod
+    def refresh_patient_dashboard_canvas(patient, doctor_id: int, case_id: Optional[str]) -> bool:
+        from services.models_canvas import CanvasInstance
+
+        payload = PatientDataService.get_patient_dashboard_snapshot(
+            patient,
+            doctor_id=doctor_id,
+            case_id=case_id,
+        )
+        canvas = CanvasInstance.objects.filter(
+            session_id=f"visitor-dashboard-{patient.id}",
+            canvas_def__component_key="VANIA_PATIENT_JOURNEY",
+        ).first()
+        if not canvas or not isinstance(canvas.current_state, dict):
+            return False
+
+        next_state = dict(canvas.current_state)
+        next_state.update(payload)
+        canvas.current_state = next_state
+        canvas.save(update_fields=["current_state", "last_modified_at"])
+        return True
+
+    @staticmethod
     def _extract_active_goals_from_history(history) -> list[str]:
         for item in history or []:
             goals = item.get("smart_goals")

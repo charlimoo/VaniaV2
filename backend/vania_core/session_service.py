@@ -57,6 +57,49 @@ class SessionService:
         )
 
     @staticmethod
+    def save_structured_report(
+        patient,
+        doctor,
+        summary: str,
+        private_notes: str,
+        doctor_id: int,
+        case_id: str,
+        entry_id: int = None,
+    ) -> UserContextEntry:
+        entry = None
+        if entry_id:
+            entry = UserContextEntry.objects.filter(
+                pk=entry_id,
+                user=patient,
+                definition__key=SessionService.CONTEXT_KEY,
+                is_active=True,
+            ).first()
+
+        if not entry:
+            return SessionService.log_session(
+                patient=patient,
+                doctor=doctor,
+                summary=summary,
+                private_notes=private_notes,
+                doctor_id=doctor_id,
+                case_id=case_id,
+            )
+
+        payload = dict(entry.data) if isinstance(entry.data, dict) else {}
+        payload.update({
+            "doctor_id": doctor_id,
+            "doctor_name": doctor.full_name or "Doctor",
+            "date": timezone.now().isoformat(),
+            "summary": summary,
+            "private_notes": private_notes,
+            "case_id": case_id,
+        })
+        entry.data = payload
+        entry.created_by = doctor
+        entry.save(update_fields=["data", "created_by"])
+        return entry
+
+    @staticmethod
     def get_patient_history(patient, viewer_role: str = 'DOCTOR', doctor_id: int = None, case_id: str = None) -> list:
         """
         Retrieves a patient's session history with Role-Based redaction.
@@ -71,6 +114,7 @@ class SessionService:
         # Fetches all entries for this key from the generic context service
         entries = user_context_manager.get_history(patient, SessionService.CONTEXT_KEY, limit=100)
         history = []
+        seen_structured_sessions = set()
         
         for entry in entries:
             # Skip soft-deleted entries
@@ -102,6 +146,17 @@ class SessionService:
                         payload["date"] = parsed_summary.get("date") or payload.get("date")
                 except Exception:
                     logger.warning("Failed to parse structured session summary for entry %s", entry.id)
+
+            session_number = payload.get("session_number")
+            if session_number is not None:
+                session_key = (
+                    str(payload.get("doctor_id") or ""),
+                    payload.get("case_id"),
+                    str(session_number),
+                )
+                if session_key in seen_structured_sessions:
+                    continue
+                seen_structured_sessions.add(session_key)
             
             # [CRITICAL] Inject the DB ID so the frontend can reference this specific log
             payload['id'] = entry.id 
