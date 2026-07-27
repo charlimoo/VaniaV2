@@ -72,8 +72,9 @@ class Command(BaseCommand):
         with transaction.atomic():
             for index, account in enumerate(DEMO_ACCOUNTS, start=1):
                 profession = ExpertProfession.objects.filter(slug=account["profession"], is_active=True).first()
+                plan_profession = account["profession"].replace("_", "-")
                 plan = SubscriptionPlan.objects.filter(
-                    slug=f"expert-{account['profession']}-365d",
+                    slug=f"expert-{plan_profession}-365d",
                     is_active=True,
                 ).first()
                 if not profession or not plan:
