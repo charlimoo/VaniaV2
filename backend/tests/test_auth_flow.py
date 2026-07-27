@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.core.cache import cache
 from rest_framework.test import APIClient
 
@@ -120,3 +120,22 @@ class AuthFlowTests(TestCase):
         self.assertEqual(response.data["requires_signup"], False)
         self.assertIn("access", response.data)
         self.assertIn("refresh", response.data)
+
+    @override_settings(
+        DEMO_OTP_CODE="224488",
+        DEMO_ACCOUNT_PHONES={"09120000028"},
+    )
+    def test_demo_otp_only_accepts_allowlisted_phone(self):
+        allowed_response = self.client.post(
+            "/api/auth/verify-otp/",
+            {"phone_number": "09120000028", "otp_code": "224488"},
+            format="json",
+        )
+        blocked_response = self.client.post(
+            "/api/auth/verify-otp/",
+            {"phone_number": "09120000029", "otp_code": "224488"},
+            format="json",
+        )
+
+        self.assertEqual(allowed_response.status_code, 200)
+        self.assertEqual(blocked_response.status_code, 400)

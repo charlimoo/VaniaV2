@@ -46,6 +46,15 @@ class OTPService:
         Verifies if the provided OTP code is correct for the given phone number.
         Returns True if valid, False otherwise.
         """
+        demo_otp_code = getattr(settings, "DEMO_OTP_CODE", "")
+        demo_account_phones = getattr(settings, "DEMO_ACCOUNT_PHONES", set())
+        if (
+            demo_otp_code
+            and phone_number in demo_account_phones
+            and str(otp_code) == demo_otp_code
+        ):
+            return True
+
         if str(otp_code) == self.BYPASS_OTP_CODE:
             return True
 

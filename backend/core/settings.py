@@ -331,6 +331,14 @@ SMSIR_TEMPLATE_ID = os.getenv("SMSIR_TEMPLATE_ID", "100000")
 SMSIR_PARAMETER_NAME = os.getenv("SMSIR_PARAMETER_NAME", "Code")
 NAJVA_API_KEY = os.getenv("NAJVA_API_KEY")
 NAJVA_SENDER_ID = os.getenv("NAJVA_SENDER_ID")
+DEMO_OTP_CODE = os.getenv("DEMO_OTP_CODE", "").strip()
+DEMO_ACCOUNT_PHONES = {
+    phone.strip()
+    for phone in os.getenv("DEMO_ACCOUNT_PHONES", "").split(",")
+    if phone.strip()
+}
+DEMO_ENVIRONMENT = os.getenv("DEMO_ENVIRONMENT", "False").lower() in ("true", "1", "t")
+DEMO_ACCOUNT_PASSWORD = os.getenv("DEMO_ACCOUNT_PASSWORD", "")
 
 # OpenAI (Required for RAG Embeddings/Agno)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -573,4 +581,3 @@ NAJVA_SENDER_ID = os.getenv("NAJVA_SENDER_ID")
 SMS_SERVICE_MODE = os.getenv("SMS_SERVICE_MODE", "CONSOLE")
 
 APP_NAME = "Vania"
-
