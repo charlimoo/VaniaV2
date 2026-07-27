@@ -1754,6 +1754,18 @@ class TaskManagementView(APIView):
     
 class SessionManagementView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsDoctorUser]
+
+    @staticmethod
+    def _refresh_entry_timeline(entry):
+        data = entry.data if isinstance(entry.data, dict) else {}
+        doctor_id = data.get("doctor_id")
+        case_id = data.get("case_id")
+        if doctor_id and case_id:
+            PatientDataService.refresh_patient_session_timeline_canvas(
+                entry.user,
+                int(doctor_id),
+                case_id,
+            )
     
     def post(self, request):
         patient_id = request.data.get('visitor_id') or request.data.get('patient_id')
@@ -1768,22 +1780,33 @@ class SessionManagementView(APIView):
         if case_id and not CaseService.expert_can_edit_case(patient, request.user, case_id):
             return Response({"error": "This case is read-only for you."}, status=403)
             
-        SessionService.log_session(patient, request.user, summary, private_notes, doctor_id=request.user.id, case_id=case_id)
+        entry = SessionService.log_session(
+            patient,
+            request.user,
+            summary,
+            private_notes,
+            doctor_id=request.user.id,
+            case_id=case_id,
+        )
+        self._refresh_entry_timeline(entry)
         return Response({"status": "created"}, status=status.HTTP_201_CREATED)
     
     def put(self, request, entry_id):
         summary = request.data.get('summary')
         private_notes = request.data.get('private_notes', '')
         date = request.data.get('date')
-        
+        entry = get_object_or_404(UserContextEntry, pk=entry_id, definition__key=SessionService.CONTEXT_KEY)
         success = SessionService.update_session(entry_id, request.user, summary, private_notes, date)
         if success:
+            self._refresh_entry_timeline(entry)
             return Response({"status": "updated"})
         return Response({"error": "Update failed"}, status=400)
     
     def delete(self, request, entry_id):
+        entry = get_object_or_404(UserContextEntry, pk=entry_id, definition__key=SessionService.CONTEXT_KEY)
         success = SessionService.delete_session(entry_id, request.user)
         if success:
+            self._refresh_entry_timeline(entry)
             return Response({"status": "deleted"})
         return Response({"error": "Delete failed"}, status=400)
 

@@ -6,6 +6,7 @@ from django.test import TestCase
 
 from users.models import CustomUser, UserRole
 from vania_core.patient_service import PatientDataService
+from vania_core.roadmap_service import RoadmapService
 from vania_core.session_service import SessionService
 
 
@@ -92,6 +93,70 @@ class SessionReportSyncTests(TestCase):
         self.assertEqual(history[0]["summary"], "newest")
         self.assertNotIn("private_notes", history[0])
 
+    def test_history_prefers_roadmap_links_and_repairs_stored_session_number(self):
+        linked_session_three = SessionService.log_session(
+            self.visitor,
+            self.expert,
+            self.report_payload("linked three").replace('"session_number": 1', '"session_number": 4'),
+            "",
+            doctor_id=self.expert.id,
+            case_id=self.case_id,
+        )
+        linked_session_four = SessionService.log_session(
+            self.visitor,
+            self.expert,
+            self.report_payload("linked four").replace('"session_number": 1', '"session_number": 4'),
+            "",
+            doctor_id=self.expert.id,
+            case_id=self.case_id,
+        )
+        SessionService.log_session(
+            self.visitor,
+            self.expert,
+            self.report_payload("unlinked duplicate").replace('"session_number": 1', '"session_number": 4'),
+            "",
+            doctor_id=self.expert.id,
+            case_id=self.case_id,
+        )
+        RoadmapService.ensure_session(
+            self.visitor,
+            3,
+            "Session Three",
+            doctor_id=self.expert.id,
+            case_id=self.case_id,
+        )
+        RoadmapService.complete_session(
+            self.visitor,
+            3,
+            str(linked_session_three.id),
+            doctor_id=self.expert.id,
+            case_id=self.case_id,
+        )
+        RoadmapService.ensure_session(
+            self.visitor,
+            4,
+            "Session Four",
+            doctor_id=self.expert.id,
+            case_id=self.case_id,
+        )
+        RoadmapService.complete_session(
+            self.visitor,
+            4,
+            str(linked_session_four.id),
+            doctor_id=self.expert.id,
+            case_id=self.case_id,
+        )
+
+        history = SessionService.get_patient_history(
+            self.visitor,
+            viewer_role="PATIENT",
+            doctor_id=self.expert.id,
+            case_id=self.case_id,
+        )
+
+        self.assertEqual({item["session_number"] for item in history}, {3, 4})
+        self.assertEqual({item["id"] for item in history}, {linked_session_three.id, linked_session_four.id})
+
     @patch.object(PatientDataService, "get_patient_dashboard_snapshot")
     @patch("services.models_canvas.CanvasInstance.objects.filter")
     def test_refresh_patient_dashboard_replaces_stale_snapshot(self, filter_mock, snapshot_mock):
@@ -111,4 +176,31 @@ class SessionReportSyncTests(TestCase):
         self.assertTrue(refreshed)
         self.assertEqual(canvas.current_state["timeline"], [{"id": "fresh"}])
         self.assertEqual(canvas.current_state["selected_case_id"], self.case_id)
+        canvas.save.assert_called_once_with(update_fields=["current_state", "last_modified_at"])
+
+    @patch.object(SessionService, "get_patient_history")
+    @patch("services.models_canvas.CanvasInstance.objects.filter")
+    def test_timeline_refresh_changes_only_session_fields(self, filter_mock, history_mock):
+        canvas = SimpleNamespace(
+            current_state={
+                "timeline": [{"id": "stale"}],
+                "selected_case": {"id": self.case_id, "timeline": [{"id": "stale"}], "tasks": ["keep"]},
+                "unrelated": {"keep": True},
+            },
+            save=Mock(),
+        )
+        filter_mock.return_value.first.return_value = canvas
+        history_mock.return_value = [{"id": "fresh", "smart_goals": ["goal"]}]
+
+        result = PatientDataService.refresh_patient_session_timeline_canvas(
+            self.visitor,
+            self.expert.id,
+            self.case_id,
+        )
+
+        self.assertTrue(result["changed"])
+        self.assertEqual(canvas.current_state["timeline"], history_mock.return_value)
+        self.assertEqual(canvas.current_state["selected_case"]["timeline"], history_mock.return_value)
+        self.assertEqual(canvas.current_state["selected_case"]["tasks"], ["keep"])
+        self.assertEqual(canvas.current_state["unrelated"], {"keep": True})
         canvas.save.assert_called_once_with(update_fields=["current_state", "last_modified_at"])
