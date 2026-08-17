@@ -517,7 +517,7 @@ class EsanjAttemptListCreateView(APIView):
                     "html": html,
                     "questions": [],
                 }
-            else:
+            elif clinical_test_id:
                 # Reserve/check the Esanj inventory at start for the internal UI too.
                 # Without this, users can answer the whole JSON questionnaire and only
                 # discover missing Esanj inventory when submitting interpretation.
@@ -528,6 +528,16 @@ class EsanjAttemptListCreateView(APIView):
                     uuid=str(attempt_id),
                     employee_id=employee_id,
                 )
+                questionnaire = client.questionnaire(rule.esanj_test_id)
+                if isinstance(questionnaire, dict):
+                    questionnaire = {
+                        **questionnaire,
+                        "delivery_mode": EsanjStartAttemptSerializer.DeliveryMode.JSON,
+                    }
+            else:
+                # Package/API accounts cannot use the employee-scoped HTML
+                # reservation endpoint. Direct purchases use the JSON questionnaire
+                # and consume the API account inventory when answers are submitted.
                 questionnaire = client.questionnaire(rule.esanj_test_id)
                 if isinstance(questionnaire, dict):
                     questionnaire = {
