@@ -186,7 +186,7 @@ class EsanjIntegrationTests(TestCase):
 
         with (
             patch("vania_core.esanj_views.EsanjClient") as client_class,
-            patch("vania_core.esanj_views.ensure_esanj_employee", return_value=SimpleNamespace(employee_id=7001)),
+            patch("vania_core.esanj_views.ensure_esanj_employee") as employee_sync,
         ):
             esanj = client_class.return_value
             esanj.questionnaire.return_value = self._questionnaire()
@@ -222,9 +222,12 @@ class EsanjIntegrationTests(TestCase):
                 sex="female",
                 age=31,
                 uuid=attempt_id,
-                employee_id=7001,
+                employee_id=None,
             )
             esanj.submit_interpretation.assert_called_once()
+            self.assertIsNone(esanj.submit_interpretation.call_args.kwargs["employee_id"])
+            employee_sync.assert_not_called()
+            self.assertIsNone(EsanjTestAttempt.objects.get(id=attempt_id).employee_id)
 
     def test_json_delivery_checks_esanj_inventory_before_creating_attempt(self):
         self._rule(15, "تست بدون موجودی")
