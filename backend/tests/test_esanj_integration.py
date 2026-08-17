@@ -217,20 +217,14 @@ class EsanjIntegrationTests(TestCase):
             self.assertEqual(submit.status_code, 200)
             self.assertEqual(submit.data["status"], EsanjTestAttempt.Status.COMPLETED)
             self.assertEqual(submit.data["result"]["json"]["summary"], "نتیجه آماده است")
-            esanj.questionnaire_html.assert_called_once_with(
-                test_id=11,
-                sex="female",
-                age=31,
-                uuid=attempt_id,
-                employee_id=None,
-            )
+            esanj.questionnaire_html.assert_not_called()
             esanj.submit_interpretation.assert_called_once()
             self.assertIsNone(esanj.submit_interpretation.call_args.kwargs["employee_id"])
             employee_sync.assert_not_called()
             self.assertIsNone(EsanjTestAttempt.objects.get(id=attempt_id).employee_id)
 
-    def test_json_delivery_checks_esanj_inventory_before_creating_attempt(self):
-        self._rule(15, "تست بدون موجودی")
+    def test_direct_json_delivery_does_not_use_html_reservation_endpoint(self):
+        self._rule(15, "تست مستقیم")
         self.client.force_authenticate(self.visitor)
 
         with (
@@ -238,7 +232,8 @@ class EsanjIntegrationTests(TestCase):
             patch("vania_core.esanj_views.ensure_esanj_employee", return_value=SimpleNamespace(employee_id=7001)),
         ):
             esanj = client_class.return_value
-            esanj.questionnaire_html.side_effect = EsanjAPIError("You have no inventory", 403, {"message": "You have no inventory"})
+            esanj.questionnaire_html.side_effect = EsanjAPIError("Forbidden Request", 403, {"message": "Forbidden Request"})
+            esanj.questionnaire.return_value = self._questionnaire()
 
             response = self.client.post(
                 "/api/vania/esanj/attempts/",
@@ -246,10 +241,10 @@ class EsanjIntegrationTests(TestCase):
                 format="json",
             )
 
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.data["upstream_status"], 403)
-        self.assertEqual(EsanjTestAttempt.objects.count(), 0)
-        esanj.questionnaire.assert_not_called()
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(EsanjTestAttempt.objects.count(), 1)
+        esanj.questionnaire_html.assert_not_called()
+        esanj.questionnaire.assert_called_once_with(15)
 
     def test_json_delivery_is_default_for_new_attempts(self):
         rule = self._rule(16, "تست پیش‌فرض داخلی")
@@ -270,7 +265,7 @@ class EsanjIntegrationTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["questionnaire"]["delivery_mode"], "json")
-        esanj.questionnaire_html.assert_called_once()
+        esanj.questionnaire_html.assert_not_called()
         esanj.questionnaire.assert_called_once_with(rule.esanj_test_id)
 
     def test_html_delivery_reads_hosted_result_when_requested(self):
