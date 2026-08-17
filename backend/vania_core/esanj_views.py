@@ -496,8 +496,14 @@ class EsanjAttemptListCreateView(APIView):
         client = EsanjClient()
         attempt_id = uuid.uuid4()
         try:
-            profile = ensure_esanj_employee(request.user, client, age=data["age"], sex=data["sex"])
-            employee_id = profile.employee_id
+            # Direct purchases use the package/API account inventory. Sending an
+            # Esanj employee id scopes the request to that employee and package
+            # accounts reject the otherwise valid reservation with HTTP 403.
+            # Keep employee scoping only for tests assigned through a clinical case.
+            employee_id = None
+            if clinical_test_id:
+                profile = ensure_esanj_employee(request.user, client, age=data["age"], sex=data["sex"])
+                employee_id = profile.employee_id
             if data["delivery_mode"] == EsanjStartAttemptSerializer.DeliveryMode.HTML:
                 html = client.questionnaire_html(
                     test_id=rule.esanj_test_id,
