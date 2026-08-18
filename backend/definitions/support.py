@@ -14,30 +14,30 @@ class FAQDef:
 # --- CONTACT INFO ---
 # These values will be synced to the BillingConfig singleton.
 SUPPORT_INFO = {
-    "phone": "09371615614",
-    "email": "support@vania.ir",
+    "phone": "02193110033",
+    "email": "support@vaniaapp.app",
     "address": "بلوار افریقا نیلوفر ، پلاک ۱۶ طبقه اول واحد ۳",
     "postal_code": "۱۹۶۷۷۵۸۴۱۳",
     "contacts": [
         {
             "role": "مدیر ای تی و پاسخگویی",
             "name": "سیاوش یکتا",
-            "phone": "09371615614",
+            "phone": "02193110033 داخلی ۲۰۱",
         },
         {
             "role": "مدیر فنی و مدیر عامل",
             "name": "جلال مرادی",
-            "phone": "09128175882",
+            "phone": "02193110033 داخلی ۲۱۰",
         },
         {
             "role": "مدیر حقوقی و امور قراردادها",
             "name": "فریما شمسا",
-            "phone": "09128930862",
+            "phone": "02193110033 داخلی ۲۰۸",
         },
         {
             "role": "ارتباط تکمیلی",
             "name": "محمد گودرزی",
-            "phone": "+989123097970",
+            "phone": "02193110033 داخلی ۲۰۹",
         },
     ],
 }
